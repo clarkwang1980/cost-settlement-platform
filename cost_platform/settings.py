@@ -61,14 +61,16 @@ if os.getenv("DB_ENGINE", "postgres") == "sqlite":
         }
     }
 else:
+    # Railway injects PGHOST/PGDATABASE/PGUSER/PGPASSWORD/PGPORT automatically.
+    # Fall back to those when POSTGRES_* are not set, so zero-config on Railway.
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB", "cost_settlement"),
-            "USER": os.getenv("POSTGRES_USER", "cost_user"),
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD", "cost_password"),
-            "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+            "NAME": os.getenv("POSTGRES_DB") or os.getenv("PGDATABASE", "cost_settlement"),
+            "USER": os.getenv("POSTGRES_USER") or os.getenv("PGUSER", "cost_user"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD") or os.getenv("PGPASSWORD", "cost_password"),
+            "HOST": os.getenv("POSTGRES_HOST") or os.getenv("PGHOST", "127.0.0.1"),
+            "PORT": os.getenv("POSTGRES_PORT") or os.getenv("PGPORT", "5432"),
             "CONN_MAX_AGE": 60,
         }
     }
