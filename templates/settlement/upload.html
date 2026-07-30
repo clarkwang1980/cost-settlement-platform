@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}资料导入 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">DATA IMPORT</p><h1>上传月结资料</h1><p>支持CSV、XLSX和XLSM；原始文件会完整保留。</p></div>
+</section>
+<div class="two-column upload-layout">
+  <section class="section-card">
+    <form method="post" enctype="multipart/form-data" class="stack-form">
+      {% csrf_token %}
+      <label>资料类型{{ form.kind }}</label>
+      <label class="file-drop">
+        <span>选择原始文件</span>
+        {{ form.file }}
+        <small>{{ form.file.help_text }}</small>
+      </label>
+      <label class="checkbox">{{ form.replace_existing }} {{ form.replace_existing.label }}</label>
+      {% if form.errors %}<div class="message message-error">{{ form.errors }}</div>{% endif %}
+      <button class="button primary" type="submit">上传并导入</button>
+    </form>
+  </section>
+  <aside class="section-card guidance">
+    <p class="eyebrow">UPLOAD CHECKLIST</p>
+    <h2>下载九类导入模板</h2>
+    <div class="template-links">
+      {% for kind, label in template_kinds %}
+        <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+    {% if carry.previous and carry.ready %}
+      <div class="lock-banner">
+        {{ carry.previous }}已锁账：本期无需重复上传期初库存和期初在产品，系统结算时自动承接；期初采购暂估和期初发出商品也不再重复上传，由历史明细继续滚动核销。人工期初仅用于覆盖同物料或同工单的自动数。
+      </div>
+    {% elif carry.previous %}
+      <div class="lock-banner muted">上期{{ carry.previous }}尚未锁账，本期可以上传当月资料，但暂不能结算。</div>
+    {% else %}
+      <div class="lock-banner muted">首个核算期间需要提供期初库存；如有未结清项目，再分别上传“期初在产品”“期初采购暂估明细”和“期初发出商品明细”。后两类只在系统首期导入一次，以后月份自动滚动核销。</div>
+    {% endif %}
+    <p>同一文件不会重复导入。勾选“替换”会删除本月同类旧批次及其计算结果。</p>
+  </aside>
+</div>
+
+<section class="section-card upload-notes">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">BEFORE YOU UPLOAD</p>
+      <h2>上传前必须注意</h2>
+    </div>
+    <span class="pill warning">先确认，再上传</span>
+  </div>
+  <div class="upload-alert-grid">
+    <article>
+      <strong>分部门、分车间可以追加上传</strong>
+      <p>不同车间的生产订单和费用可以放在不同文件中，依次上传即可。追加上传时不要勾选“替换”。系统按每行的“车间”字段归集，不按文件名归集。</p>
+    </article>
+    <article class="warning-card">
+      <strong>“替换”会删除本月整类资料</strong>
+      <p>替换不是只替换当前文件或当前车间。例如替换“生产订单”，会删除本月已经上传的全部生产订单文件。只有上传完整汇总替代文件时才使用。</p>
+    </article>
+    <article>
+      <strong>同车间费用必须先汇总</strong>
+      <p>一个月份、一个车间只能有一条费用记录。不同车间可分文件；同一车间的多份费用不会自动相加，请先在一个文件中汇总成一行。</p>
+    </article>
+    <article>
+      <strong>上传后要重新匹配和结转</strong>
+      <p>新文件会保留其他已上传原始资料，但会清除旧的计算结果。全部资料上传完成后，请重新自动匹配，再按车间顺序结转。</p>
+    </article>
+  </div>
+  <div class="upload-rule-list">
+    <p><strong>文件格式：</strong>支持 CSV、XLSX、XLSM；表头可出现在前10行，系统支持模板中的常见中文别名。</p>
+    <p><strong>日期格式：</strong>建议使用 <span class="field-chip">2026-07-31</span>；月份建议使用 <span class="field-chip">2026-07</span>。</p>
+    <p><strong>编码原则：</strong>工单号、单据号、物料编码应保持唯一且前后一致；供应商、客户建议同时提供编码和名称。</p>
+    <p><strong>重复规则：</strong>完全相同的文件不能重复上传；相同生产订单号再次上传会以最后一次数据为准。</p>
+  </div>
+</section>
+
+<section class="section-card upload-field-guide">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">FIELD REQUIREMENTS</p>
+      <h2>九类资料字段说明</h2>
+    </div>
+    <div class="field-legend">
+      <span class="field-chip required">最低必填</span>
+      <span class="field-chip recommended">匹配建议</span>
+    </div>
+  </div>
+  <p class="help-text guide-intro">“最低必填”表示缺少后文件不能导入；“匹配建议”虽然不一定阻止导入，但缺少后可能无法自动匹配，需要人工处理。最稳妥的方式仍是下载并沿用页面模板。</p>
+
+  <div class="upload-guide-grid">
+    <details open>
+      <summary><span>库存出入库流水</span><small>成本计算的主数据</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">业务日期</span><span class="field-chip required">业务类型</span><span class="field-chip required">物料编码</span><span class="field-chip required">数量</span></p>
+        <h3>强烈建议</h3>
+        <p><span class="field-chip recommended">单据号</span><span class="field-chip recommended">行号</span><span class="field-chip recommended">方向</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">单位</span><span class="field-chip recommended">仓库</span></p>
+        <p class="guide-note">采购入库还应提供供应商、合同号；销售出库应提供销售订单号、客户；生产领料和生产入库应提供生产订单号、车间。业务类型不是标准名称时必须明确填写出入库方向。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>采购合同</span><small>采购入库暂估依据</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">合同号</span><span class="field-chip required">物料编码</span><span class="field-chip required">合同数量</span><span class="field-chip required">不含税单价</span></p>
+        <h3>匹配建议</h3>
+        <p><span class="field-chip recommended">合同日期</span><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">物料名称</span></p>
+        <p class="guide-note">启用日前仍在执行的合同，首期按尚未执行的剩余数量导入。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>采购发票</span><small>核销采购入库和暂估</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">发票号</span><span class="field-chip required">发票日期</span><span class="field-chip required">物料编码</span><span class="field-chip required">发票数量</span><span class="field-chip required">不含税单价</span></p>
+        <h3>匹配建议</h3>
+        <p><span class="field-chip recommended">发票期间</span><span class="field-chip recommended">合同号</span><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">不含税金额</span></p>
+        <p class="guide-note">合同号优先匹配；没有合同号时至少保证物料和供应商一致。发票价差只进入本月暂估差异，不修改库存金额。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>销售发票</span><small>核销销售出库和发出商品</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">发票号</span><span class="field-chip required">发票日期</span><span class="field-chip required">产品/物料编码</span><span class="field-chip required">开票数量</span></p>
+        <h3>自动匹配必须建议提供</h3>
+        <p><span class="field-chip recommended">销售订单号</span><span class="field-chip recommended">客户编码</span><span class="field-chip recommended">客户名称</span><span class="field-chip recommended">发票期间</span></p>
+        <p class="guide-note">自动匹配要求销售订单号、客户和产品一致。缺少销售订单或客户时可以导入，但通常需要在发票明细页手工匹配。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>生产订单</span><small>可按车间分文件追加</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">生产订单号</span><span class="field-chip required">车间</span><span class="field-chip required">产品编码</span><span class="field-chip required">完工数量</span></p>
+        <h3>成本计算建议</h3>
+        <p><span class="field-chip recommended">计划数量</span><span class="field-chip recommended">在产品数量</span><span class="field-chip recommended">订单状态</span><span class="field-chip recommended">标准工时</span><span class="field-chip recommended">生产入库单号</span></p>
+        <p class="guide-note">不同车间可以分别上传且不要勾选替换。同一订单号再次上传会覆盖原订单；订单中的车间必须与费用和库存流水使用完全一致的名称。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>车间费用</span><small>每月每车间一条</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">车间</span></p>
+        <h3>按实际发生填写</h3>
+        <p><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">工资</span></p>
+        <p class="guide-note">未填写的费用项目按0处理。同一车间的多份费用必须先汇总为一行；不同车间可以分别上传，追加时不要勾选替换。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初在产品</span><small>按生产订单承接</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">生产订单号</span></p>
+        <h3>有余额时填写</h3>
+        <p><span class="field-chip recommended">材料成本</span><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">工资</span></p>
+        <p class="guide-note">订单号必须能与本期生产订单对应。后续月份通常由上期锁账结果自动承接，人工上传同工单数据时会覆盖自动承接数。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初采购暂估明细</span><small>仅系统首期导入一次</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">原入库月份</span><span class="field-chip required">原入库日期</span><span class="field-chip required">原入库单号</span><span class="field-chip required">物料编码</span><span class="field-chip required">期初未到票数量</span><span class="field-chip required">暂估单价</span></p>
+        <h3>核销建议</h3>
+        <p><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">合同号</span><span class="field-chip recommended">原入库数量</span><span class="field-chip recommended">以前累计到票数量</span></p>
+        <p class="guide-note">原入库月份和日期必须早于系统首月，且两者月份一致。期初未到票数量应等于原入库数量减以前累计到票数量。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初发出商品明细</span><small>仅系统首期导入一次</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">原出库月份</span><span class="field-chip required">原出库日期</span><span class="field-chip required">原出库单号</span><span class="field-chip required">产品/物料编码</span><span class="field-chip required">期初未开票数量</span><span class="field-chip required">原出库单位成本</span></p>
+        <h3>自动核销必须建议提供</h3>
+        <p><span class="field-chip recommended">销售订单号</span><span class="field-chip recommended">客户编码</span><span class="field-chip recommended">客户名称</span><span class="field-chip recommended">原出库数量</span><span class="field-chip recommended">以前累计开票数量</span></p>
+        <p class="guide-note">原出库月份和日期必须早于系统首月，且两者月份一致。销售订单、客户和产品缺一时，后续销售发票通常需要手工核销。</p>
+      </div>
+    </details>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}月末采购暂估 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">MONTH-END PURCHASE ACCRUAL</p>
+    <h1>月末采购暂估</h1>
+    <p>截至{{ period }}月末尚未到票的采购入库，包含以前月份入库；金额始终采用入库时的暂估价格。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'purchase_matches' period.id %}">采购发票匹配</a>
+    <a class="button secondary" href="{% url 'purchase_differences' period.id %}">本月暂估差异</a>
+  </div>
+</section>
+
+<section class="summary-strip">
+  <article><span>暂估入库笔数</span><strong>{{ summary.receipt_count }}</strong></article>
+  <article><span>尚未到票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3 }}</strong></article>
+  <article><span>月末暂估金额</span><strong>{{ summary.provisional_amount|floatformat:2 }}</strong></article>
+  <article><span>以前月份入库</span><strong>{{ summary.prior_period_count }}</strong></article>
+  <article><span>缺少暂估价格</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>入库月份<input name="receipt_month" type="month" value="{{ request.GET.receipt_month }}"></label>
+    <label>入库单号<input name="document_no" value="{{ request.GET.document_no }}" placeholder="包含关键字"></label>
+    <label>供应商<input name="supplier" value="{{ request.GET.supplier }}" placeholder="编码或名称"></label>
+    <label>物料<input name="material" value="{{ request.GET.material }}" placeholder="编码或名称"></label>
+    <label>合同号<input name="contract_no" value="{{ request.GET.contract_no }}"></label>
+    <label>暂估状态
+      <select name="status">
+        <option value="">全部</option>
+        {% for value in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">清空</a>
+    </div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <h2>截至月末仍未到票的入库明细</h2>
+    <span class="pill warning">供暂估应付核对</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>入库月份/日期</th><th>入库单号</th><th>合同号</th><th>供应商</th><th>物料</th>
+          <th class="num">入库数量</th><th class="num">累计到票</th><th class="num">尚未到票</th>
+          <th class="num">暂估单价</th><th class="num">月末暂估金额</th><th>最近到票期间</th><th>暂估依据</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in page %}
+        <tr>
+          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong><small>{{ row.document_date }}</small></td>
+          <td>
+            {% if row.transaction %}
+              <a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong><small>流水ID {{ row.transaction.id }}</small></a>
+            {% else %}
+              <strong>{{ row.document_no|default:"—" }}</strong><small>期初采购暂估台账</small>
+            {% endif %}
+          </td>
+          <td>{{ row.contract_nos|default:"—" }}</td>
+          <td>{{ row.supplier_name|default:row.supplier_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3 }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3 }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3 }}</strong></td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|default:"—" }}</td>
+          <td class="num"><strong>{{ row.provisional_amount|floatformat:2|default:"—" }}</strong></td>
+          <td>{{ row.latest_invoice_period|date:"Y-m"|default:"—" }}</td>
+          <td>{{ row.price_source }}</td>
+          <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="13" class="empty-cell">截至本月末没有尚未到票的采购入库。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

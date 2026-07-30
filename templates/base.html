@@ -1,0 +1,68 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}月度成本结算平台{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260730-production-cost">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% url 'dashboard' %}">
+      <span class="brand-mark">结</span>
+      <span>
+        <strong>月度成本结算平台</strong>
+        <small>库存 · 订单 · 发票 · 成本闭环</small>
+      </span>
+    </a>
+    {% if user.is_authenticated %}
+      <nav class="top-actions">
+        <span class="user-name">{{ user.get_full_name|default:user.username }}</span>
+        {% if user.is_staff %}<a href="/admin/">基础数据</a>{% endif %}
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button class="link-button" type="submit">退出</button>
+        </form>
+      </nav>
+    {% endif %}
+  </header>
+
+  {% if period %}
+    <nav class="period-nav">
+      <div class="period-nav-title">
+        <a href="{% url 'period_detail' period.id %}">{{ period }}</a>
+        <span class="status status-{{ period.status }}">{{ period.get_status_display }}</span>
+      </div>
+      <div class="period-links">
+        <a href="{% url 'upload_file' period.id %}">资料导入</a>
+        <a href="{% url 'purchase_matches' period.id %}">采购匹配</a>
+        <a href="{% url 'purchase_accruals' period.id %}">月末暂估</a>
+        <a href="{% url 'purchase_differences' period.id %}">暂估差异</a>
+        <a href="{% url 'sales_matches' period.id %}">销售匹配</a>
+        <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
+        <a href="{% url 'order_matches' period.id %}">订单匹配</a>
+        <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
+        <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
+        <a href="{% url 'inventory_results' period.id %}">库存结转</a>
+        <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
+        <a href="{% url 'order_costs' period.id %}">订单成本</a>
+        <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
+      </div>
+    </nav>
+  {% endif %}
+
+  <main class="page-shell">
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message message-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">所有结果均保留原始文件、导入批次、匹配关系和计算记录。</footer>
+</body>
+</html>

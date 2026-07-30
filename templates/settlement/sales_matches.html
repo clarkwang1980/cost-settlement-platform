@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}销售匹配 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">SALES DOCUMENT MATCHING</p>
+    <h1>销售发票匹配</h1>
+    <p>销售发票可核销系统启用前的期初发出商品，以及本月和以前月份尚未开票的销售出库；自动匹配要求销售订单、客户和产品完全一致。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">月末已出库未开票</a>
+    {% if period.status != "locked" %}
+    <form method="post" action="{% url 'rematch_period' period.id %}">
+      {% csrf_token %}<button class="button primary" type="submit">重新自动匹配</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>发票号<input name="invoice_no" value="{{ request.GET.invoice_no }}"></label>
+    <label>发票日期<input name="invoice_date" type="date" value="{{ request.GET.invoice_date }}"></label>
+    <label>销售订单号<input name="sales_order_no" value="{{ request.GET.sales_order_no }}"></label>
+    <label>客户<input name="customer" value="{{ request.GET.customer }}" placeholder="编码或名称"></label>
+    <label>产品编码<input name="material" value="{{ request.GET.material }}"></label>
+    <label>处理方式
+      <select name="match_mode">
+        <option value="">全部</option>
+        {% for value,label in match_modes %}<option value="{{ value }}" {% if request.GET.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'sales_matches' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>销售发票</th><th>发票日期/期间</th><th>销售订单</th><th>客户</th>
+          <th>产品</th><th class="num">发票数量</th><th class="num">已匹配</th>
+          <th class="num">未匹配</th><th class="num">不含税金额</th><th>匹配的销售出库/期初发出商品</th>
+          <th>处理方式</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for invoice in page %}
+        <tr>
+          <td><a class="document-link" href="{% url 'source_document_detail' period.id 'sales_invoice' invoice.id %}"><strong>{{ invoice.invoice_no }}</strong><small>明细ID {{ invoice.id }}</small></a></td>
+          <td><strong>{{ invoice.invoice_date }}</strong><small>{{ invoice.invoice_period|date:"Y-m" }}</small></td>
+          <td>{{ invoice.sales_order_no|default:"—" }}</td>
+          <td>{{ invoice.customer_name|default:invoice.customer_code|default:"—" }}</td>
+          <td><strong>{{ invoice.material_code }}</strong><small>{{ invoice.material_name }}</small></td>
+          <td class="num">{{ invoice.quantity|floatformat:3 }}</td>
+          <td class="num">{{ invoice.matched_total|default:0|floatformat:3 }}</td>
+          <td class="num">{{ invoice.remaining_quantity|floatformat:3 }}</td>
+          <td class="num">{{ invoice.amount_excl_tax|floatformat:2|default:"—" }}</td>
+          <td>
+            {% for a in invoice.matchallocation_set.all %}
+              {% if a.inventory_transaction %}
+                <a class="allocation" href="{% url 'inventory_match_detail' a.inventory_transaction.period.id a.inventory_transaction.id %}">{{ a.inventory_transaction.period.month|date:"Y-m" }} · {{ a.inventory_transaction.document_no|default:"流水" }} / {{ a.matched_quantity|floatformat:3 }}</a>
+              {% else %}
+                <span class="allocation">{{ a.opening_goods_issued.original_period|date:"Y-m" }} · {{ a.opening_goods_issued.document_no }}（期初发出商品）/ {{ a.matched_quantity|floatformat:3 }}</span>
+              {% endif %}
+            {% empty %}—{% endfor %}
+          </td>
+          <td><span class="pill {% if invoice.match_mode == 'ignored' %}warning{% elif invoice.match_mode == 'manual' %}success{% endif %}">{{ invoice.get_match_mode_display }}</span>{% if invoice.ignore_reason %}<small>{{ invoice.ignore_reason }}</small>{% endif %}</td>
+          <td><a class="mini-button" href="{% url 'source_document_detail' period.id 'sales_invoice' invoice.id %}">打开修改</a></td>
+        </tr>
+      {% empty %}<tr><td colspan="12" class="empty-cell">没有符合筛选条件的销售发票。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

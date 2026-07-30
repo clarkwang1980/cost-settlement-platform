@@ -1,0 +1,124 @@
+from django.urls import path
+
+from settlement import views
+
+
+urlpatterns = [
+    path("", views.dashboard, name="dashboard"),
+    path(
+        "templates/<str:kind>/",
+        views.download_template,
+        name="download_template",
+    ),
+    path("periods/<int:period_id>/", views.period_detail, name="period_detail"),
+    path("periods/<int:period_id>/upload/", views.upload_file, name="upload_file"),
+    path("periods/<int:period_id>/run/", views.run_period, name="run_period"),
+    path("periods/<int:period_id>/rematch/", views.rematch_period, name="rematch_period"),
+    path(
+        "periods/<int:period_id>/workshops/",
+        views.workshop_settlements_view,
+        name="workshop_settlements",
+    ),
+    path(
+        "periods/<int:period_id>/workshops/order/",
+        views.update_workshop_order,
+        name="update_workshop_order",
+    ),
+    path(
+        "periods/<int:period_id>/workshops/<int:settlement_id>/settle/",
+        views.settle_workshop_view,
+        name="settle_workshop",
+    ),
+    path(
+        "periods/<int:period_id>/workshops/reset/",
+        views.reset_workshops_view,
+        name="reset_workshops",
+    ),
+    path(
+        "periods/<int:period_id>/purchase-matches/",
+        views.purchase_matches,
+        name="purchase_matches",
+    ),
+    path(
+        "periods/<int:period_id>/purchase-accruals/",
+        views.purchase_accruals,
+        name="purchase_accruals",
+    ),
+    path(
+        "periods/<int:period_id>/purchase-differences/",
+        views.purchase_differences,
+        name="purchase_differences",
+    ),
+    path(
+        "periods/<int:period_id>/sales-matches/",
+        views.sales_matches,
+        name="sales_matches",
+    ),
+    path(
+        "periods/<int:period_id>/sales-uninvoiced/",
+        views.sales_uninvoiced,
+        name="sales_uninvoiced",
+    ),
+    path(
+        "periods/<int:period_id>/order-matches/",
+        views.order_matches,
+        name="order_matches",
+    ),
+    path(
+        "periods/<int:period_id>/inventory-matches/",
+        views.inventory_matches,
+        name="inventory_matches",
+    ),
+    path(
+        "periods/<int:period_id>/inventory-matches/<int:transaction_id>/",
+        views.inventory_match_detail,
+        name="inventory_match_detail",
+    ),
+    path(
+        "periods/<int:period_id>/match-documents/"
+        "<str:source_type>/<int:source_id>/",
+        views.source_document_detail,
+        name="source_document_detail",
+    ),
+    path(
+        "periods/<int:period_id>/manual-match/<str:kind>/",
+        views.manual_match_view,
+        name="manual_match",
+    ),
+    path(
+        "periods/<int:period_id>/inventory/",
+        views.inventory_results,
+        name="inventory_results",
+    ),
+    path(
+        "periods/<int:period_id>/orders/",
+        views.order_costs,
+        name="order_costs",
+    ),
+    path(
+        "periods/<int:period_id>/production-costs/",
+        views.production_cost_summary,
+        name="production_cost_summary",
+    ),
+    path(
+        "periods/<int:period_id>/reconciliation/",
+        views.reconciliation,
+        name="reconciliation",
+    ),
+    path(
+        "periods/<int:period_id>/exceptions/<int:exception_id>/resolve/",
+        views.resolve_exception,
+        name="resolve_exception",
+    ),
+    path("periods/<int:period_id>/lock/", views.lock_period, name="lock_period"),
+    path(
+        "periods/<int:period_id>/reopen/",
+        views.reopen_period,
+        name="reopen_period",
+    ),
+    path(
+        "periods/<int:period_id>/export/",
+        views.export_period,
+        name="export_period",
+    ),
+]

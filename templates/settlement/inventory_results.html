@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}库存结转 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">INVENTORY VALUATION</p><h1>库存金额结转</h1><p>采购、生产入库和全部出库按照月末加权平均价完整结转。</p></div>
+  {% if period.inventory_valuations.exists %}<a class="button secondary" href="{% url 'export_period' period.id %}">导出Excel</a>{% endif %}
+</section>
+<section class="summary-strip">
+  <article><span>期初金额</span><strong>¥{{ totals.opening|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>本期入库</span><strong>¥{{ totals.receipts|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>本期出库</span><strong>¥{{ totals.issues|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>期末金额</span><strong>¥{{ totals.ending|floatformat:2|default:"0.00" }}</strong></article>
+</section>
+<section class="section-card">
+  <div class="table-wrap">
+    <table><thead><tr><th>物料</th><th class="num">期初数量</th><th class="num">期初金额</th><th class="num">入库数量</th><th class="num">入库金额</th><th class="num">月末平均价</th><th class="num">出库数量</th><th class="num">出库金额</th><th class="num">期末数量</th><th class="num">期末金额</th><th>收敛</th></tr></thead>
+    <tbody>{% for item in page %}<tr><td><strong>{{ item.material_code }}</strong><small>{{ item.material_name }}</small></td><td class="num">{{ item.opening_quantity|floatformat:3 }}</td><td class="num">{{ item.opening_amount|floatformat:2 }}</td><td class="num">{{ item.receipt_quantity|floatformat:3 }}</td><td class="num">{{ item.receipt_amount|floatformat:2 }}</td><td class="num">{{ item.weighted_average_price|floatformat:6 }}</td><td class="num">{{ item.issue_quantity|floatformat:3 }}</td><td class="num">{{ item.issue_amount|floatformat:2 }}</td><td class="num">{{ item.ending_quantity|floatformat:3 }}</td><td class="num">{{ item.ending_amount|floatformat:2 }}</td><td>{% if item.converged %}<span class="pill success">是</span>{% else %}<span class="pill danger">否</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="11" class="empty-cell">尚未执行结算。</td></tr>{% endfor %}</tbody></table>
+  </div>{% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}
+

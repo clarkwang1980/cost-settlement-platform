@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}月末未开票 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">MONTH-END GOODS ISSUED</p>
+    <h1>月末已出库未开票</h1>
+    <p>截至{{ period }}月末仍未开票的销售出库，包含以前月份出库；未开票成本按实际匹配数量拆分。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售发票匹配</a>
+    <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
+  </div>
+</section>
+
+<section class="summary-strip six">
+  <article><span>未开票出库笔数</span><strong>{{ summary.issue_count }}</strong></article>
+  <article><span>未开票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3 }}</strong></article>
+  <article><span>期末发出商品</span><strong>{{ summary.outstanding_cost|floatformat:2 }}</strong></article>
+  <article><span>部分开票</span><strong>{{ summary.partial_count }}</strong></article>
+  <article><span>以前月份出库</span><strong>{{ summary.prior_period_count }}</strong></article>
+  <article><span>缺少出库成本</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">GOODS ISSUED ROLLFORWARD</p>
+      <h2>发出商品跨月滚动勾稽</h2>
+    </div>
+    <span class="pill {% if rollforward.difference %}danger{% else %}success{% endif %}">差额 {{ rollforward.difference|floatformat:2 }}</span>
+  </div>
+  <div class="summary-strip compact">
+    <article><span>期初发出商品</span><strong>{{ rollforward.opening_amount|floatformat:2 }}</strong></article>
+    <article><span>本月销售出库成本</span><strong>{{ rollforward.current_issue_amount|floatformat:2 }}</strong></article>
+    <article><span>本月开票结转成本</span><strong>{{ rollforward.invoice_cleared_amount|floatformat:2 }}</strong></article>
+    <article><span>期末发出商品</span><strong>{{ rollforward.ending_amount|floatformat:2 }}</strong></article>
+  </div>
+  <p class="help-text">期初发出商品＋本月销售出库成本－本月开票结转成本＝期末发出商品。样品出库和批准忽略的出库不进入本表。</p>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid wide" method="get">
+    <label>出库月份<input name="issue_month" type="month" value="{{ request.GET.issue_month }}"></label>
+    <label>出库单号<input name="document_no" value="{{ request.GET.document_no }}" placeholder="包含关键字"></label>
+    <label>销售订单号<input name="sales_order_no" value="{{ request.GET.sales_order_no }}"></label>
+    <label>客户<input name="customer" value="{{ request.GET.customer }}" placeholder="编码或名称"></label>
+    <label>产品<input name="material" value="{{ request.GET.material }}" placeholder="编码或名称"></label>
+    <label>未开票状态
+      <select name="status">
+        <option value="">全部</option>
+        {% for value in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>是否以前月份出库
+      <select name="cross_period">
+        <option value="">全部</option>
+        <option value="yes" {% if request.GET.cross_period == "yes" %}selected{% endif %}>是</option>
+        <option value="no" {% if request.GET.cross_period == "no" %}selected{% endif %}>否</option>
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">清空</a>
+    </div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <h2>截至月末仍未开票的销售出库明细</h2>
+    <span class="pill warning">发出商品明细</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>出库月份/日期</th><th>出库单号</th><th>销售订单</th><th>客户</th><th>产品</th>
+          <th class="num">出库数量</th><th class="num">累计开票</th><th class="num">未开票数量</th>
+          <th class="num">出库成本</th><th class="num">已开票成本</th><th class="num">未开票成本</th>
+          <th>匹配发票</th><th>未开票天数</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in page %}
+        <tr>
+          <td><strong>{{ row.issue_month|date:"Y-m" }}</strong><small>{{ row.document_date }}</small></td>
+          <td>
+            {% if row.transaction %}
+              <a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong><small>流水ID {{ row.transaction.id }}</small></a>
+            {% else %}
+              <strong>{{ row.document_no|default:"—" }}</strong><small>期初发出商品台账</small>
+            {% endif %}
+          </td>
+          <td>{{ row.sales_order_no|default:"—" }}</td>
+          <td>{{ row.customer_name|default:row.customer_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
+          <td class="num">{{ row.issue_quantity|floatformat:3 }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3 }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3 }}</strong></td>
+          <td class="num">{{ row.issue_amount|floatformat:2|default:"—" }}</td>
+          <td class="num">{{ row.invoiced_cost|floatformat:2|default:"—" }}</td>
+          <td class="num"><strong>{{ row.outstanding_cost|floatformat:2|default:"—" }}</strong></td>
+          <td>{{ row.invoice_nos|default:"—" }}{% if row.latest_invoice_period %}<small>最近 {{ row.latest_invoice_period|date:"Y-m" }}</small>{% endif %}</td>
+          <td>{{ row.outstanding_days }}天</td>
+          <td><span class="pill {% if row.status == '缺少出库成本' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="14" class="empty-cell">截至本月末没有已出库未开票记录。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

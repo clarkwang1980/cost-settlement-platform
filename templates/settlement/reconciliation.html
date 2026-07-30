@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}勾稽异常 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">RECONCILIATION</p><h1>勾稽与异常</h1><p>所有差额和未匹配记录明确列示，不使用空值或零值静默通过。</p></div>
+</section>
+<section class="check-grid">
+  {% for item in checks %}
+    <article class="check-card check-{{ item.status }}">
+      <div><span>{{ item.check_code }}</span><strong>{{ item.get_status_display }}</strong></div>
+      <h2>{{ item.check_name }}</h2>
+      <dl><dt>左侧</dt><dd>{{ item.left_amount|floatformat:2 }}</dd><dt>右侧</dt><dd>{{ item.right_amount|floatformat:2 }}</dd><dt>差额</dt><dd>{{ item.difference|floatformat:2 }}</dd></dl>
+      {% if item.check_code == "sales_cost" %}
+        <dl class="check-details">
+          <dt>已开票成本</dt><dd>{{ item.details.invoiced_cost|default:"0"|floatformat:2 }}</dd>
+          <dt>未开票成本</dt><dd>{{ item.details.goods_issued|default:"0"|floatformat:2 }}</dd>
+          <dt>样品费用</dt><dd>{{ item.details.sample_cost|default:"0"|floatformat:2 }}</dd>
+          <dt>批准忽略</dt><dd>{{ item.details.ignored_cost|default:"0"|floatformat:2 }}</dd>
+        </dl>
+      {% elif item.check_code == "goods_issued_rollforward" %}
+        <dl class="check-details">
+          <dt>期初发出商品</dt><dd>{{ item.details.opening_amount|default:"0"|floatformat:2 }}</dd>
+          <dt>本月销售出库</dt><dd>{{ item.details.current_issue_amount|default:"0"|floatformat:2 }}</dd>
+          <dt>本月开票结转</dt><dd>{{ item.details.invoice_cleared_amount|default:"0"|floatformat:2 }}</dd>
+          <dt>期末发出商品</dt><dd>{{ item.details.ending_amount|default:"0"|floatformat:2 }}</dd>
+        </dl>
+      {% endif %}
+    </article>
+  {% empty %}<div class="empty-state"><strong>尚未生成勾稽结果</strong><p>执行完整结算后自动生成。</p></div>{% endfor %}
+</section>
+<section class="section-card">
+  <div class="section-heading"><div><p class="eyebrow">EXCEPTIONS</p><h2>异常清单</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>级别</th><th>类别</th><th>引用</th><th>内容</th><th>状态</th><th>处理</th></tr></thead>
+  <tbody>{% for item in exceptions %}<tr><td><span class="pill {% if item.severity == 'blocking' %}danger{% elif item.severity == 'warning' %}warning{% endif %}">{{ item.get_severity_display }}</span></td><td>{{ item.category }}</td><td>{{ item.reference|default:"—" }}</td><td>{{ item.message }}</td><td>{{ item.get_status_display }}</td><td>{% if period.status != "locked" and item.status == "open" %}<form class="action-pair" method="post" action="{% url 'resolve_exception' period.id item.id %}">{% csrf_token %}<button class="mini-button" name="action" value="resolve">标记处理</button><button class="mini-button muted" name="action" value="ignore">批准忽略</button></form>{% else %}—{% endif %}</td></tr>{% empty %}<tr><td colspan="6" class="empty-cell">没有异常。</td></tr>{% endfor %}</tbody></table></div>
+  {% include "settlement/_pagination.html" with page=exceptions %}
+</section>
+{% endblock %}

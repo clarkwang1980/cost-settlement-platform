@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}车间结转 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORKSHOP SETTLEMENT</p>
+    <h1>车间独立结转</h1>
+    <p>先确定上游到下游的顺序；上游生产入库成本完成后，下游领用才能取得正确成本。</p>
+  </div>
+  {% if period.status != "locked" and has_settled %}
+    <form method="post" action="{% url 'reset_workshops' period.id %}">
+      {% csrf_token %}
+      <button class="button danger" type="submit" onclick="return confirm('将清除本期车间成本结果并重新结转，确定继续吗？')">重置车间结转</button>
+    </form>
+  {% endif %}
+</section>
+
+{% if carry.previous %}
+  <div class="message {% if carry.ready %}message-success{% else %}message-error{% endif %}">
+    上期来源：{{ carry.previous }}；
+    {% if carry.ready %}已锁账，结转时将自动承接期末库存、在产品、未完工订单和合同余额。{% else %}尚未锁账，本期暂不能结转。{% endif %}
+  </div>
+{% elif carry.error %}
+  <div class="message message-error">{{ carry.error }}</div>
+{% else %}
+  <div class="message message-info">这是系统中的首个核算期间，期初数据由本期上传资料提供。</div>
+{% endif %}
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">USER CONTROLLED ORDER</p>
+      <h2>结转顺序</h2>
+    </div>
+    {% if all_settled %}<span class="pill success">全部完成</span>{% endif %}
+  </div>
+
+  {% if settlements %}
+    <form method="post" action="{% url 'update_workshop_order' period.id %}">
+      {% csrf_token %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>顺序</th>
+              <th>车间/成本中心</th>
+              <th>状态</th>
+              <th>订单成本</th>
+              <th>生产入库成本</th>
+              <th>循环次数</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in settlements %}
+              <tr>
+                <td><input class="sequence-input" type="number" min="1" name="sequence_{{ item.id }}" value="{{ item.sequence }}" {% if has_settled or period.status == "locked" %}disabled{% endif %}></td>
+                <td><strong>{{ item.workshop }}</strong></td>
+                <td>
+                  {% if item.status == "settled" %}
+                    <span class="pill success">已结转</span>
+                  {% elif item.status == "failed" %}
+                    <span class="pill danger">失败</span>
+                  {% else %}
+                    <span class="pill">待结转</span>
+                  {% endif %}
+                </td>
+                <td>{{ item.order_cost|floatformat:2 }}</td>
+                <td>{{ item.production_receipt_amount|floatformat:2 }}</td>
+                <td>{{ item.iterations }}</td>
+                <td>
+                  {% if item.can_settle_now %}
+                    <button class="button small primary" type="submit" formaction="{% url 'settle_workshop' period.id item.id %}" formmethod="post">结转本车间</button>
+                  {% elif item.status == "settled" %}
+                    <span class="muted-text">{{ item.settled_at|date:"m-d H:i" }}</span>
+                  {% else %}
+                    <span class="muted-text">等待前序车间</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if not has_settled and period.status != "locked" %}
+        <div class="form-actions">
+          <button class="button secondary" type="submit">保存结转顺序</button>
+        </div>
+      {% endif %}
+    </form>
+  {% else %}
+    <div class="empty-state">
+      <strong>尚未识别到车间</strong>
+      <p>请先上传生产订单和车间费用资料。</p>
+    </div>
+  {% endif %}
+</section>
+
+<section class="section-card">
+  <p><strong>完整结算按钮的行为：</strong>按照上表顺序，自动继续处理所有“待结转”车间；已经独立结转的车间不会重复计算。</p>
+</section>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}库存流水匹配 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">INVENTORY MATCH DETAIL</p>
+    <h1>库存流水匹配明细</h1>
+    <p>{{ txn.document_no|default:"无单号" }} · {{ txn.txn_date }} · {{ txn.business_type }}</p>
+  </div>
+  <a class="button secondary" href="{% url 'inventory_matches' period.id %}">返回流水列表</a>
+</section>
+
+<section class="summary-strip detail-summary">
+  <article><span>匹配类别</span><strong class="small-value">{{ txn.match_category }}</strong></article>
+  <article><span>方向</span><strong class="small-value">{{ txn.get_direction_display }}</strong></article>
+  <article><span>物料</span><strong class="small-value">{{ txn.material_code }}</strong></article>
+  <article><span>数量</span><strong>{{ txn.quantity|floatformat:3 }}</strong></article>
+  <article><span>匹配状态</span><strong class="small-value">{{ txn.get_match_status_display }}</strong></article>
+</section>
+
+<div class="two-column">
+  <section class="section-card">
+    <h2>处理方式</h2>
+    {% if period.status == "locked" %}
+      <p><span class="pill">{{ txn.get_match_mode_display }}</span> 本月已锁账，只能查看。</p>
+    {% else %}
+      <form class="stack-form" method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="set_mode">
+        <label>处理方式
+          <select name="match_mode">
+            {% for value,label in match_modes %}<option value="{{ value }}" {% if txn.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>忽略原因<input name="ignore_reason" value="{{ txn.ignore_reason }}" placeholder="选择忽略时建议填写"></label>
+        <button class="button primary" type="submit">保存处理方式</button>
+      </form>
+      <p class="help-text">忽略的是匹配要求和匹配关系；该流水仍属于库存原始记录，继续参加库存数量与金额结转。</p>
+    {% endif %}
+  </section>
+  <section class="section-card">
+    <h2>流水信息</h2>
+    <dl class="detail-list">
+      <dt>仓库</dt><dd>{{ txn.warehouse|default:"—" }}</dd>
+      <dt>物料名称</dt><dd>{{ txn.material_name|default:"—" }}</dd>
+      <dt>供应商</dt><dd>{{ txn.supplier_name|default:txn.supplier_code|default:"—" }}</dd>
+      <dt>客户</dt><dd>{{ txn.customer_name|default:txn.customer_code|default:"—" }}</dd>
+      <dt>订单号</dt><dd>{{ txn.order_no|default:"—" }}</dd>
+      <dt>单价/金额</dt><dd>{{ txn.unit_price|floatformat:6|default:"—" }} / {{ txn.amount|floatformat:2|default:"—" }}</dd>
+    </dl>
+  </section>
+</div>
+
+{% if period.status != "locked" and txn.match_mode != "ignored" %}
+  {% for group in source_groups %}
+  <section class="section-card">
+    <h2>手工匹配{{ group.label }}</h2>
+    <form class="manual-match-row" method="post">
+      {% csrf_token %}<input type="hidden" name="action" value="add_match"><input type="hidden" name="kind" value="{{ group.kind }}">
+      <label>目标单据
+        <select name="source_id" required>
+          <option value="">请选择</option>
+          {% for item in group.items %}
+            {% if group.kind == "purchase_contract" %}
+              <option value="{{ item.id }}">{{ item.contract_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 剩余{{ item.remaining_quantity|floatformat:3 }}</option>
+            {% elif group.kind == "purchase_invoice" %}
+              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3 }}</option>
+            {% elif group.kind == "sales_invoice" %}
+              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.customer_name|default:item.customer_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3 }}</option>
+            {% else %}
+              <option value="{{ item.id }}">{{ item.order_no }} · {{ item.workshop }} · {{ item.product_code }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <label>匹配数量<input name="matched_quantity" type="number" min="0.000001" step="0.000001" required></label>
+      <button class="button primary" type="submit">保存匹配</button>
+    </form>
+  </section>
+  {% endfor %}
+{% endif %}
+
+<section class="section-card">
+  <div class="section-heading"><h2>当前匹配关系</h2><span class="pill">{{ allocations|length }}条</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>匹配类型</th><th>目标单据</th><th class="num">匹配数量</th><th class="num">单价</th><th class="num">金额</th><th>来源</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for a in allocations %}
+        <tr>
+          <td>{{ a.get_kind_display }}</td>
+          <td>
+            {% if a.contract_line %}{{ a.contract_line.contract_no }}
+            {% elif a.purchase_invoice_line %}<a class="document-link" href="{% url 'source_document_detail' a.purchase_invoice_line.period.id 'purchase_invoice' a.purchase_invoice_line.id %}">{{ a.purchase_invoice_line.invoice_no }}</a>
+            {% elif a.sales_invoice_line %}<a class="document-link" href="{% url 'source_document_detail' a.sales_invoice_line.period.id 'sales_invoice' a.sales_invoice_line.id %}">{{ a.sales_invoice_line.invoice_no }}</a>
+            {% elif a.production_order %}<a class="document-link" href="{% url 'source_document_detail' a.production_order.period.id 'production_order' a.production_order.id %}">{{ a.production_order.order_no }}</a>
+            {% endif %}
+          </td>
+          <td class="num">{{ a.matched_quantity|floatformat:3 }}</td>
+          <td class="num">{{ a.unit_price|floatformat:6|default:"—" }}</td>
+          <td class="num">{{ a.amount|floatformat:2|default:"—" }}</td>
+          <td>{% if a.is_manual %}<span class="pill success">手工</span>{% else %}<span class="pill">自动</span>{% endif %}</td>
+          <td>
+            {% if period.status != "locked" %}
+              <form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove_match"><input type="hidden" name="allocation_id" value="{{ a.id }}"><button class="mini-button muted" type="submit">删除</button></form>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+      {% empty %}<tr><td colspan="7" class="empty-cell">当前没有匹配关系。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
