@@ -11,6 +11,10 @@ ALLOWED_HOSTS = [
     for value in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
     if value.strip()
 ]
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.railway.app",
+    "https://*.up.railway.app",
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
