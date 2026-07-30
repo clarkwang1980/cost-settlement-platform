@@ -61,19 +61,47 @@ if os.getenv("DB_ENGINE", "postgres") == "sqlite":
         }
     }
 else:
-    # Railway injects PGHOST/PGDATABASE/PGUSER/PGPASSWORD/PGPORT automatically.
-    # Fall back to those when POSTGRES_* are not set, so zero-config on Railway.
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB") or os.getenv("PGDATABASE", "cost_settlement"),
-            "USER": os.getenv("POSTGRES_USER") or os.getenv("PGUSER", "cost_user"),
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD") or os.getenv("PGPASSWORD", "cost_password"),
-            "HOST": os.getenv("POSTGRES_HOST") or os.getenv("PGHOST", "127.0.0.1"),
-            "PORT": os.getenv("POSTGRES_PORT") or os.getenv("PGPORT", "5432"),
-            "CONN_MAX_AGE": 60,
+    # Support DATABASE_URL (e.g. postgres://user:pass@host:port/dbname)
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        import re
+        m = re.match(
+            r"^postgres(?:ql)?://([^:]+):([^@]+)@([^:/]+)(?::(\d+))?/(.+)$",
+            database_url,
+        )
+        if m:
+            DATABASES = {
+                "default": {
+                    "ENGINE": "django.db.backends.postgresql",
+                    "NAME": m.group(5),
+                    "USER": m.group(1),
+                    "PASSWORD": m.group(2),
+                    "HOST": m.group(3),
+                    "PORT": m.group(4) or "5432",
+                    "CONN_MAX_AGE": 60,
+                }
+            }
+        else:
+            raise ValueError(f"Cannot parse DATABASE_URL: {database_url}")
+    else:
+        # Individual env vars — Railway injects PG* automatically if services are linked
+        db_name = os.getenv("POSTGRES_DB") or os.getenv("PGDATABASE", "cost_settlement")
+        db_user = os.getenv("POSTGRES_USER") or os.getenv("PGUSER", "cost_user")
+        db_password = os.getenv("POSTGRES_PASSWORD") or os.getenv("PGPASSWORD", "cost_password")
+        db_host = os.getenv("POSTGRES_HOST") or os.getenv("PGHOST", "127.0.0.1")
+        db_port = os.getenv("POSTGRES_PORT") or os.getenv("PGPORT", "5432")
+
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": db_name,
+                "USER": db_user,
+                "PASSWORD": db_password,
+                "HOST": db_host,
+                "PORT": db_port,
+                "CONN_MAX_AGE": 60,
+            }
         }
-    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
