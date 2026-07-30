@@ -1,10 +1,6 @@
 #!/bin/sh
 set -e
 
-echo "=== DEBUG: Database-related environment variables ==="
-env | grep -iE 'PG|POSTGRES|DATABASE' | sort || true
-echo "=== DEBUG: End of env dump ==="
-
 python manage.py migrate --noinput
 python manage.py ensure_admin
 python manage.py collectstatic --noinput
