@@ -3,6 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">ORDER COSTING</p><h1>订单完工与在制成本</h1><p>制造费用继续按现行材料金额比例分配，工资按现行工时规则分配。</p></div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'order_cost' %}?{{ request.GET.urlencode }}">导出Excel</a>
 </section>
 <section class="summary-strip">
   <article><span>订单总成本</span><strong>¥{{ totals.total|floatformat:2|default:"0.00" }}</strong></article>

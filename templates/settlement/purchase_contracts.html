@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}采购合同 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PURCHASE CONTRACTS</p>
+    <h1>采购合同</h1>
+    <p>本期间采购合同共 {{ page.paginator.count }} 条。合同价作为采购入库的暂估价，发票到达后不反写库存金额。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_contract' %}?{{ request.GET.urlencode }}">导出Excel</a>
+    <a class="button secondary" href="{% url 'purchase_matches' period.id %}">采购发票匹配</a>
+    <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
+    <a class="button secondary" href="{% url 'purchase_differences' period.id %}">本月暂估差异</a>
+  {% if period.status != "locked" %}
+    <a class="button primary" href="{% url 'upload_file' period.id %}">上传资料</a>
+  {% endif %}
+  </div>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>合同号<input name="contract_no" value="{{ request.GET.contract_no }}" placeholder="包含关键字"></label>
+    <label>供应商<input name="supplier" value="{{ request.GET.supplier }}" placeholder="编码或名称"></label>
+    <label>品名编码<input name="material" value="{{ request.GET.material }}"></label>
+    <label>处理方式
+      <select name="match_mode">
+        <option value="">全部</option>
+        {% for value,label in match_modes %}<option value="{{ value }}" {% if request.GET.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">清空</a>
+    </div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>合同号</th><th>合同日期</th><th>供应商</th>
+          <th>品名</th><th class="num">合同数量</th><th class="num">剩余数量</th>
+          <th class="num">不含税单价</th><th>来源</th><th>处理方式</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for contract in page %}
+        <tr>
+          <td><strong>{{ contract.contract_no }}</strong><small>明细ID {{ contract.id }}</small></td>
+          <td>{{ contract.contract_date|default:"—" }}</td>
+          <td>{{ contract.supplier_name|default:contract.supplier_code|default:"—" }}</td>
+          <td><strong>{{ contract.material_code }}</strong><small>{{ contract.material_name }}</small></td>
+          <td class="num">{{ contract.quantity|floatformat:3 }}</td>
+          <td class="num">{{ contract.remaining_quantity|floatformat:3 }}</td>
+          <td class="num">{{ contract.unit_price_excl_tax|floatformat:2 }}</td>
+          <td>{% if contract.is_system_generated %}<span class="pill">自动承接</span>{% else %}<span class="pill success">导入</span>{% endif %}</td>
+          <td>
+            <span class="pill {% if contract.match_mode == 'ignored' %}warning{% elif contract.match_mode == 'manual' %}success{% endif %}">{{ contract.get_match_mode_display }}</span>
+            {% if contract.ignore_reason %}<small>{{ contract.ignore_reason }}</small>{% endif %}
+          </td>
+        </tr>
+      {% empty %}<tr><td colspan="9" class="empty-cell">没有符合筛选条件的采购合同。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

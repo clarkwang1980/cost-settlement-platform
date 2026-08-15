@@ -48,6 +48,7 @@
         <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
         <a href="{% url 'order_costs' period.id %}">订单成本</a>
         <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
+        <a href="{% url 'export_center' period.id %}">报表导出</a>
       </div>
     </nav>
   {% endif %}
@@ -64,5 +65,6 @@
   </main>
 
   <footer class="footer">所有结果均保留原始文件、导入批次、匹配关系和计算记录。</footer>
+{% block extra_js %}{% endblock %}
 </body>
 </html>

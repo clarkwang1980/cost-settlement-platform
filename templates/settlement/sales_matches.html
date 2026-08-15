@@ -8,6 +8,7 @@
     <p>销售发票可核销系统启用前的期初发出商品，以及本月和以前月份尚未开票的销售出库；自动匹配要求销售订单、客户和产品完全一致。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'sales_invoice' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">月末已出库未开票</a>
     {% if period.status != "locked" %}
     <form method="post" action="{% url 'rematch_period' period.id %}">

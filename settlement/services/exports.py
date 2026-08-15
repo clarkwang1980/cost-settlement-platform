@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from io import BytesIO
 
 from django.http import HttpResponse
@@ -23,6 +24,14 @@ from settlement.services.sales_uninvoiced import (
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 SUBTOTAL_FILL = PatternFill("solid", fgColor="D9EAF7")
+# 数字列统一显示：千分位分隔 + 两位小数（底层仍是数值，可继续计算）
+NUMBER_FORMAT = "#,##0.00"
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float, Decimal)) and not isinstance(
+        value, bool
+    )
 
 
 def _append_table(workbook, title, headers, rows):
@@ -34,6 +43,11 @@ def _append_table(workbook, title, headers, rows):
         cell.alignment = Alignment(horizontal="center", vertical="center")
     for row in rows:
         worksheet.append(list(row))
+    # 数据区数字单元格设置千分位+两位小数格式
+    for row in worksheet.iter_rows(min_row=2):
+        for cell in row:
+            if _is_number(cell.value):
+                cell.number_format = NUMBER_FORMAT
     worksheet.freeze_panes = "A2"
     worksheet.auto_filter.ref = worksheet.dimensions
     for index, column in enumerate(worksheet.columns, 1):
@@ -44,6 +58,58 @@ def _append_table(workbook, title, headers, rows):
             max(width + 2, 10), 42
         )
     return worksheet
+
+
+def read_uploaded_rows(path):
+    """读取用户上传的原始表格文件，返回 (表头, 数据行列表)。保留原始行数与列。"""
+    suffix = path.suffix.lower()
+    rows = []
+    header = []
+    if suffix in (".xlsx", ".xlsm"):
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = wb.worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        try:
+            header = list(next(it))
+        except StopIteration:
+            wb.close()
+            return [], []
+        for r in it:
+            if any(v not in (None, "") for v in r):
+                rows.append(tuple(r))
+        wb.close()
+    elif suffix == ".csv":
+        import csv
+        import io
+
+        raw = path.read_bytes()
+        decoded = None
+        for enc in ("utf-8-sig", "gb18030", "utf-8"):
+            try:
+                decoded = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            return [], []
+        csv_rows = list(csv.reader(io.StringIO(decoded)))
+        if not csv_rows:
+            return [], []
+        header = csv_rows[0]
+        rows = [
+            tuple(r)
+            for r in csv_rows[1:]
+            if any(str(v).strip() for v in r)
+        ]
+    else:
+        return [], []
+    # 去掉尾部空列
+    while header and header[-1] in (None, ""):
+        header.pop()
+        rows = [r[: len(header)] for r in rows]
+    return header, rows
 
 
 def build_settlement_workbook(period):
@@ -91,13 +157,17 @@ def build_settlement_workbook(period):
         carry_rows.append(
             (
                 "期初库存",
-                item.source_period.month,
+                item.source_period.month if item.source_period else None,
                 item.material_code,
                 item.material_name,
                 item.quantity,
                 item.amount,
                 item.unit_price,
-                "系统自动承接",
+                (
+                    "系统自动承接"
+                    if item.is_system_generated
+                    else "人工上传/覆盖"
+                ),
             )
         )
     for item in period.opening_wip.all():
@@ -245,6 +315,38 @@ def build_settlement_workbook(period):
 
     _append_table(
         workbook,
+        "期末存货",
+        [
+            "期末日期",
+            "物料号",
+            "物料名称",
+            "分类名称",
+            "仓库名称",
+            "批次号",
+            "结存数量",
+            "单位名称",
+            "单价",
+            "金额",
+        ],
+        (
+            (
+                item.ending_date,
+                item.material_code,
+                item.material_name,
+                item.category_name,
+                item.warehouse,
+                item.batch_no,
+                item.quantity,
+                item.uom,
+                item.unit_price,
+                item.amount,
+            )
+            for item in period.ending_inventory_balances.all()
+        ),
+    )
+
+    _append_table(
+        workbook,
         "车间结转",
         [
             "结转顺序",
@@ -281,41 +383,44 @@ def build_settlement_workbook(period):
         workbook,
         "库存流水",
         [
-            "ID",
-            "日期",
-            "单据号",
-            "业务类型",
-            "方向",
-            "物料编码",
+            "创建时间",
             "物料名称",
-            "数量",
+            "物料编号",
+            "分类",
+            "物料规格",
+            "仓库名称",
+            "批号",
+            "操作数量",
+            "主单位",
+            "辅助数量",
+            "辅助单位",
+            "备注",
+            "业务单据编号",
+            "业务类型",
+            "供应商名称",
             "单价",
             "金额",
-            "价格来源",
-            "工单号",
-            "合同号",
-            "发票号",
-            "发票期间",
-            "匹配状态",
         ],
         (
             (
-                item.id,
                 item.txn_date,
+                item.material_name,
+                item.material_code,
+                item.category_name,
+                item.specification,
+                item.warehouse,
+                item.batch_no,
+                item.quantity,
+                item.uom,
+                item.auxiliary_quantity,
+                item.auxiliary_uom,
+                item.remark,
                 item.document_no,
                 item.business_type,
-                item.get_direction_display(),
-                item.material_code,
-                item.material_name,
-                item.quantity,
+                item.supplier_name or item.customer_name
+                or item.supplier_code or item.customer_code or "",
                 item.unit_price,
                 item.amount,
-                item.price_source,
-                item.order_no,
-                item.contract_no,
-                item.invoice_no,
-                item.invoice_period,
-                item.get_match_status_display(),
             )
             for item in period.inventory_transactions.all()
         ),
@@ -693,3 +798,19 @@ def settlement_excel_response(period):
         f"attachment; filename*=UTF-8''{__import__('urllib.parse').parse.quote(filename)}"
     )
     return response
+
+
+def build_listing_workbook(sheets):
+    """生成单文件多工作表 Excel。
+
+    sheets: [(工作表名, 表头列表, 数据行(可迭代的元组/列表)), ...]
+    """
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for title, headers, rows in sheets:
+        _append_table(workbook, title, headers, rows)
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return stream
+

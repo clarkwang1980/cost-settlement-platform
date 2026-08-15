@@ -3,7 +3,10 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">INVENTORY VALUATION</p><h1>库存金额结转</h1><p>采购、生产入库和全部出库按照月末加权平均价完整结转。</p></div>
-  {% if period.inventory_valuations.exists %}<a class="button secondary" href="{% url 'export_period' period.id %}">导出Excel</a>{% endif %}
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_valuation' %}?{{ request.GET.urlencode }}">导出Excel</a>
+    {% if period.inventory_valuations.exists %}<a class="button secondary" href="{% url 'export_period' period.id %}">导出结算工作簿</a>{% endif %}
+  </div>
 </section>
 <section class="summary-strip">
   <article><span>期初金额</span><strong>¥{{ totals.opening|floatformat:2|default:"0.00" }}</strong></article>

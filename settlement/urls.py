@@ -12,6 +12,16 @@ urlpatterns = [
     ),
     path("periods/<int:period_id>/", views.period_detail, name="period_detail"),
     path("periods/<int:period_id>/upload/", views.upload_file, name="upload_file"),
+    path(
+        "periods/<int:period_id>/import-batches/",
+        views.import_batches,
+        name="import_batches",
+    ),
+    path(
+        "periods/<int:period_id>/import-batches/<int:batch_id>/download/",
+        views.download_import_file,
+        name="download_import_file",
+    ),
     path("periods/<int:period_id>/run/", views.run_period, name="run_period"),
     path("periods/<int:period_id>/rematch/", views.rematch_period, name="rematch_period"),
     path(
@@ -40,6 +50,11 @@ urlpatterns = [
         name="purchase_matches",
     ),
     path(
+        "periods/<int:period_id>/purchase-contracts/",
+        views.purchase_contracts,
+        name="purchase_contracts",
+    ),
+    path(
         "periods/<int:period_id>/purchase-accruals/",
         views.purchase_accruals,
         name="purchase_accruals",
@@ -63,6 +78,11 @@ urlpatterns = [
         "periods/<int:period_id>/order-matches/",
         views.order_matches,
         name="order_matches",
+    ),
+    path(
+        "periods/<int:period_id>/inventory-ledger/",
+        views.inventory_ledger,
+        name="inventory_ledger",
     ),
     path(
         "periods/<int:period_id>/inventory-matches/",
@@ -120,5 +140,15 @@ urlpatterns = [
         "periods/<int:period_id>/export/",
         views.export_period,
         name="export_period",
+    ),
+    path(
+        "periods/<int:period_id>/export-center/",
+        views.export_center,
+        name="export_center",
+    ),
+    path(
+        "periods/<int:period_id>/export-list/<str:kind>/",
+        views.export_listing,
+        name="export_listing",
     ),
 ]

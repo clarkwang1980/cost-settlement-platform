@@ -61,6 +61,14 @@ class ImportBatch(models.Model):
             "opening_goods_issued",
             "期初发出商品明细",
         )
+        OPENING_INVENTORY = (
+            "opening_inventory",
+            "期初存货",
+        )
+        ENDING_INVENTORY = (
+            "ending_inventory",
+            "期末存货",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -141,8 +149,18 @@ class InventoryTransaction(models.Model):
     material_code = models.CharField(max_length=80, db_index=True)
     material_name = models.CharField(max_length=255, blank=True)
     specification = models.CharField(max_length=255, blank=True)
+    category_name = models.CharField(max_length=255, blank=True, verbose_name="分类名称")
+    batch_no = models.CharField(max_length=100, blank=True, verbose_name="批号")
     quantity = models.DecimalField(max_digits=20, decimal_places=6)
+    auxiliary_quantity = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="辅助数量",
+    )
     uom = models.CharField(max_length=30, blank=True)
+    auxiliary_uom = models.CharField(max_length=30, blank=True, verbose_name="辅助单位")
     order_no = models.CharField(max_length=100, blank=True, db_index=True)
     workshop = models.CharField(max_length=100, blank=True)
     supplier_code = models.CharField(max_length=80, blank=True)
@@ -464,13 +482,31 @@ class OpeningInventoryBalance(models.Model):
         on_delete=models.CASCADE,
         related_name="opening_inventory_balances",
     )
+    batch = models.ForeignKey(
+        ImportBatch,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="opening_inventory_balances",
+    )
     source_period = models.ForeignKey(
         AccountingPeriod,
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="carried_inventory_balances",
     )
     material_code = models.CharField(max_length=80, db_index=True)
     material_name = models.CharField(max_length=255, blank=True)
+    opening_date = models.DateField(null=True, blank=True, verbose_name="期初日期")
+    category_name = models.CharField(max_length=255, blank=True, verbose_name="分类名称")
+    warehouse = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name="仓库名称"
+    )
+    batch_no = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name="批次号"
+    )
+    uom = models.CharField(max_length=30, blank=True, verbose_name="单位名称")
     quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
     amount = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     unit_price = models.DecimalField(max_digits=20, decimal_places=8, default=ZERO)
@@ -481,8 +517,8 @@ class OpeningInventoryBalance(models.Model):
         ordering = ["material_code"]
         constraints = [
             models.UniqueConstraint(
-                fields=["period", "material_code"],
-                name="unique_opening_inventory_per_material",
+                fields=["period", "material_code", "warehouse", "batch_no"],
+                name="unique_opening_inventory_batch",
             )
         ]
 
@@ -629,6 +665,49 @@ class OpeningGoodsIssued(models.Model):
 
     def __str__(self):
         return f"{self.document_no} {self.material_code} {self.opening_quantity}"
+
+
+class EndingInventoryBalance(models.Model):
+    period = models.ForeignKey(
+        AccountingPeriod,
+        on_delete=models.CASCADE,
+        related_name="ending_inventory_balances",
+    )
+    batch = models.ForeignKey(
+        ImportBatch,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="ending_inventory_balances",
+    )
+    material_code = models.CharField(max_length=80, db_index=True)
+    material_name = models.CharField(max_length=255, blank=True)
+    ending_date = models.DateField(null=True, blank=True, verbose_name="期末日期")
+    category_name = models.CharField(max_length=255, blank=True, verbose_name="分类名称")
+    warehouse = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name="仓库名称"
+    )
+    batch_no = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name="批次号"
+    )
+    uom = models.CharField(max_length=30, blank=True, verbose_name="单位名称")
+    quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    amount = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    unit_price = models.DecimalField(max_digits=20, decimal_places=8, default=ZERO)
+    is_system_generated = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["material_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "material_code", "warehouse", "batch_no"],
+                name="unique_ending_inventory_batch",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.period} {self.material_code} {self.quantity}"
 
 
 class MatchAllocation(models.Model):

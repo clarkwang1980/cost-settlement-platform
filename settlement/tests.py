@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 
 from settlement.models import (
     AccountingPeriod,
+    EndingInventoryBalance,
     ImportBatch,
     InventoryTransaction,
     MatchAllocation,
@@ -296,6 +297,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
                 "跨期结转",
                 "期初采购暂估",
                 "期初发出商品",
+                "期末存货",
                 "车间结转",
                 "库存流水",
                 "采购匹配",
@@ -1300,7 +1302,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertEqual(upload_page.status_code, 200)
         self.assertContains(upload_page, "上传前必须注意")
-        self.assertContains(upload_page, "九类资料字段说明")
+        self.assertContains(upload_page, "十一类资料字段说明")
         self.assertContains(upload_page, "“替换”会删除本月整类资料")
         self.assertContains(upload_page, "同车间费用必须先汇总")
         self.assertContains(upload_page, "销售订单号、客户和产品一致")
@@ -1314,6 +1316,44 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 template_response.headers.get("Content-Disposition", ""),
             )
 
+    def test_inventory_template_new_format_imports_with_inferred_direction(self):
+        template_dir = Path(settings.BASE_DIR) / "sample_templates"
+        content = (template_dir / "库存出入库流水.csv").read_bytes()
+        uploaded = SimpleUploadedFile("库存出入库流水.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.INVENTORY,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        self.assertEqual(self.period.inventory_transactions.count(), 4)
+        receipt = self.period.inventory_transactions.get(document_no="GR-001")
+        self.assertEqual(receipt.txn_date, date(2026, 6, 5))
+        self.assertEqual(receipt.direction, InventoryTransaction.Direction.IN)
+        self.assertEqual(receipt.material_code, "RM-001")
+        self.assertEqual(receipt.category_name, "原材料")
+        self.assertEqual(receipt.batch_no, "B20260601")
+        self.assertEqual(receipt.uom, "kg")
+        self.assertEqual(receipt.auxiliary_quantity, Decimal("200"))
+        self.assertEqual(receipt.auxiliary_uom, "件")
+        self.assertEqual(receipt.supplier_name, "示例供应商")
+        self.assertEqual(receipt.warehouse, "原料仓")
+        self.assertEqual(
+            self.period.inventory_transactions.get(document_no="MI-001").direction,
+            InventoryTransaction.Direction.OUT,
+        )
+        self.assertEqual(
+            self.period.inventory_transactions.get(document_no="PR-001").direction,
+            InventoryTransaction.Direction.IN,
+        )
+        self.assertEqual(
+            self.period.inventory_transactions.get(document_no="SO-001").direction,
+            InventoryTransaction.Direction.OUT,
+        )
+
     def test_all_supplied_templates_import_and_close_end_to_end(self):
         template_map = [
             (ImportBatch.Kind.INVENTORY, "库存出入库流水.csv"),
@@ -1323,6 +1363,8 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             (ImportBatch.Kind.PRODUCTION_ORDER, "生产订单.csv"),
             (ImportBatch.Kind.WORKSHOP_COST, "车间费用.csv"),
             (ImportBatch.Kind.OPENING_WIP, "期初在产品.csv"),
+            (ImportBatch.Kind.OPENING_INVENTORY, "期初存货.csv"),
+            (ImportBatch.Kind.ENDING_INVENTORY, "期末存货.csv"),
             (
                 ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL,
                 "期初采购暂估明细.csv",
@@ -1332,11 +1374,24 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 "期初发出商品明细.csv",
             ),
         ]
+        # 库存流水用含自动匹配列的完整格式，保证采购/生产/销售全链路数字成立；
+        # 页面上发布的模板（创建时间/物料编号/操作数量…）由
+        # test_inventory_template_new_format_imports_with_inferred_direction 单独覆盖。
+        inventory_csv = (
+            "业务日期,单据号,行号,业务类型,方向,仓库,物料编码,物料名称,规格型号,数量,单位,工单号,车间,供应商编码,供应商名称,客户编码,客户名称,合同号,发票号,不含税单价,金额,备注\n"
+            "2026-06-05,GR-001,1,采购入库,入库,原料仓,RM-001,示例原料,,100,kg,,,SUP-001,示例供应商,,,PC-001,,,,示例行\n"
+            "2026-06-10,MI-001,1,生产领料,出库,原料仓,RM-001,示例原料,,50,kg,WO-001,染整,,,,,,,,,\n"
+            "2026-06-20,PR-001,1,生产入库,入库,成品仓,FG-001,示例产品,,10,kg,WO-001,染整,,,,,,,,,\n"
+            "2026-06-24,SO-001,1,销售出库,出库,成品仓,FG-001,示例产品,,4,kg,SO-001,,,,CUS-001,示例客户,,,,,\n"
+        ).encode("utf-8-sig")
         template_dir = Path(settings.BASE_DIR) / "sample_templates"
         with TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
                 for kind, filename in template_map:
-                    content = (template_dir / filename).read_bytes()
+                    if kind == ImportBatch.Kind.INVENTORY:
+                        content = inventory_csv
+                    else:
+                        content = (template_dir / filename).read_bytes()
                     uploaded = SimpleUploadedFile(filename, content, "text/csv")
                     batch = create_import_batch(
                         period=self.period,
@@ -1349,17 +1404,41 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 run = run_settlement(self.period)
 
         self.assertTrue(run.converged)
-        self.assertEqual(self.period.import_batches.count(), 9)
+        self.assertEqual(self.period.import_batches.count(), 11)
         self.assertEqual(self.period.inventory_transactions.count(), 4)
         self.assertEqual(self.period.production_orders.count(), 1)
         self.assertEqual(self.period.order_cost_results.count(), 1)
         result = self.period.order_cost_results.get()
         self.assertEqual(result.finished_cost, Decimal("650.00"))
         self.assertEqual(result.wip_cost, Decimal("0.00"))
+        # 期末存货以用户上传报表为准：本测试上传了期末模板(OP-RM 100kg/1000元)
+        uploaded = self.period.ending_inventory_balances.filter(
+            is_system_generated=False
+        )
+        self.assertTrue(uploaded.exists())
+        self.assertEqual(uploaded.first().quantity, Decimal("100"))
+        # 系统不再自动生成期末行
         self.assertFalse(
-            self.period.reconciliations.filter(
-                status=ReconciliationResult.Status.FAIL
+            self.period.ending_inventory_balances.filter(
+                is_system_generated=True
             ).exists()
+        )
+        # 勾稽期末用上传值；上传期末与系统计算不一致时，库存勾稽应反映该差异
+        inv_check = self.period.reconciliations.get(
+            check_code="inventory_amount"
+        )
+        valuation = self.period.inventory_valuations.get(
+            material_code="RM-001"
+        )
+        # right = 出库金额 + 上传期末金额(1000)；left = 期初+入库
+        self.assertNotEqual(
+            inv_check.difference, Decimal("0.00"),
+            "上传期末(1000)与系统计算期末不一致时应产生勾稽差异",
+        )
+        self.assertNotEqual(
+            inv_check.right_amount,
+            valuation.issue_amount + valuation.ending_amount,
+            "勾稽期末应使用上传的期末金额而非系统计算值",
         )
         summary = build_production_cost_summary(self.period)
         self.assertEqual(summary["totals"]["current_material"], Decimal("500.00"))
@@ -1390,6 +1469,164 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertContains(workshop_page, "染整订单成本明细")
         self.assertContains(workshop_page, "WO-001")
+
+    def test_opening_inventory_import_feeds_first_period_valuation(self):
+        period = AccountingPeriod.objects.create(month=date(2026, 1, 1))
+        template_dir = Path(settings.BASE_DIR) / "sample_templates"
+        content = (template_dir / "期初存货.csv").read_bytes()
+        uploaded = SimpleUploadedFile("期初存货.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=period,
+                    kind=ImportBatch.Kind.OPENING_INVENTORY,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        opening = OpeningInventoryBalance.objects.get(period=period)
+        self.assertFalse(opening.is_system_generated)
+        self.assertIsNone(opening.source_period)
+        self.assertEqual(opening.quantity, Decimal("100"))
+        self.assertEqual(opening.amount, Decimal("1000"))
+        self.assertEqual(opening.unit_price, Decimal("10"))
+        self.assertEqual(opening.opening_date, date(2026, 7, 31))
+        self.assertEqual(opening.category_name, "原材料")
+        self.assertEqual(opening.warehouse, "原料仓")
+        self.assertEqual(opening.batch_no, "B20260701")
+        self.assertEqual(opening.uom, "kg")
+
+        run = run_settlement(period)
+        self.assertTrue(run.converged)
+        valuation = period.inventory_valuations.get(material_code="OP-RM")
+        self.assertEqual(valuation.opening_quantity, Decimal("100"))
+        self.assertEqual(valuation.opening_amount, Decimal("1000"))
+        self.assertEqual(valuation.ending_quantity, Decimal("100"))
+        self.assertEqual(valuation.ending_amount, Decimal("1000"))
+        self.assertFalse(
+            period.reconciliations.filter(
+                status=ReconciliationResult.Status.FAIL
+            ).exists()
+        )
+
+    def test_manual_opening_inventory_overrides_carried_balance(self):
+        june = AccountingPeriod.objects.create(month=date(2026, 6, 1))
+        inventory_batch = self.create_batch(
+            june, ImportBatch.Kind.INVENTORY, "override-june-inventory"
+        )
+        raw = Material.objects.create(
+            code="OVERRIDE-RM", name="覆盖原料", uom="kg"
+        )
+        opening_txn = self.create_txn(
+            june,
+            inventory_batch,
+            txn_date=date(2026, 6, 1),
+            document_no="OV-OPEN",
+            business_type="期初结存",
+            direction=InventoryTransaction.Direction.IN,
+            material=raw,
+            quantity=Decimal("10"),
+        )
+        opening_txn.unit_price = Decimal("10")
+        opening_txn.amount = Decimal("100")
+        opening_txn.price_source = "原始金额"
+        opening_txn.save(update_fields=["unit_price", "amount", "price_source"])
+        june_run = run_settlement(june, self.user)
+        self.assertTrue(june_run.converged)
+        june.status = AccountingPeriod.Status.LOCKED
+        june.save(update_fields=["status"])
+
+        july = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        content = (
+            "物料编码,物料名称,期初数量,期初单价,期初金额\n"
+            "OVERRIDE-RM,覆盖原料,20,15,300\n"
+        ).encode("utf-8-sig")
+        uploaded = SimpleUploadedFile("期初存货.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=july,
+                    kind=ImportBatch.Kind.OPENING_INVENTORY,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        july_run = run_settlement(july, self.user)
+        self.assertTrue(july_run.converged)
+        opening = OpeningInventoryBalance.objects.get(
+            period=july, material_code="OVERRIDE-RM"
+        )
+        self.assertFalse(opening.is_system_generated)
+        self.assertIsNone(opening.source_period)
+        self.assertEqual(opening.quantity, Decimal("20"))
+        self.assertEqual(opening.amount, Decimal("300"))
+        valuation = july.inventory_valuations.get(material_code="OVERRIDE-RM")
+        self.assertEqual(valuation.opening_quantity, Decimal("20"))
+        self.assertEqual(valuation.opening_amount, Decimal("300"))
+        self.assertEqual(valuation.ending_quantity, Decimal("20"))
+        self.assertEqual(valuation.ending_amount, Decimal("300"))
+
+    def test_ending_inventory_is_calculated_from_opening_and_transactions(self):
+        period = AccountingPeriod.objects.create(month=date(2026, 1, 1))
+        template_dir = Path(settings.BASE_DIR) / "sample_templates"
+        content = (template_dir / "期初存货.csv").read_bytes()
+        uploaded = SimpleUploadedFile("期初存货.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=period,
+                    kind=ImportBatch.Kind.OPENING_INVENTORY,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        inventory_batch = self.create_batch(
+            period, ImportBatch.Kind.INVENTORY, "ending-inventory-in"
+        )
+        self.create_txn(
+            period,
+            inventory_batch,
+            txn_date=date(2026, 1, 15),
+            document_no="GR-END",
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=Material.objects.get(code="OP-RM"),
+            quantity=Decimal("50"),
+        )
+        run = run_settlement(period)
+        self.assertTrue(run.converged)
+        # 期末存货以用户上传报表为准：未上传期末时，系统不自动生成期末行
+        self.assertFalse(
+            EndingInventoryBalance.objects.filter(
+                period=period, is_system_generated=True
+            ).exists()
+        )
+        valuation = period.inventory_valuations.get(material_code="OP-RM")
+        self.assertEqual(valuation.ending_quantity, Decimal("150"))
+        self.assertEqual(valuation.ending_amount, Decimal("1500"))
+        self.assertFalse(period.exceptions.filter(category="期末存货").exists())
+
+        # 人工上传期末存货可覆盖自动计算数（同物料）
+        template_dir = Path(settings.BASE_DIR) / "sample_templates"
+        content = (template_dir / "期末存货.csv").read_bytes()
+        uploaded = SimpleUploadedFile("期末存货.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=period,
+                    kind=ImportBatch.Kind.ENDING_INVENTORY,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        run = run_settlement(period)
+        self.assertTrue(run.converged)
+        ending = EndingInventoryBalance.objects.get(
+            period=period, is_system_generated=False
+        )
+        self.assertEqual(ending.quantity, Decimal("100"))
+        self.assertEqual(ending.amount, Decimal("1000"))
+        self.assertEqual(ending.batch_no, "B20260701")
 
     def test_document_led_matching_workbench_filters_manual_and_ignore_modes(self):
         inventory_batch = self.create_batch(

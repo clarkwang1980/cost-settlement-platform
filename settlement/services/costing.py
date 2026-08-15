@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
@@ -10,11 +11,13 @@ from django.utils import timezone
 
 from settlement.models import (
     AccountingPeriod,
+    EndingInventoryBalance,
     ExceptionItem,
     InventoryTransaction,
     InventoryValuation,
     MatchAllocation,
     MatchingMode,
+    Material,
     OpeningInventoryBalance,
     OpeningWip,
     OrderCostResult,
@@ -85,10 +88,16 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
     grouped = defaultdict(list)
     for txn in period.inventory_transactions.select_related("material").all():
         grouped[txn.material_code].append(txn)
-    automatic_openings = {
-        item.material_code: item
-        for item in OpeningInventoryBalance.objects.filter(period=period)
-    }
+    # 期初可能按仓库/批次多行：按物料汇总数量金额
+    automatic_openings = defaultdict(
+        lambda: {"quantity": ZERO, "amount": ZERO, "material_name": ""}
+    )
+    for item in OpeningInventoryBalance.objects.filter(period=period):
+        row = automatic_openings[item.material_code]
+        row["quantity"] += Decimal(item.quantity or ZERO)
+        row["amount"] += Decimal(item.amount or ZERO)
+        if item.material_name and not row["material_name"]:
+            row["material_name"] = item.material_name
     for material_code in automatic_openings:
         grouped.setdefault(material_code, [])
 
@@ -104,6 +113,9 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         issue_qty = ZERO
 
         for txn in txns:
+            # 被忽略（内部流转/无需匹配）的流水不参与月末加权平均计价
+            if txn.match_mode == MatchingMode.IGNORED:
+                continue
             qty = abs(txn.quantity)
             if is_opening_transaction(txn):
                 has_manual_opening = True
@@ -119,8 +131,8 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
                 issue_qty += qty
         automatic_opening = automatic_openings.get(material_code)
         if automatic_opening and not has_manual_opening:
-            opening_qty = Decimal(automatic_opening.quantity or ZERO)
-            opening_amount = Decimal(automatic_opening.amount or ZERO)
+            opening_qty = Decimal(automatic_opening["quantity"] or ZERO)
+            opening_amount = Decimal(automatic_opening["amount"] or ZERO)
 
         prior_price = Decimal(previous_prices.get(material_code, ZERO))
         floating_qty = sum((abs(txn.quantity) for txn in floating_receipts), ZERO)
@@ -138,6 +150,8 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         prices[material_code] = weighted_price
 
         for txn in txns:
+            if txn.match_mode == MatchingMode.IGNORED:
+                continue
             qty = abs(txn.quantity)
             if txn.direction == InventoryTransaction.Direction.OUT:
                 txn.unit_price = weighted_price
@@ -158,7 +172,8 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
             (
                 Decimal(txn.amount or ZERO)
                 for txn in txns
-                if txn.direction == InventoryTransaction.Direction.IN
+                if txn.match_mode != MatchingMode.IGNORED
+                and txn.direction == InventoryTransaction.Direction.IN
                 and not is_opening_transaction(txn)
             ),
             ZERO,
@@ -167,7 +182,8 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
             (
                 Decimal(txn.amount or ZERO)
                 for txn in txns
-                if txn.direction == InventoryTransaction.Direction.OUT
+                if txn.match_mode != MatchingMode.IGNORED
+                and txn.direction == InventoryTransaction.Direction.OUT
             ),
             ZERO,
         )
@@ -175,7 +191,7 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         ending_amount = money(ending_qty * weighted_price)
         material_name = next(
             (txn.material_name for txn in txns if txn.material_name),
-            automatic_opening.material_name if automatic_opening else "",
+            automatic_opening["material_name"] if automatic_opening else "",
         )
         summaries[material_code] = {
             "material_name": material_name,
@@ -421,6 +437,206 @@ def _persist_valuations(period, summaries, iterations, converged):
             for material_code, data in summaries.items()
         ]
     )
+    # 期末存货以用户上传报表为准（数量不变），单价金额由系统按月末加权价回填
+    _fill_ending_prices(period, summaries)
+
+
+def _fill_ending_prices(period, summaries):
+    """用户上传的期末存货：数量保持不变，回填单价金额 = 月末加权价 × 数量。"""
+    for ending in period.ending_inventory_balances.filter(
+        is_system_generated=False
+    ):
+        if ending.material_code not in summaries:
+            continue
+        price = summaries[ending.material_code]["weighted_average_price"]
+        ending.unit_price = price
+        ending.amount = money(Decimal(ending.quantity or ZERO) * price)
+        ending.save(update_fields=["unit_price", "amount"])
+
+
+def _persist_ending_by_batch(period, summaries):
+    """按 物料+仓库+批次 生成期末存货（批次级）。
+
+    规则：
+    1. 期初各仓库/批次行 = 期初库存，顺序按期初行（即批次入库先后）
+    2. 本月入库流水：能匹配到同仓库同批次的，累加到该批次；
+       匹配不到或没有批次号的，新建一行（新批次/无批次）
+    3. 本月出库流水：按先进先出（FIFO）从最早批次扣减
+    4. 期末行 = 剩余数量非零的批次行；金额 = 数量 × 物料月末加权价
+    """
+    EndingInventoryBalance.objects.filter(
+        period=period, is_system_generated=True
+    ).delete()
+    manual_codes = set(
+        EndingInventoryBalance.objects.filter(
+            period=period, is_system_generated=False
+        ).values_list("material_code", flat=True)
+    )
+    month_end = (
+        (period.month.replace(day=28) + timedelta(days=4)).replace(day=1)
+        - timedelta(days=1)
+    )
+
+    # 期初批次行（按 id 顺序 = 上传顺序 = 先进先出顺序）
+    opening_rows = {}
+    for opening in OpeningInventoryBalance.objects.filter(period=period).order_by(
+        "id"
+    ):
+        code = opening.material_code
+        key = (opening.warehouse or "", opening.batch_no or "")
+        opening_rows.setdefault(code, []).append(
+            {
+                "warehouse": opening.warehouse,
+                "batch_no": opening.batch_no,
+                "category_name": opening.category_name or "",
+                "uom": opening.uom or "",
+                "qty": Decimal(opening.quantity or ZERO),
+            }
+        )
+
+    # 本月入库/出库流水（排除被忽略的内部流转）
+    txns = list(
+        period.inventory_transactions.exclude(
+            match_mode=MatchingMode.IGNORED
+        ).order_by("txn_date", "id")
+    )
+
+    # 期初类型流水（业务类型含"期初"的入库）也作为初始批次行
+    for txn in txns:
+        if (
+            not is_opening_transaction(txn)
+            or txn.direction != InventoryTransaction.Direction.IN
+        ):
+            continue
+        code = txn.material_code
+        key = (txn.warehouse or "", txn.batch_no or "")
+        rows = opening_rows.setdefault(code, [])
+        matched = None
+        for row in rows:
+            if (
+                (row["warehouse"] or "") == key[0]
+                and (row["batch_no"] or "") == key[1]
+            ):
+                matched = row
+                break
+        if matched:
+            matched["qty"] += Decimal(txn.quantity or ZERO)
+        else:
+            rows.append(
+                {
+                    "warehouse": txn.warehouse or None,
+                    "batch_no": txn.batch_no or None,
+                    "category_name": txn.category_name or "",
+                    "uom": txn.uom or "",
+                    "qty": Decimal(txn.quantity or ZERO),
+                }
+            )
+
+    ending_by_code = {}
+    codes = set(opening_rows) | {
+        t.material_code for t in txns
+    }
+    for code in sorted(codes):
+        if code in manual_codes:
+            continue
+        batches = list(opening_rows.get(code, []))
+        if not batches:
+            # 无期初的物料：本月入库形成新批次行
+            batches = [
+                {
+                    "warehouse": None,
+                    "batch_no": None,
+                    "category_name": "",
+                    "uom": "",
+                    "qty": ZERO,
+                }
+            ]
+        # 仓库/批次索引，用于入库匹配
+        index = {}
+        for row in batches:
+            index.setdefault(
+                (row["warehouse"] or "", row["batch_no"] or ""), []
+            ).append(row)
+
+        for txn in txns:
+            if txn.material_code != code:
+                continue
+            qty = abs(Decimal(txn.quantity or ZERO))
+            if is_opening_transaction(txn):
+                continue
+            if txn.direction == InventoryTransaction.Direction.IN:
+                key = (txn.warehouse or "", txn.batch_no or "")
+                pool = index.get(key)
+                if pool:
+                    row = pool[-1]
+                else:
+                    row = {
+                        "warehouse": txn.warehouse or None,
+                        "batch_no": txn.batch_no or None,
+                        "category_name": txn.category_name or "",
+                        "uom": txn.uom or "",
+                        "qty": ZERO,
+                    }
+                    batches.append(row)
+                    index.setdefault(key, []).append(row)
+                row["qty"] += qty
+            else:
+                # 出库：FIFO 从最早批次扣减
+                remaining = qty
+                for row in batches:
+                    if remaining <= 0:
+                        break
+                    take = min(row["qty"], remaining)
+                    row["qty"] -= take
+                    remaining -= take
+                if remaining > 0:
+                    # 出库超出全部批次：记为最早批次负数（负库存）
+                    if batches:
+                        batches[0]["qty"] -= remaining
+
+        weighted_price = ZERO
+        if code in summaries:
+            weighted_price = summaries[code]["weighted_average_price"]
+        for row in batches:
+            if row["qty"] == ZERO:
+                continue
+            ending_by_code.setdefault(code, []).append(
+                {
+                    "material_name": (
+                        summaries[code]["material_name"]
+                        if code in summaries
+                        else ""
+                    ),
+                    "category_name": row["category_name"],
+                    "warehouse": row["warehouse"],
+                    "batch_no": row["batch_no"],
+                    "uom": row["uom"],
+                    "qty": row["qty"],
+                    "amount": money(row["qty"] * weighted_price),
+                    "unit_price": weighted_price,
+                }
+            )
+
+    rows_to_create = []
+    for code, rows in ending_by_code.items():
+        for row in rows:
+            rows_to_create.append(
+                EndingInventoryBalance(
+                    period=period,
+                    material_code=code,
+                    material_name=row["material_name"],
+                    ending_date=month_end,
+                    category_name=row["category_name"],
+                    warehouse=row["warehouse"],
+                    batch_no=row["batch_no"],
+                    uom=row["uom"],
+                    quantity=row["qty"],
+                    amount=row["amount"],
+                    unit_price=row["unit_price"],
+                    is_system_generated=True,
+                )
+            )
+    EndingInventoryBalance.objects.bulk_create(rows_to_create)
 
 
 def _add_exception(period, category, severity, message, reference=""):
@@ -620,10 +836,21 @@ def _build_reconciliations(period):
         ),
         ZERO,
     )
-    ending = (
-        period.inventory_valuations.aggregate(total=Sum("ending_amount"))["total"]
-        or ZERO
+    # 期末金额：用户上传了期末存货则以上传报表为准，否则用系统计算值
+    uploaded_ending = period.ending_inventory_balances.filter(
+        is_system_generated=False
     )
+    if uploaded_ending.exists():
+        ending = (
+            uploaded_ending.aggregate(total=Sum("amount"))["total"] or ZERO
+        )
+    else:
+        ending = (
+            period.inventory_valuations.aggregate(
+                total=Sum("ending_amount")
+            )["total"]
+            or ZERO
+        )
     left = money(opening + receipts)
     right = money(issues + ending)
     difference = money(left - right)
@@ -878,6 +1105,9 @@ def reset_workshop_settlements(period: AccountingPeriod):
     )
     OrderCostResult.objects.filter(period=period).delete()
     InventoryValuation.objects.filter(period=period).delete()
+    EndingInventoryBalance.objects.filter(
+        period=period, is_system_generated=True
+    ).delete()
     ReconciliationResult.objects.filter(period=period).delete()
     period.exceptions.all().delete()
     _clear_pending_production_receipts(period)
@@ -891,7 +1121,36 @@ def _prepare_period(period):
     auto_match_all(period)
     ensure_workshop_settlements(period)
     _clear_pending_production_receipts(period)
+    _fill_opening_prices(period)
     return carry_summary
+
+
+def _fill_opening_prices(period):
+    """期初存货只填数量时，用当月采购合同不含税价回填单价、金额。
+
+    金额 = 数量 × 合同不含税价；没有合同价的期初行保持 0（由异常清单提示）。
+    """
+    contract_prices = {}
+    for contract in period.purchase_contracts.order_by(
+        "contract_date", "id"
+    ):
+        contract_prices.setdefault(
+            contract.material_code, contract.unit_price_excl_tax
+        )
+    filled = 0
+    for opening in period.opening_inventory_balances.filter(
+        is_system_generated=False
+    ):
+        if (opening.unit_price or ZERO) > 0 or (opening.amount or ZERO) > 0:
+            continue
+        price = contract_prices.get(opening.material_code)
+        if price is None:
+            continue
+        opening.unit_price = price
+        opening.amount = money(Decimal(opening.quantity or ZERO) * price)
+        opening.save(update_fields=["unit_price", "amount"])
+        filled += 1
+    return filled
 
 
 def _settle_workshop_core(period, settlement, user=None):

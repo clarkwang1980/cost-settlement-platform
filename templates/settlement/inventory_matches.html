@@ -7,11 +7,15 @@
     <h1>库存流水匹配</h1>
     <p>从库存流水方向检查合同、发票和生产订单的匹配情况；点击流水可手工修改。</p>
   </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水台账</a>
+    <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
   {% if period.status != "locked" %}
   <form method="post" action="{% url 'rematch_period' period.id %}">
     {% csrf_token %}<button class="button primary" type="submit">重新自动匹配</button>
   </form>
   {% endif %}
+  </div>
 </section>
 
 <section class="section-card filter-card">

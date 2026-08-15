@@ -3,6 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">RECONCILIATION</p><h1>勾稽与异常</h1><p>所有差额和未匹配记录明确列示，不使用空值或零值静默通过。</p></div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'reconciliation' %}?{{ request.GET.urlencode }}">导出Excel</a>
 </section>
 <section class="check-grid">
   {% for item in checks %}

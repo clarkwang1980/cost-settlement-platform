@@ -13,12 +13,15 @@ from openpyxl import load_workbook
 
 from settlement.models import (
     AccountingPeriod,
+    EndingInventoryBalance,
     ImportBatch,
     InventoryTransaction,
     InventoryValuation,
     Material,
     MatchAllocation,
+    MatchingMode,
     OpeningGoodsIssued,
+    OpeningInventoryBalance,
     OpeningPurchaseAccrual,
     OpeningWip,
     OrderCostResult,
@@ -42,38 +45,48 @@ def normalize_header(value) -> str:
 
 ALIASES = {
     "inventory": {
-        "txn_date": ["业务日期", "单据日期", "日期", "出入库日期", "记账日期"],
-        "document_no": ["单据号", "单据编号", "出入库单号", "凭证号"],
+        "txn_date": ["创建时间", "业务日期", "单据日期", "日期", "出入库日期", "记账日期"],
+        "document_no": ["业务单据编号", "单据号", "单据编号", "出入库单号", "凭证号"],
         "line_no": ["行号", "序号", "明细行"],
         "business_type": ["业务类型", "出入库类型", "单据类型", "事务类型"],
         "direction": ["方向", "出入库方向", "收发标志"],
-        "warehouse": ["仓库", "仓库名称", "库位"],
-        "material_code": ["物料编码", "物料代码", "存货编码", "产品编码", "品号"],
+        "warehouse": ["仓库名称", "仓库", "库位"],
+        "material_code": ["物料编号", "物料编码", "物料代码", "存货编码", "产品编码", "品号"],
         "material_name": ["物料名称", "存货名称", "产品名称", "品名"],
-        "specification": ["规格", "规格型号", "型号"],
-        "quantity": ["数量", "实收数量", "实发数量", "出入库数量", "基本数量"],
-        "uom": ["单位", "计量单位", "基本单位"],
+        "specification": ["物料规格", "规格", "规格型号", "型号"],
+        "category_name": ["分类", "分类名称", "物料分类", "类别"],
+        "batch_no": ["批号", "批次号", "批次"],
+        "quantity": ["操作数量", "数量", "实收数量", "实发数量", "出入库数量", "基本数量"],
+        "auxiliary_quantity": ["辅助数量", "辅数量", "辅助计量数量"],
+        "uom": ["主单位", "单位", "计量单位", "基本单位"],
+        "auxiliary_uom": ["辅助单位", "辅单位"],
         "order_no": ["工单号", "生产订单号", "生产订单", "订单号"],
         "workshop": ["车间", "生产车间", "成本中心"],
         "supplier_code": ["供应商编码", "供应商代码"],
-        "supplier_name": ["供应商", "供应商名称"],
+        "supplier_name": ["供应商名称", "供应商", "供应商全称"],
         "customer_code": ["客户编码", "客户代码"],
         "customer_name": ["客户", "客户名称"],
         "contract_no": ["合同号", "采购合同号", "合同编号"],
         "invoice_no": ["发票号", "发票号码"],
-        "unit_price": ["不含税单价", "单价", "入库单价", "单位成本"],
-        "amount": ["不含税金额", "金额", "成本金额", "入库金额"],
+        "unit_price": ["单价", "不含税单价", "入库单价", "单位成本"],
+        "amount": ["金额", "不含税金额", "成本金额", "入库金额"],
         "remark": ["备注", "摘要"],
     },
     "purchase_contract": {
-        "contract_no": ["合同号", "采购合同号", "合同编号"],
-        "contract_date": ["合同日期", "签订日期", "日期"],
+        "contract_no": ["合同号", "采购合同号", "合同编号", "合同编码"],
+        "contract_date": ["合同日期", "签订日期", "日期", "创建时间"],
         "supplier_code": ["供应商编码", "供应商代码"],
         "supplier_name": ["供应商", "供应商名称"],
-        "material_code": ["物料编码", "物料代码", "存货编码"],
+        "material_code": ["物料编码", "物料代码", "存货编码", "品名编码"],
         "material_name": ["物料名称", "存货名称", "品名"],
         "quantity": ["合同数量", "数量"],
-        "unit_price_excl_tax": ["不含税单价", "合同不含税价", "单价"],
+        "unit_price_excl_tax": [
+            "不含税单价",
+            "合同不含税价",
+            "单价",
+            "原币未税单价（报表用）",
+            "原币未税单价",
+        ],
     },
     "purchase_invoice": {
         "invoice_no": ["发票号", "发票号码"],
@@ -202,6 +215,34 @@ ALIASES = {
         ],
         "remark": ["备注", "摘要"],
     },
+    "opening_inventory": {
+        "material_code": ["物料号", "物料编码", "物料代码", "存货编码", "产品编码", "品号"],
+        "material_name": ["物料名称", "存货名称", "产品名称", "品名"],
+        "specification": ["规格", "规格型号", "型号"],
+        "opening_date": ["日期", "期初日期", "结存日期", "业务日期"],
+        "category_name": ["分类名称", "物料分类", "类别", "分类"],
+        "warehouse": ["仓库名称", "仓库", "库位"],
+        "batch_no": ["批次号", "批次", "批号"],
+        "uom": ["单位名称", "单位", "计量单位", "基本单位"],
+        "quantity": ["结存数量", "期初数量", "期初结存数量", "数量"],
+        "unit_price": ["单价", "期初单价", "单位成本", "结存单价"],
+        "amount": ["金额", "期初金额", "结存金额", "期初结存金额"],
+        "remark": ["备注", "摘要"],
+    },
+    "ending_inventory": {
+        "material_code": ["物料号", "物料编码", "物料代码", "存货编码", "产品编码", "品号"],
+        "material_name": ["物料名称", "存货名称", "产品名称", "品名"],
+        "specification": ["规格", "规格型号", "型号"],
+        "ending_date": ["日期", "期末日期", "盘点日期", "结存日期"],
+        "category_name": ["分类名称", "物料分类", "类别", "分类"],
+        "warehouse": ["仓库名称", "仓库", "库位"],
+        "batch_no": ["批次号", "批次", "批号"],
+        "uom": ["单位名称", "单位", "计量单位", "基本单位"],
+        "quantity": ["结存数量", "期末数量", "期末结存数量", "数量"],
+        "unit_price": ["单价", "期末单价", "单位成本", "结存单价"],
+        "amount": ["金额", "期末金额", "结存金额", "期末结存金额"],
+        "remark": ["备注", "摘要"],
+    },
 }
 
 
@@ -250,6 +291,14 @@ REQUIRED_FIELDS = {
         "opening_quantity",
         "unit_cost",
     },
+    "opening_inventory": {
+        "material_code",
+        "quantity",
+    },
+    "ending_inventory": {
+        "material_code",
+        "quantity",
+    },
 }
 
 
@@ -269,7 +318,7 @@ def to_decimal(value, default=None) -> Decimal | None:
     if isinstance(value, bool):
         return Decimal(int(value))
     text = str(value).strip().replace(",", "").replace("￥", "").replace("¥", "")
-    if not text:
+    if not text or text in {"-", "—", "－", "/", "\\", "None", "null", "n/a"}:
         return default
     is_percent = text.endswith("%")
     if is_percent:
@@ -291,6 +340,8 @@ def to_date(value, default=None) -> date | None:
     if isinstance(value, (int, float)):
         return date(1899, 12, 30) + __import__("datetime").timedelta(days=int(value))
     text = str(value).strip()
+    if " " in text or "T" in text:
+        text = text.split(" ")[0].split("T")[0]
     for fmt in (
         "%Y-%m-%d",
         "%Y/%m/%d",
@@ -399,17 +450,48 @@ def read_rows(path: Path, kind: str):
     return result
 
 
-def infer_direction(value, business_type: str) -> str:
+def infer_direction(value, business_type: str, quantity=None) -> str:
     normalized = text(value).lower()
     if normalized in {"入", "入库", "in", "收入"}:
         return InventoryTransaction.Direction.IN
     if normalized in {"出", "出库", "out", "发出"}:
         return InventoryTransaction.Direction.OUT
+
+    # 明确方向的业务类型映射（先精确匹配，避免"报工调整"被"报工"误判）
+    if text(business_type) == "报工":
+        return InventoryTransaction.Direction.IN
+    type_map = {
+        "调拨发出": InventoryTransaction.Direction.OUT,
+        "调拨接收": InventoryTransaction.Direction.IN,
+        "投料撤回": InventoryTransaction.Direction.IN,
+        "投料": InventoryTransaction.Direction.OUT,
+        "出库冲销": InventoryTransaction.Direction.IN,
+        "冲销入库": InventoryTransaction.Direction.OUT,
+        "退货入库": InventoryTransaction.Direction.IN,
+        "采购退货": InventoryTransaction.Direction.OUT,
+    }
+    for token, direction in type_map.items():
+        if token in business_type:
+            return direction
+
     kind = business_type.lower()
     if "退料" in kind or "入库" in kind or "盘盈" in kind:
         return InventoryTransaction.Direction.IN
     if any(token in kind for token in ("出库", "领料", "发货", "盘亏", "采购退货")):
         return InventoryTransaction.Direction.OUT
+
+    # 类型无法判断（库存调整、库存转换、报工调整、其它等）时，按数量正负判断
+    if quantity is not None:
+        try:
+            q = Decimal(str(quantity).strip().replace(",", "") or "0")
+            if q > 0:
+                return InventoryTransaction.Direction.IN
+            if q < 0:
+                return InventoryTransaction.Direction.OUT
+            # 数量为 0：无正负可判断，统一按入库处理（调用方会将 0 数量行标记为忽略）
+            return InventoryTransaction.Direction.IN
+        except InvalidOperation:
+            pass
     raise ValueError(f"无法根据业务类型判断出入库方向：{business_type}")
 
 
@@ -447,6 +529,9 @@ def get_or_create_material(code, name="", specification="", uom=""):
 def clear_calculation_outputs(period: AccountingPeriod):
     MatchAllocation.objects.filter(period=period).delete()
     InventoryValuation.objects.filter(period=period).delete()
+    EndingInventoryBalance.objects.filter(
+        period=period, is_system_generated=True
+    ).delete()
     OrderCostResult.objects.filter(period=period).delete()
     ReconciliationResult.objects.filter(period=period).delete()
     SettlementRun.objects.filter(period=period).delete()
@@ -486,10 +571,13 @@ def create_import_batch(*, period, kind, uploaded_file, user, replace_existing=F
             "后续月份由历史明细自动滚动。"
         )
     file_hash = sha256_uploaded(uploaded_file)
-    if ImportBatch.objects.filter(period=period, kind=kind, sha256=file_hash).exists():
-        raise ValueError("相同文件已经导入过，无需重复上传。")
     if replace_existing:
+        # 勾选"替换"时：先删除本期间同类旧批次，允许同名/同内容文件重新导入
         _delete_existing_kind(period, kind)
+    elif ImportBatch.objects.filter(
+        period=period, kind=kind, sha256=file_hash
+    ).exists():
+        raise ValueError("相同文件已经导入过，无需重复上传。")
     batch = ImportBatch.objects.create(
         period=period,
         kind=kind,
@@ -517,6 +605,8 @@ def process_batch(batch: ImportBatch):
             _import_opening_purchase_accrual
         ),
         ImportBatch.Kind.OPENING_GOODS_ISSUED: _import_opening_goods_issued,
+        ImportBatch.Kind.OPENING_INVENTORY: _import_opening_inventory,
+        ImportBatch.Kind.ENDING_INVENTORY: _import_ending_inventory,
     }[batch.kind]
     errors = []
     count = 0
@@ -540,10 +630,24 @@ def process_batch(batch: ImportBatch):
 
 def _import_inventory(batch, row):
     business_type = text(row.get("business_type"))
-    direction = infer_direction(row.get("direction"), business_type)
-    quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
-    if quantity == 0:
-        raise ValueError("数量不能为0")
+    raw_quantity = to_decimal(row.get("quantity"), Decimal("0"))
+    direction = infer_direction(row.get("direction"), business_type, raw_quantity)
+    quantity = abs(raw_quantity)
+    is_zero_quantity = quantity == 0
+
+    # 内部流转类型不参与成本核算：报工、调拨、库存调整、库存转换、投料等；
+    # 数量为 0 的行也作为忽略/无需匹配记录导入（行数与上传一致，不参与计价）
+    INTERNAL_TRANSFER_TYPES = (
+        "报工",
+        "调拨",
+        "库存调整",
+        "库存转换",
+        "投料",
+    )
+    is_internal = any(
+        token in business_type for token in INTERNAL_TRANSFER_TYPES
+    ) or is_zero_quantity
+
     material_code = text(row.get("material_code"))
     material = get_or_create_material(
         material_code,
@@ -568,8 +672,12 @@ def _import_inventory(batch, row):
         material_code=material_code,
         material_name=text(row.get("material_name")),
         specification=text(row.get("specification")),
+        category_name=text(row.get("category_name")),
+        batch_no=text(row.get("batch_no")),
         quantity=quantity,
+        auxiliary_quantity=to_decimal(row.get("auxiliary_quantity")),
         uom=text(row.get("uom")),
+        auxiliary_uom=text(row.get("auxiliary_uom")),
         order_no=text(row.get("order_no")),
         workshop=text(row.get("workshop")),
         supplier_code=text(row.get("supplier_code")),
@@ -581,7 +689,14 @@ def _import_inventory(batch, row):
         unit_price=unit_price,
         amount=amount,
         price_source="原始金额" if amount is not None else "",
-        match_status=InventoryTransaction.MatchStatus.UNMATCHED,
+        match_status=(
+            InventoryTransaction.MatchStatus.NOT_REQUIRED
+            if is_internal
+            else InventoryTransaction.MatchStatus.UNMATCHED
+        ),
+        match_mode=(
+            MatchingMode.IGNORED if is_internal else MatchingMode.AUTO
+        ),
         remark=text(row.get("remark")),
     )
 
@@ -828,3 +943,128 @@ def _import_opening_goods_issued(batch, row):
         unit_cost=unit_cost,
         **values,
     )
+
+
+def _import_opening_inventory(batch, row):
+    material_code = text(row.get("material_code"))
+    if not material_code:
+        raise ValueError("物料号不能为空。")
+    quantity = to_decimal(row.get("quantity"))
+    if quantity is None or quantity <= 0:
+        raise ValueError("结存数量必须大于0。")
+    unit_price = to_decimal(row.get("unit_price"))
+    amount = to_decimal(row.get("amount"))
+    if amount is None and unit_price:
+        amount = (quantity * unit_price).quantize(Decimal("0.01"))
+    if not unit_price and amount:
+        unit_price = (amount / quantity).quantize(Decimal("0.00000001"))
+    # 单价/金额可都为空：数量以用户上传为准，单价金额由结算时回填
+    unit_price = unit_price or Decimal("0")
+    amount = amount or Decimal("0")
+    if amount < 0 or unit_price < 0:
+        raise ValueError("单价和金额不能小于0。")
+    get_or_create_material(
+        material_code,
+        row.get("material_name"),
+        row.get("specification"),
+        row.get("uom"),
+    )
+    # 按 物料+仓库+批次 维度存储，保留各仓库/批次明细行；同维度累加
+    warehouse = text(row.get("warehouse")) or None
+    batch_no = text(row.get("batch_no")) or None
+    item, created = OpeningInventoryBalance.objects.get_or_create(
+        period=batch.period,
+        material_code=material_code,
+        warehouse=warehouse,
+        batch_no=batch_no,
+        defaults={
+            "batch": batch,
+            "source_period": None,
+            "material_name": text(row.get("material_name")),
+            "opening_date": to_date(row.get("opening_date")),
+            "category_name": text(row.get("category_name")),
+            "uom": text(row.get("uom")),
+            "quantity": quantity,
+            "amount": amount,
+            "unit_price": unit_price or Decimal("0"),
+            "is_system_generated": False,
+        },
+    )
+    if not created:
+        item.quantity = (item.quantity or Decimal("0")) + quantity
+        item.amount = (item.amount or Decimal("0")) + amount
+        if item.quantity:
+            item.unit_price = (item.amount / item.quantity).quantize(
+                Decimal("0.00000001")
+            )
+        if not item.material_name:
+            item.material_name = text(row.get("material_name"))
+        if not item.category_name:
+            item.category_name = text(row.get("category_name"))
+        if not item.uom:
+            item.uom = text(row.get("uom"))
+        item.batch = batch
+        item.is_system_generated = False
+        item.save()
+
+
+def _import_ending_inventory(batch, row):
+    material_code = text(row.get("material_code"))
+    if not material_code:
+        raise ValueError("物料号不能为空。")
+    quantity = to_decimal(row.get("quantity"))
+    if quantity is None or quantity <= 0:
+        raise ValueError("结存数量必须大于0。")
+    unit_price = to_decimal(row.get("unit_price"))
+    amount = to_decimal(row.get("amount"))
+    if amount is None and unit_price:
+        amount = (quantity * unit_price).quantize(Decimal("0.01"))
+    if not unit_price and amount:
+        unit_price = (amount / quantity).quantize(Decimal("0.00000001"))
+    # 单价/金额可都为空：数量以用户上传为准，单价金额由结算时回填
+    unit_price = unit_price or Decimal("0")
+    amount = amount or Decimal("0")
+    if amount < 0 or unit_price < 0:
+        raise ValueError("单价和金额不能小于0。")
+    get_or_create_material(
+        material_code,
+        row.get("material_name"),
+        row.get("specification"),
+        row.get("uom"),
+    )
+    # 按 物料+仓库+批次 维度存储，保留各仓库/批次明细行；同维度累加
+    warehouse = text(row.get("warehouse")) or None
+    batch_no = text(row.get("batch_no")) or None
+    item, created = EndingInventoryBalance.objects.get_or_create(
+        period=batch.period,
+        material_code=material_code,
+        warehouse=warehouse,
+        batch_no=batch_no,
+        defaults={
+            "batch": batch,
+            "material_name": text(row.get("material_name")),
+            "ending_date": to_date(row.get("ending_date")),
+            "category_name": text(row.get("category_name")),
+            "uom": text(row.get("uom")),
+            "quantity": quantity,
+            "amount": amount,
+            "unit_price": unit_price or Decimal("0"),
+            "is_system_generated": False,
+        },
+    )
+    if not created:
+        item.quantity = (item.quantity or Decimal("0")) + quantity
+        item.amount = (item.amount or Decimal("0")) + amount
+        if item.quantity:
+            item.unit_price = (item.amount / item.quantity).quantize(
+                Decimal("0.00000001")
+            )
+        if not item.material_name:
+            item.material_name = text(row.get("material_name"))
+        if not item.category_name:
+            item.category_name = text(row.get("category_name"))
+        if not item.uom:
+            item.uom = text(row.get("uom"))
+        item.batch = batch
+        item.is_system_generated = False
+        item.save()

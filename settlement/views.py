@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Q, Sum
-from django.http import FileResponse, Http404, HttpResponseBadRequest
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -42,7 +42,12 @@ from settlement.services.costing import (
     settle_workshop as settle_one_workshop,
     update_workshop_sequences,
 )
-from settlement.services.exports import settlement_excel_response
+from settlement.services.exports import (
+    build_listing_workbook,
+    build_settlement_workbook,
+    read_uploaded_rows,
+    settlement_excel_response,
+)
 from settlement.services.imports import (
     create_import_batch,
     process_batch,
@@ -75,6 +80,9 @@ from settlement.services.sales_uninvoiced import (
     build_sales_uninvoiced_rows,
     summarize_sales_uninvoiced,
 )
+from urllib.parse import quote
+from io import BytesIO
+import zipfile
 
 
 TEMPLATE_FILES = {
@@ -87,6 +95,8 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.OPENING_WIP: "期初在产品.csv",
     ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: "期初采购暂估明细.csv",
     ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细.csv",
+    ImportBatch.Kind.OPENING_INVENTORY: "期初存货.csv",
+    ImportBatch.Kind.ENDING_INVENTORY: "期末存货.csv",
 }
 
 
@@ -191,6 +201,7 @@ def period_detail(request, period_id):
         "sales_invoices": period.sales_invoices.count(),
         "orders": period.production_orders.count(),
         "valuations": period.inventory_valuations.count(),
+        "ending_inventory": period.ending_inventory_balances.count(),
         "blocking": blocking,
         "failed_checks": failed_checks,
         "workshops": len(settlements),
@@ -211,6 +222,40 @@ def period_detail(request, period_id):
             "batches": period.import_batches.all()[:20],
             "carry": carry_forward_context(period),
         },
+    )
+
+
+@login_required
+def import_batches(request, period_id):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    batches = period.import_batches.select_related("uploaded_by")
+    batches = _choice_filter(request, batches, "kind", "kind")
+    batches = _choice_filter(request, batches, "status", "status")
+    batches = batches.order_by("-created_at", "-id")
+    return render(
+        request,
+        "settlement/import_batches.html",
+        {
+            "period": period,
+            "page": _page(request, batches),
+            "batch_kinds": ImportBatch.Kind.choices,
+            "batch_statuses": ImportBatch.Status.choices,
+        },
+    )
+
+
+@login_required
+def download_import_file(request, period_id, batch_id):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    batch = get_object_or_404(ImportBatch, id=batch_id, period=period)
+    if not batch.file:
+        raise Http404("该批次没有原始文件。")
+    if not Path(batch.file.path).is_file():
+        raise Http404("原始文件已丢失。")
+    return FileResponse(
+        batch.file.open("rb"),
+        as_attachment=True,
+        filename=batch.original_name,
     )
 
 
@@ -412,6 +457,40 @@ def purchase_matches(request, period_id):
         {
             "period": period,
             "page": _page(request, invoices),
+            "match_modes": MatchingMode.choices,
+        },
+    )
+
+
+@login_required
+def purchase_contracts(request, period_id):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    contracts = period.purchase_contracts.prefetch_related("batch")
+    contracts = _text_filters(
+        request,
+        contracts,
+        {
+            "contract_no": "contract_no",
+            "material": "material_code",
+        },
+    )
+    contracts = _party_filter(
+        request,
+        contracts,
+        "supplier",
+        "supplier_code",
+        "supplier_name",
+    )
+    contracts = _choice_filter(
+        request, contracts, "match_mode", "match_mode"
+    )
+    contracts = contracts.order_by("contract_date", "contract_no", "id")
+    return render(
+        request,
+        "settlement/purchase_contracts.html",
+        {
+            "period": period,
+            "page": _page(request, contracts),
             "match_modes": MatchingMode.choices,
         },
     )
@@ -689,6 +768,43 @@ def order_matches(request, period_id):
             "page": _page(request, orders),
             "match_modes": MatchingMode.choices,
             "order_statuses": ProductionOrder.Status.choices,
+        },
+    )
+
+
+@login_required
+def inventory_ledger(request, period_id):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    txns = period.inventory_transactions.select_related("batch", "material")
+    txns = _date_filter(request, txns, "txn_date", "txn_date")
+    txns = _text_filters(
+        request,
+        txns,
+        {
+            "document_no": "document_no",
+            "business_type": "business_type",
+            "material": "material_code",
+            "warehouse": "warehouse",
+            "order_no": "order_no",
+        },
+    )
+    txns = _choice_filter(request, txns, "direction", "direction")
+    party = str(request.GET.get("party", "")).strip()
+    if party:
+        txns = txns.filter(
+            Q(supplier_code__icontains=party)
+            | Q(supplier_name__icontains=party)
+            | Q(customer_code__icontains=party)
+            | Q(customer_name__icontains=party)
+        )
+    txns = txns.order_by("txn_date", "document_no", "id")
+    return render(
+        request,
+        "settlement/inventory_ledger.html",
+        {
+            "period": period,
+            "page": _page(request, txns),
+            "directions": InventoryTransaction.Direction.choices,
         },
     )
 
@@ -1271,6 +1387,743 @@ def reopen_period(request, period_id):
     except Exception as exc:
         messages.error(request, str(exc))
     return redirect("period_detail", period_id=period.id)
+
+
+LISTING_EXPORTS = {
+    "inventory_ledger": {"title": "库存流水"},
+    "purchase_contract": {"title": "采购合同"},
+    "purchase_invoice": {"title": "采购发票匹配"},
+    "purchase_accrual": {"title": "月末采购暂估"},
+    "purchase_difference": {"title": "本月采购暂估差异"},
+    "sales_invoice": {"title": "销售发票匹配"},
+    "sales_uninvoiced": {"title": "月末已出库未开票"},
+    "production_order": {"title": "生产订单匹配"},
+    "inventory_valuation": {"title": "库存金额结转"},
+    "order_cost": {"title": "订单成本"},
+    "reconciliation": {"title": "勾稽结果"},
+    "workshop_settlement": {"title": "车间结转"},
+    "opening_inventory": {"title": "期初存货"},
+    "ending_inventory": {"title": "期末存货"},
+}
+
+
+def _listing_rows(request, period, kind):
+    """按 kind 返回 (工作表名, 表头, 数据行) 列表，筛选逻辑与列表页一致。"""
+    sheets = []
+
+    if kind == "inventory_ledger":
+        txns = period.inventory_transactions.select_related("batch", "material")
+        txns = _date_filter(request, txns, "txn_date", "txn_date")
+        txns = _text_filters(
+            request,
+            txns,
+            {
+                "document_no": "document_no",
+                "business_type": "business_type",
+                "material": "material_code",
+                "warehouse": "warehouse",
+                "order_no": "order_no",
+            },
+        )
+        txns = _choice_filter(request, txns, "direction", "direction")
+        party = str(request.GET.get("party", "")).strip()
+        if party:
+            txns = txns.filter(
+                Q(supplier_code__icontains=party)
+                | Q(supplier_name__icontains=party)
+                | Q(customer_code__icontains=party)
+                | Q(customer_name__icontains=party)
+            )
+        txns = txns.order_by("txn_date", "document_no", "id")
+        sheets.append(
+            (
+                "库存流水",
+                [
+                    "创建时间", "物料名称", "物料编号", "分类", "物料规格", "仓库名称",
+                    "批号", "操作数量", "主单位", "辅助数量", "辅助单位", "备注",
+                    "业务单据编号", "业务类型", "供应商名称", "单价", "金额",
+                ],
+                (
+                    (
+                        item.txn_date,
+                        item.material_name,
+                        item.material_code,
+                        item.category_name,
+                        item.specification,
+                        item.warehouse,
+                        item.batch_no,
+                        item.quantity,
+                        item.uom,
+                        item.auxiliary_quantity,
+                        item.auxiliary_uom,
+                        item.remark,
+                        item.document_no,
+                        item.business_type,
+                        item.supplier_name or item.customer_name
+                        or item.supplier_code or item.customer_code or "",
+                        item.unit_price,
+                        item.amount,
+                    )
+                    for item in txns
+                ),
+            )
+        )
+
+    elif kind == "purchase_contract":
+        contracts = period.purchase_contracts
+        contracts = _text_filters(
+            request,
+            contracts,
+            {"contract_no": "contract_no", "material": "material_code"},
+        )
+        contracts = _party_filter(
+            request, contracts, "supplier", "supplier_code", "supplier_name"
+        )
+        contracts = _choice_filter(request, contracts, "match_mode", "match_mode")
+        contracts = contracts.order_by("contract_date", "contract_no", "id")
+        sheets.append(
+            (
+                "采购合同",
+                ["合同号", "合同日期", "供应商", "品名编码", "品名", "合同数量",
+                 "剩余数量", "不含税单价", "来源"],
+                (
+                    (
+                        item.contract_no,
+                        item.contract_date,
+                        item.supplier_name or item.supplier_code,
+                        item.material_code,
+                        item.material_name,
+                        item.quantity,
+                        item.remaining_quantity,
+                        item.unit_price_excl_tax,
+                        "自动承接" if item.is_system_generated else "导入",
+                    )
+                    for item in contracts
+                ),
+            )
+        )
+
+    elif kind == "purchase_invoice":
+        invoices = period.purchase_invoices.annotate(
+            matched_total=Sum("matchallocation__matched_quantity")
+        ).prefetch_related(
+            "matchallocation_set__inventory_transaction__period",
+            "matchallocation_set__opening_purchase_accrual",
+        )
+        invoices = _text_filters(
+            request,
+            invoices,
+            {
+                "invoice_no": "invoice_no",
+                "contract_no": "contract_no",
+                "material": "material_code",
+            },
+        )
+        invoices = _party_filter(
+            request, invoices, "supplier", "supplier_code", "supplier_name"
+        )
+        invoices = _date_filter(request, invoices, "invoice_date", "invoice_date")
+        invoices = _choice_filter(request, invoices, "match_mode", "match_mode")
+        invoices = invoices.order_by("invoice_date", "invoice_no", "id")
+
+        def _invoice_matches(invoice):
+            parts = []
+            for a in invoice.matchallocation_set.all():
+                if a.inventory_transaction:
+                    parts.append(
+                        f"{a.inventory_transaction.period.month:%Y-%m}·"
+                        f"{a.inventory_transaction.document_no or '流水'}:{a.matched_quantity}"
+                    )
+                else:
+                    parts.append(
+                        f"{a.opening_purchase_accrual.original_period:%Y-%m}·"
+                        f"{a.opening_purchase_accrual.document_no}(期初暂估):{a.matched_quantity}"
+                    )
+            return "；".join(parts)
+
+        sheets.append(
+            (
+                "采购发票匹配",
+                ["发票号", "发票日期", "发票期间", "合同号", "供应商", "物料编码",
+                 "物料名称", "发票数量", "已匹配数量", "未匹配数量", "不含税金额",
+                 "匹配的入库/期初暂估", "处理方式"],
+                (
+                    (
+                        item.invoice_no,
+                        item.invoice_date,
+                        item.invoice_period,
+                        item.contract_no,
+                        item.supplier_name or item.supplier_code,
+                        item.material_code,
+                        item.material_name,
+                        item.quantity,
+                        item.matched_total or 0,
+                        item.remaining_quantity,
+                        item.amount_excl_tax,
+                        _invoice_matches(item),
+                        item.get_match_mode_display(),
+                    )
+                    for item in invoices
+                ),
+            )
+        )
+
+    elif kind == "purchase_accrual":
+        rows = build_purchase_accrual_rows(period)
+        receipt_month = str(request.GET.get("receipt_month", "")).strip()
+        document_no = str(request.GET.get("document_no", "")).strip().lower()
+        supplier = str(request.GET.get("supplier", "")).strip().lower()
+        material = str(request.GET.get("material", "")).strip().lower()
+        contract_no = str(request.GET.get("contract_no", "")).strip().lower()
+        status = str(request.GET.get("status", "")).strip()
+        if receipt_month:
+            rows = [r for r in rows if r.receipt_month.strftime("%Y-%m") == receipt_month]
+        if document_no:
+            rows = [r for r in rows if document_no in (r.document_no or "").lower()]
+        if supplier:
+            rows = [r for r in rows if supplier in (f"{r.supplier_code} {r.supplier_name}").lower()]
+        if material:
+            rows = [r for r in rows if material in (f"{r.material_code} {r.material_name}").lower()]
+        if contract_no:
+            rows = [r for r in rows if contract_no in r.contract_nos.lower()]
+        if status:
+            rows = [r for r in rows if r.status == status]
+        sheets.append(
+            (
+                "月末采购暂估",
+                ["入库期间", "入库日期", "入库单号", "供应商", "物料编码", "物料名称",
+                 "入库数量", "已到票数量", "未到票数量", "暂估单价", "未到票金额",
+                 "状态", "匹配合同"],
+                (
+                    (
+                        r.receipt_month,
+                        r.document_date,
+                        r.document_no,
+                        r.supplier_name or r.supplier_code,
+                        r.material_code,
+                        r.material_name,
+                        r.receipt_quantity,
+                        r.invoiced_quantity,
+                        r.outstanding_quantity,
+                        r.provisional_unit_price,
+                        r.provisional_amount,
+                        r.status,
+                        r.contract_nos,
+                    )
+                    for r in rows
+                ),
+            )
+        )
+
+    elif kind == "purchase_difference":
+        rows = build_purchase_difference_rows(period)
+        invoice_no = str(request.GET.get("invoice_no", "")).strip().lower()
+        receipt_month = str(request.GET.get("receipt_month", "")).strip()
+        document_no = str(request.GET.get("document_no", "")).strip().lower()
+        supplier = str(request.GET.get("supplier", "")).strip().lower()
+        material = str(request.GET.get("material", "")).strip().lower()
+        status = str(request.GET.get("status", "")).strip()
+        cross_period = str(request.GET.get("cross_period", "")).strip()
+        if invoice_no:
+            rows = [r for r in rows if invoice_no in (r.invoice.invoice_no or "").lower()]
+        if receipt_month:
+            rows = [r for r in rows if r.receipt_month.strftime("%Y-%m") == receipt_month]
+        if document_no:
+            rows = [r for r in rows if document_no in (r.document_no or "").lower()]
+        if supplier:
+            rows = [r for r in rows if supplier in (f"{r.invoice.supplier_code} {r.invoice.supplier_name}").lower()]
+        if material:
+            rows = [r for r in rows if material in (f"{r.material_code} {r.material_name}").lower()]
+        if status:
+            rows = [r for r in rows if r.status == status]
+        if cross_period in {"yes", "no"}:
+            rows = [r for r in rows if r.cross_period == (cross_period == "yes")]
+        sheets.append(
+            (
+                "采购暂估差异",
+                ["发票号", "发票日期", "供应商", "物料编码", "物料名称", "入库期间",
+                 "入库单号", "核销数量", "暂估单价", "发票单价", "暂估金额", "发票金额",
+                 "价差", "是否跨期", "状态"],
+                (
+                    (
+                        r.invoice.invoice_no,
+                        r.invoice.invoice_date,
+                        r.invoice.supplier_name or r.invoice.supplier_code,
+                        r.material_code,
+                        r.material_name,
+                        r.receipt_month,
+                        r.document_no,
+                        r.matched_quantity,
+                        r.provisional_unit_price,
+                        r.invoice_unit_price,
+                        r.provisional_amount,
+                        r.invoice_amount,
+                        r.difference_amount,
+                        "是" if r.cross_period else "否",
+                        r.status,
+                    )
+                    for r in rows
+                ),
+            )
+        )
+
+    elif kind == "sales_invoice":
+        invoices = period.sales_invoices.annotate(
+            matched_total=Sum("matchallocation__matched_quantity")
+        ).prefetch_related(
+            "matchallocation_set__inventory_transaction__period",
+            "matchallocation_set__opening_goods_issued",
+        )
+        invoices = _text_filters(
+            request,
+            invoices,
+            {
+                "invoice_no": "invoice_no",
+                "sales_order_no": "sales_order_no",
+                "material": "material_code",
+            },
+        )
+        invoices = _party_filter(
+            request, invoices, "customer", "customer_code", "customer_name"
+        )
+        invoices = _date_filter(request, invoices, "invoice_date", "invoice_date")
+        invoices = _choice_filter(request, invoices, "match_mode", "match_mode")
+        invoices = invoices.order_by("invoice_date", "invoice_no", "id")
+
+        def _sales_matches(invoice):
+            parts = []
+            for a in invoice.matchallocation_set.all():
+                if a.inventory_transaction:
+                    parts.append(
+                        f"{a.inventory_transaction.period.month:%Y-%m}·"
+                        f"{a.inventory_transaction.document_no or '流水'}:{a.matched_quantity}"
+                    )
+                else:
+                    parts.append(
+                        f"{a.opening_goods_issued.original_period:%Y-%m}·"
+                        f"{a.opening_goods_issued.document_no}(期初发出):{a.matched_quantity}"
+                    )
+            return "；".join(parts)
+
+        sheets.append(
+            (
+                "销售发票匹配",
+                ["发票号", "发票日期", "发票期间", "销售订单号", "客户", "产品编码",
+                 "产品名称", "开票数量", "已匹配数量", "未匹配数量", "不含税金额",
+                 "匹配的出库/期初发出", "处理方式"],
+                (
+                    (
+                        item.invoice_no,
+                        item.invoice_date,
+                        item.invoice_period,
+                        item.sales_order_no,
+                        item.customer_name or item.customer_code,
+                        item.material_code,
+                        item.material_name,
+                        item.quantity,
+                        item.matched_total or 0,
+                        item.remaining_quantity,
+                        item.amount_excl_tax,
+                        _sales_matches(item),
+                        item.get_match_mode_display(),
+                    )
+                    for item in invoices
+                ),
+            )
+        )
+
+    elif kind == "sales_uninvoiced":
+        rows = build_sales_uninvoiced_rows(period)
+        issue_month = str(request.GET.get("issue_month", "")).strip()
+        document_no = str(request.GET.get("document_no", "")).strip().lower()
+        sales_order_no = str(request.GET.get("sales_order_no", "")).strip().lower()
+        customer = str(request.GET.get("customer", "")).strip().lower()
+        material = str(request.GET.get("material", "")).strip().lower()
+        status = str(request.GET.get("status", "")).strip()
+        cross_period = str(request.GET.get("cross_period", "")).strip()
+        if issue_month:
+            rows = [r for r in rows if r.issue_month.strftime("%Y-%m") == issue_month]
+        if document_no:
+            rows = [r for r in rows if document_no in (r.document_no or "").lower()]
+        if sales_order_no:
+            rows = [r for r in rows if sales_order_no in (r.sales_order_no or "").lower()]
+        if customer:
+            rows = [r for r in rows if customer in (f"{r.customer_code} {r.customer_name}").lower()]
+        if material:
+            rows = [r for r in rows if material in (f"{r.material_code} {r.material_name}").lower()]
+        if status:
+            rows = [r for r in rows if r.status == status]
+        if cross_period in {"yes", "no"}:
+            rows = [r for r in rows if r.cross_period == (cross_period == "yes")]
+        sheets.append(
+            (
+                "月末未开票",
+                ["出库期间", "出库日期", "出库单号", "销售订单号", "客户", "产品编码",
+                 "产品名称", "出库数量", "累计开票数量", "未开票数量", "出库成本",
+                 "已开票成本", "未开票成本", "匹配发票", "最近开票期间", "未开票天数", "状态"],
+                (
+                    (
+                        r.issue_month,
+                        r.document_date,
+                        r.document_no,
+                        r.sales_order_no,
+                        r.customer_name or r.customer_code,
+                        r.material_code,
+                        r.material_name,
+                        r.issue_quantity,
+                        r.invoiced_quantity,
+                        r.outstanding_quantity,
+                        r.issue_amount,
+                        r.invoiced_cost,
+                        r.outstanding_cost,
+                        r.invoice_nos,
+                        r.latest_invoice_period,
+                        r.outstanding_days,
+                        r.status,
+                    )
+                    for r in rows
+                ),
+            )
+        )
+
+    elif kind == "production_order":
+        orders = period.production_orders.all()
+        orders = _text_filters(
+            request,
+            orders,
+            {
+                "order_no": "order_no",
+                "workshop": "workshop",
+                "product": "product_code",
+            },
+        )
+        orders = _choice_filter(request, orders, "status", "status")
+        orders = _choice_filter(request, orders, "match_mode", "match_mode")
+        sheets.append(
+            (
+                "生产订单匹配",
+                ["工单号", "车间", "产品编码", "产品名称", "计划数量", "完工数量",
+                 "在制数量", "状态", "标准工时", "生产入库单号", "处理方式"],
+                (
+                    (
+                        item.order_no,
+                        item.workshop,
+                        item.product_code,
+                        item.product_name,
+                        item.plan_quantity,
+                        item.finished_quantity,
+                        item.wip_quantity,
+                        item.get_status_display(),
+                        item.standard_hours,
+                        item.production_receipt_document,
+                        item.get_match_mode_display(),
+                    )
+                    for item in orders
+                ),
+            )
+        )
+
+    elif kind == "inventory_valuation":
+        sheets.append(
+            (
+                "库存金额结转",
+                ["物料编码", "物料名称", "期初数量", "期初金额", "入库数量", "入库金额",
+                 "出库数量", "出库金额", "月末加权平均价", "期末数量", "期末金额", "收敛"],
+                (
+                    (
+                        item.material_code,
+                        item.material_name,
+                        item.opening_quantity,
+                        item.opening_amount,
+                        item.receipt_quantity,
+                        item.receipt_amount,
+                        item.issue_quantity,
+                        item.issue_amount,
+                        item.weighted_average_price,
+                        item.ending_quantity,
+                        item.ending_amount,
+                        "是" if item.converged else "否",
+                    )
+                    for item in period.inventory_valuations.all()
+                ),
+            )
+        )
+
+    elif kind == "order_cost":
+        sheets.append(
+            (
+                "订单成本",
+                ["工单号", "车间", "产品编码", "产品名称", "完工数量", "在制数量",
+                 "材料成本", "水电", "蒸汽", "天然气", "折旧", "机物料", "工资",
+                 "订单总成本", "完工成本", "完工单位成本", "在产品成本"],
+                (
+                    (
+                        item.order.order_no,
+                        item.order.workshop,
+                        item.order.product_code,
+                        item.order.product_name,
+                        item.order.finished_quantity,
+                        item.order.wip_quantity,
+                        item.direct_material,
+                        item.water_power,
+                        item.steam,
+                        item.natural_gas,
+                        item.depreciation,
+                        item.consumables,
+                        item.wages,
+                        item.total_cost,
+                        item.finished_cost,
+                        item.finished_unit_cost,
+                        item.wip_cost,
+                    )
+                    for item in period.order_cost_results.select_related("order").all()
+                ),
+            )
+        )
+
+    elif kind == "reconciliation":
+        sheets.append(
+            (
+                "勾稽结果",
+                ["检查编码", "检查项目", "左侧金额", "右侧金额", "差额", "状态", "分项明细"],
+                (
+                    (
+                        item.check_code,
+                        item.check_name,
+                        item.left_amount,
+                        item.right_amount,
+                        item.difference,
+                        item.get_status_display(),
+                        "；".join(f"{k}={v}" for k, v in item.details.items()),
+                    )
+                    for item in period.reconciliations.all()
+                ),
+            )
+        )
+        sheets.append(
+            (
+                "异常清单",
+                ["严重程度", "类别", "引用", "异常内容", "处理状态"],
+                (
+                    (
+                        item.get_severity_display(),
+                        item.category,
+                        item.reference,
+                        item.message,
+                        item.get_status_display(),
+                    )
+                    for item in period.exceptions.all()
+                ),
+            )
+        )
+
+    elif kind == "workshop_settlement":
+        sheets.append(
+            (
+                "车间结转",
+                ["结转顺序", "车间/成本中心", "状态", "订单成本", "生产入库成本",
+                 "循环次数", "是否收敛", "结转时间", "结转人"],
+                (
+                    (
+                        item.sequence,
+                        item.workshop,
+                        item.get_status_display(),
+                        item.order_cost,
+                        item.production_receipt_amount,
+                        item.iterations,
+                        "是" if item.converged else "否",
+                        (
+                            timezone.localtime(item.settled_at).replace(tzinfo=None)
+                            if item.settled_at
+                            else None
+                        ),
+                        str(item.settled_by or ""),
+                    )
+                    for item in period.workshop_settlements.all()
+                ),
+            )
+        )
+
+    elif kind == "opening_inventory":
+        # 优先原样输出用户上传的期初台账（保留仓库/批次明细，行数与上传一致）
+        batch = (
+            period.import_batches.filter(
+                kind=ImportBatch.Kind.OPENING_INVENTORY
+            )
+            .exclude(file="")
+            .order_by("-created_at")
+            .first()
+        )
+        header = []
+        rows = []
+        if batch and Path(batch.file.path).is_file():
+            header, rows = read_uploaded_rows(Path(batch.file.path))
+        if not header:
+            # 无上传文件时回退到数据库
+            db_items = period.opening_inventory_balances.all()
+            header = ["期初日期", "物料号", "物料名称", "分类名称", "仓库名称",
+                      "批次号", "结存数量", "单位名称", "单价", "金额", "来源"]
+            rows = [
+                (
+                    item.opening_date,
+                    item.material_code,
+                    item.material_name,
+                    item.category_name,
+                    item.warehouse,
+                    item.batch_no,
+                    item.quantity,
+                    item.uom,
+                    item.unit_price,
+                    item.amount,
+                    "系统自动承接" if item.is_system_generated else "人工上传/覆盖",
+                )
+                for item in db_items
+            ]
+        sheets.append(("期初存货", header, rows))
+
+    elif kind == "ending_inventory":
+        rows = period.ending_inventory_balances.all()
+        sheets.append(
+            (
+                "期末存货",
+                ["期末日期", "物料号", "物料名称", "分类名称", "仓库名称", "批次号",
+                 "结存数量", "单位名称", "单价", "金额", "来源"],
+                (
+                    (
+                        item.ending_date,
+                        item.material_code,
+                        item.material_name,
+                        item.category_name,
+                        item.warehouse,
+                        item.batch_no,
+                        item.quantity,
+                        item.uom,
+                        item.unit_price,
+                        item.amount,
+                        "系统自动计算" if item.is_system_generated else "人工上传/覆盖",
+                    )
+                    for item in rows
+                ),
+            )
+        )
+
+    return sheets
+
+
+@login_required
+def export_listing(request, period_id, kind):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    if kind not in LISTING_EXPORTS:
+        raise Http404("不支持的导出类型。")
+    sheets = _listing_rows(request, period, kind)
+    stream = build_listing_workbook(sheets)
+    title = LISTING_EXPORTS[kind]["title"]
+    filename = f"{title}-{period.month:%Y%m}.xlsx"
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f"attachment; filename*=UTF-8''{quote(filename)}"
+    )
+    return response
+
+
+@login_required
+def export_center(request, period_id):
+    """报表导出中心：勾选需要导出的报表，打包成 ZIP 下载。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+
+    REPORT_CATALOG = [
+        {"kind": "opening_inventory", "name": "期初存货（上传原样）",
+         "desc": "期初库存余额台账，按上传文件原样导出（保留仓库/批次明细，行数与上传一致）"},
+        {"kind": "ending_inventory", "name": "期末存货",
+         "desc": "期末库存余额台账（物料、结存数量、单价、金额，系统自动计算）"},
+        {"kind": "inventory_ledger", "name": "库存流水",
+         "desc": "本期间全部库存出入库流水（单据、物料、数量、单价、金额）"},
+        {"kind": "purchase_contract", "name": "采购合同",
+         "desc": "采购合同台账（合同号、供应商、品名、数量、不含税单价、剩余数量）"},
+        {"kind": "purchase_invoice", "name": "采购发票匹配",
+         "desc": "采购发票及核销的入库/期初暂估明细"},
+        {"kind": "purchase_accrual", "name": "月末采购暂估",
+         "desc": "截至月末仍未到票的采购入库及暂估金额"},
+        {"kind": "purchase_difference", "name": "本月采购暂估差异",
+         "desc": "本月发票核销产生的暂估价差（交总账处理）"},
+        {"kind": "sales_invoice", "name": "销售发票匹配",
+         "desc": "销售发票及核销的出库/期初发出商品明细"},
+        {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
+         "desc": "截至月末仍未开票的销售出库及发出商品成本"},
+        {"kind": "production_order", "name": "生产订单匹配",
+         "desc": "生产订单及匹配的领退料、生产入库"},
+        {"kind": "inventory_valuation", "name": "库存金额结转",
+         "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
+        {"kind": "order_cost", "name": "订单成本",
+         "desc": "各生产订单完工与在制成本明细"},
+        {"kind": "reconciliation", "name": "勾稽结果与异常清单",
+         "desc": "全部勾稽项目（含异常清单），两个工作表"},
+        {"kind": "workshop_settlement", "name": "车间结转",
+         "desc": "车间结转顺序、状态与成本结果"},
+    ]
+    SPECIAL_REPORTS = [
+        {"key": "settlement_workbook", "name": "结算工作簿（完整）",
+         "desc": "含 16 个工作表的完整结算底稿：库存计价、跨期结转、月末暂估、勾稽等"},
+        {"key": "uploaded_files", "name": "上传的原始文件",
+         "desc": "本期间全部上传的原始文件（CSV/XLSX）"},
+    ]
+
+    if request.method == "POST":
+        selected = request.POST.getlist("reports")
+        if not selected:
+            messages.error(request, "请至少勾选一张报表。")
+            return redirect("export_center", period_id=period.id)
+
+        stream = BytesIO()
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as zf:
+            for kind in selected:
+                if kind in LISTING_EXPORTS:
+                    sheets = _listing_rows(request, period, kind)
+                    wb_stream = build_listing_workbook(sheets)
+                    filename = f"{LISTING_EXPORTS[kind]['title']}-{period.month:%Y%m}.xlsx"
+                    zf.writestr(filename, wb_stream.getvalue())
+                elif kind == "settlement_workbook":
+                    wb_stream = build_settlement_workbook(period)
+                    filename = f"成本结算结果-{period.month:%Y%m}.xlsx"
+                    zf.writestr(filename, wb_stream.getvalue())
+                elif kind == "uploaded_files":
+                    for batch in period.import_batches.filter(
+                        file__gt=""
+                    ).order_by("id"):
+                        try:
+                            if not Path(batch.file.path).is_file():
+                                continue
+                            data = batch.file.read()
+                            safe_name = (
+                                f"上传原始文件-{batch.get_kind_display()}-"
+                                f"批次{batch.id}-{batch.original_name}"
+                            )
+                            zf.writestr(safe_name, data)
+                        except OSError:
+                            continue
+
+        filename = f"报表导出-{period.month:%Y%m}.zip"
+        response = HttpResponse(
+            stream.getvalue(),
+            content_type="application/zip",
+        )
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(filename)}"
+        )
+        return response
+
+    return render(
+        request,
+        "settlement/export_center.html",
+        {
+            "period": period,
+            "reports": REPORT_CATALOG,
+            "special_reports": SPECIAL_REPORTS,
+        },
+    )
 
 
 @login_required

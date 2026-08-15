@@ -7,9 +7,11 @@ from django.db import transaction
 
 from settlement.models import (
     AccountingPeriod,
+    EndingInventoryBalance,
     InventoryValuation,
     MatchAllocation,
     MatchingMode,
+    Material,
     OpeningInventoryBalance,
     OpeningWip,
     OrderCostResult,
@@ -81,37 +83,108 @@ def carry_forward_context(period: AccountingPeriod):
 
 
 def _manual_opening_inventory_codes(period):
-    return set(
+    codes = set(
+        period.opening_inventory_balances.filter(
+            is_system_generated=False
+        ).values_list("material_code", flat=True)
+    )
+    codes.update(
         period.inventory_transactions.filter(
             business_type__contains="期初"
         ).values_list("material_code", flat=True)
     )
+    return codes
 
 
 def _carry_inventory(period, previous):
     valuations = list(previous.inventory_valuations.all())
-    active_codes = set()
+    active_keys = set()
+    manual_codes = _manual_opening_inventory_codes(period)
+    material_uoms = {
+        code: uom
+        for code, uom in Material.objects.filter(
+            code__in=[item.material_code for item in valuations]
+        ).values_list("code", "uom")
+    }
+    # 由上期期末承接：优先用人工上传的期末存货，否则用系统生成的期末
+    previous_endings = list(
+        previous.ending_inventory_balances.filter(is_system_generated=False)
+    )
+    if not previous_endings:
+        previous_endings = list(
+            previous.ending_inventory_balances.filter(
+                is_system_generated=True
+            )
+        )
+    if previous_endings:
+        for ending in previous_endings:
+            if ending.quantity == ZERO and ending.amount == ZERO:
+                continue
+            if ending.material_code in manual_codes:
+                continue
+            key = (
+                ending.material_code,
+                ending.warehouse or "",
+                ending.batch_no or "",
+            )
+            active_keys.add(key)
+            OpeningInventoryBalance.objects.update_or_create(
+                period=period,
+                material_code=ending.material_code,
+                warehouse=ending.warehouse or None,
+                batch_no=ending.batch_no or None,
+                defaults={
+                    "source_period": previous,
+                    "material_name": ending.material_name,
+                    "category_name": ending.category_name or "",
+                    "uom": ending.uom or material_uoms.get(
+                        ending.material_code, ""
+                    ),
+                    "quantity": ending.quantity,
+                    "amount": ending.amount,
+                    "unit_price": ending.unit_price,
+                    "is_system_generated": True,
+                },
+            )
+        period.opening_inventory_balances.filter(
+            is_system_generated=True
+        ).exclude(
+            material_code__in={key[0] for key in active_keys}
+        ).delete()
+        return {
+            "count": len(active_keys),
+            "manual_overrides": len(
+                manual_codes & {key[0] for key in active_keys}
+            ),
+        }
     for valuation in valuations:
         if valuation.ending_quantity == ZERO and valuation.ending_amount == ZERO:
             continue
-        active_codes.add(valuation.material_code)
+        if valuation.material_code in manual_codes:
+            continue
+        active_keys.add((valuation.material_code, "", ""))
         OpeningInventoryBalance.objects.update_or_create(
             period=period,
             material_code=valuation.material_code,
+            warehouse=None,
+            batch_no=None,
             defaults={
                 "source_period": previous,
                 "material_name": valuation.material_name,
+                "uom": material_uoms.get(valuation.material_code, ""),
                 "quantity": valuation.ending_quantity,
                 "amount": valuation.ending_amount,
                 "unit_price": valuation.weighted_average_price,
                 "is_system_generated": True,
             },
         )
-    period.opening_inventory_balances.exclude(material_code__in=active_codes).delete()
+    period.opening_inventory_balances.filter(
+        is_system_generated=True
+    ).exclude(material_code__in={key[0] for key in active_keys}).delete()
     return {
-        "count": len(active_codes),
+        "count": len(active_keys),
         "manual_overrides": len(
-            _manual_opening_inventory_codes(period) & active_codes
+            manual_codes & {key[0] for key in active_keys}
         ),
     }
 
@@ -309,6 +382,9 @@ def invalidate_downstream_periods(source_period: AccountingPeriod):
     for period in later_periods:
         MatchAllocation.objects.filter(period=period).delete()
         InventoryValuation.objects.filter(period=period).delete()
+        EndingInventoryBalance.objects.filter(
+            period=period, is_system_generated=True
+        ).delete()
         OrderCostResult.objects.filter(period=period).delete()
         ReconciliationResult.objects.filter(period=period).delete()
         SettlementRun.objects.filter(period=period).delete()
@@ -323,7 +399,9 @@ def invalidate_downstream_periods(source_period: AccountingPeriod):
             production_receipt_amount=ZERO,
             error_message="",
         )
-        OpeningInventoryBalance.objects.filter(period=period).delete()
+        OpeningInventoryBalance.objects.filter(
+            period=period, is_system_generated=True
+        ).delete()
         OpeningWip.objects.filter(
             period=period, is_system_generated=True
         ).delete()

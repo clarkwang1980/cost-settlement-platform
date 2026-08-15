@@ -7,6 +7,7 @@
     <h1>生产订单匹配</h1>
     <p>以生产订单为主，集中查看匹配的领退料和生产入库流水。</p>
   </div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'production_order' %}?{{ request.GET.urlencode }}">导出Excel</a>
   {% if period.status != "locked" %}
   <form method="post" action="{% url 'rematch_period' period.id %}">
     {% csrf_token %}<button class="button primary" type="submit">重新自动匹配</button>

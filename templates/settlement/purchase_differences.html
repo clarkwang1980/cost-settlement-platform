@@ -8,6 +8,7 @@
     <p>只汇总本月发票核销产生的暂估价差，交总账单独处理；不会反写入库单价、库存金额或出库成本。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_difference' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_matches' period.id %}">采购发票匹配</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
   </div>

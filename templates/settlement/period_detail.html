@@ -19,6 +19,8 @@
     {% if counts.valuations %}
       <a class="button secondary" href="{% url 'export_period' period.id %}">导出Excel</a>
     {% endif %}
+    <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水</a>
+    <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
   </div>
 </section>
 
@@ -64,6 +66,7 @@
 <section class="summary-strip">
   <article><span>库存流水</span><strong>{{ counts.inventory }}</strong></article>
   <article><span>生产订单</span><strong>{{ counts.orders }}</strong></article>
+  <article><span>期末存货</span><strong>{{ counts.ending_inventory }}</strong></article>
   <article><span>车间结转</span><strong>{{ counts.settled_workshops }}/{{ counts.workshops }}</strong></article>
   <article><span>阻断异常</span><strong class="{% if counts.blocking %}danger-text{% endif %}">{{ counts.blocking }}</strong></article>
   <article><span>勾稽未通过</span><strong class="{% if counts.failed_checks %}danger-text{% endif %}">{{ counts.failed_checks }}</strong></article>
@@ -73,13 +76,20 @@
   <section class="section-card">
     <div class="section-heading">
       <div><p class="eyebrow">IMPORT STATUS</p><h2>最近导入</h2></div>
-      {% if period.status != "locked" %}<a class="button small secondary" href="{% url 'upload_file' period.id %}">上传资料</a>{% endif %}
+      <div class="heading-actions">
+        <a class="button small secondary" href="{% url 'import_batches' period.id %}">全部批次</a>
+        {% if period.status != "locked" %}<a class="button small secondary" href="{% url 'upload_file' period.id %}">上传资料</a>{% endif %}
+      </div>
     </div>
     <div class="compact-list">
       {% for batch in batches %}
         <div class="compact-row">
           <div><strong>{{ batch.get_kind_display }}</strong><small>{{ batch.original_name }}</small></div>
-          <div class="right"><span>{{ batch.row_count }}行</span><small>{{ batch.created_at|date:"m-d H:i" }}</small></div>
+          <div class="right">
+            <span>{{ batch.row_count }}行</span>
+            <small>{{ batch.created_at|date:"m-d H:i" }}</small>
+            <a class="mini-button" href="{% url 'download_import_file' period.id batch.id %}">下载</a>
+          </div>
         </div>
       {% empty %}
         <div class="empty-state compact"><strong>尚未导入资料</strong><p>先上传本月库存流水。</p></div>

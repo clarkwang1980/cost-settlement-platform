@@ -8,6 +8,7 @@
     <p>截至{{ period }}月末仍未开票的销售出库，包含以前月份出库；未开票成本按实际匹配数量拆分。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'sales_uninvoiced' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售发票匹配</a>
     <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
   </div>

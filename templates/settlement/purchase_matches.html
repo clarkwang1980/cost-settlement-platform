@@ -8,6 +8,8 @@
     <p>发票可核销系统启用前的期初采购暂估，以及本月和以前月份的采购入库；发票价格只进入暂估差异，不会修改库存金额。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_invoice' %}?{{ request.GET.urlencode }}">导出Excel</a>
+    <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'purchase_differences' period.id %}">本月暂估差异</a>
   {% if period.status != "locked" %}

@@ -8,6 +8,7 @@
     <p>截至{{ period }}月末尚未到票的采购入库，包含以前月份入库；金额始终采用入库时的暂估价格。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_accrual' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_matches' period.id %}">采购发票匹配</a>
     <a class="button secondary" href="{% url 'purchase_differences' period.id %}">本月暂估差异</a>
   </div>
