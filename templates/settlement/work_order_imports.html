@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}生产工单台账 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORK ORDER LEDGER</p>
+    <h1>生产工单台账</h1>
+    <p>按 ERP 导出格式导入的生产工单主档，仅作资料留存，不参与成本计算。</p>
+  </div>
+  <a class="button secondary" href="{% url 'upload_file' period.id %}">去导入</a>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <label>产线编号<input name="line_code" value="{{ request.GET.line_code }}"></label>
+    <label>状态<input name="status" value="{{ request.GET.status }}"></label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_order_imports' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>工单类型</th><th>状态</th><th>计划开始</th><th>计划完工</th>
+          <th>产线设备</th><th>班次</th><th>优先级</th><th>产线编号</th><th>订单号</th><th>物料颜色</th><th>备注</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in page %}
+        <tr>
+          <td><strong>{{ r.order_no }}</strong></td>
+          <td>{{ r.order_type|default:"—" }}</td>
+          <td>{{ r.status|default:"—" }}</td>
+          <td>{{ r.planned_start|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>{{ r.planned_finish|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>{{ r.line_equipment|default:"—" }}</td>
+          <td>{{ r.shift|default:"—" }}</td>
+          <td>{{ r.priority|default:"—" }}</td>
+          <td>{{ r.line_code|default:"—" }}</td>
+          <td>{{ r.source_order_no|default:"—" }}</td>
+          <td>{{ r.material_color|default:"—" }}</td>
+          <td>{{ r.remark|default:"—" }}</td>
+        </tr>
+      {% empty %}<tr><td colspan="12" class="empty-cell">本月还没有导入生产工单。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

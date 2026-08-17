@@ -1302,7 +1302,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertEqual(upload_page.status_code, 200)
         self.assertContains(upload_page, "上传前必须注意")
-        self.assertContains(upload_page, "十一类资料字段说明")
+        self.assertContains(upload_page, "十四类资料字段说明")
         self.assertContains(upload_page, "“替换”会删除本月整类资料")
         self.assertContains(upload_page, "同车间费用必须先汇总")
         self.assertContains(upload_page, "销售订单号、客户和产品一致")
@@ -1373,6 +1373,9 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 ImportBatch.Kind.OPENING_GOODS_ISSUED,
                 "期初发出商品明细.csv",
             ),
+            (ImportBatch.Kind.WORK_ORDER, "生产工单.csv"),
+            (ImportBatch.Kind.MATERIAL_ISSUE, "投料记录.csv"),
+            (ImportBatch.Kind.WORK_REPORT, "报工记录.csv"),
         ]
         # 库存流水用含自动匹配列的完整格式，保证采购/生产/销售全链路数字成立；
         # 页面上发布的模板（创建时间/物料编号/操作数量…）由
@@ -1404,7 +1407,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 run = run_settlement(self.period)
 
         self.assertTrue(run.converged)
-        self.assertEqual(self.period.import_batches.count(), 11)
+        self.assertEqual(self.period.import_batches.count(), 14)
         self.assertEqual(self.period.inventory_transactions.count(), 4)
         self.assertEqual(self.period.production_orders.count(), 1)
         self.assertEqual(self.period.order_cost_results.count(), 1)
@@ -1469,6 +1472,61 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertContains(workshop_page, "染整订单成本明细")
         self.assertContains(workshop_page, "WO-001")
+
+    def test_work_order_issue_report_templates_import_into_ledgers(self):
+        """生产工单/投料记录/报工记录三类模板可按 ERP 格式导入台账。"""
+        template_dir = Path(settings.BASE_DIR) / "sample_templates"
+        cases = [
+            (ImportBatch.Kind.WORK_ORDER, "生产工单.csv"),
+            (ImportBatch.Kind.MATERIAL_ISSUE, "投料记录.csv"),
+            (ImportBatch.Kind.WORK_REPORT, "报工记录.csv"),
+        ]
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                for kind, filename in cases:
+                    content = (template_dir / filename).read_bytes()
+                    uploaded = SimpleUploadedFile(filename, content, "text/csv")
+                    batch = create_import_batch(
+                        period=self.period,
+                        kind=kind,
+                        uploaded_file=uploaded,
+                        user=self.user,
+                    )
+                    process_batch(batch)
+
+        self.assertEqual(self.period.work_orders.count(), 1)
+        self.assertEqual(self.period.material_issues.count(), 1)
+        self.assertEqual(self.period.work_reports.count(), 1)
+
+        wo = self.period.work_orders.get()
+        self.assertEqual(wo.order_no, "WO-202607-001")
+        self.assertEqual(wo.line_code, "LN-01")
+        self.assertEqual(wo.use_bom, True)
+        self.assertTrue(wo.planned_start)
+
+        issue = self.period.material_issues.get()
+        self.assertEqual(issue.material_code, "RM-001")
+        self.assertEqual(issue.issue_quantity, Decimal("500"))
+        self.assertEqual(issue.returned_quantity, Decimal("50"))
+        self.assertEqual(issue.actual_issue_quantity, Decimal("450"))
+
+        report = self.period.work_reports.get()
+        self.assertEqual(report.material_code, "FG-001")
+        self.assertEqual(report.quantity, Decimal("1000"))
+        self.assertEqual(report.work_hours, Decimal("8"))
+        self.assertEqual(report.work_order_no, "WO-202607-001")
+
+        # 三个台账页面可访问
+        self.client.force_login(self.user)
+        for url_name in (
+            "work_order_imports",
+            "material_issue_imports",
+            "work_report_imports",
+        ):
+            response = self.client.get(
+                reverse(url_name, kwargs={"period_id": self.period.id})
+            )
+            self.assertEqual(response.status_code, 200)
 
     def test_opening_inventory_import_feeds_first_period_valuation(self):
         period = AccountingPeriod.objects.create(month=date(2026, 1, 1))

@@ -21,7 +21,7 @@
   </section>
   <aside class="section-card guidance">
     <p class="eyebrow">UPLOAD CHECKLIST</p>
-    <h2>下载十一类导入模板</h2>
+    <h2>下载十四类导入模板</h2>
     <div class="template-links">
       {% for kind, label in template_kinds %}
         <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
@@ -78,7 +78,7 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">FIELD REQUIREMENTS</p>
-      <h2>十一类资料字段说明</h2>
+      <h2>十四类资料字段说明</h2>
     </div>
     <div class="field-legend">
       <span class="field-chip required">最低必填</span>
@@ -206,6 +206,39 @@
         <h3>自动核销必须建议提供</h3>
         <p><span class="field-chip recommended">销售订单号</span><span class="field-chip recommended">客户编码</span><span class="field-chip recommended">客户名称</span><span class="field-chip recommended">原出库数量</span><span class="field-chip recommended">以前累计开票数量</span></p>
         <p class="guide-note">原出库月份和日期必须早于系统首月，且两者月份一致。销售订单、客户和产品缺一时，后续销售发票通常需要手工核销。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>生产工单</span><small>ERP 工单主档台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">工单类型</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">计划开始时间</span><span class="field-chip recommended">计划完工时间</span><span class="field-chip recommended">优先级</span><span class="field-chip recommended">产线设备</span><span class="field-chip recommended">班次</span><span class="field-chip recommended">生产部门编号</span><span class="field-chip recommended">生产主管编号</span><span class="field-chip recommended">计划部门编号</span><span class="field-chip recommended">计划员编号</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">指定用料</span><span class="field-chip recommended">外部单据编号</span><span class="field-chip recommended">状态</span><span class="field-chip recommended">是否使用物料清单</span><span class="field-chip recommended">是否使用工艺路线</span><span class="field-chip recommended">工序计划类型</span><span class="field-chip recommended">启用SOP</span><span class="field-chip recommended">生产模式</span><span class="field-chip recommended">产线编号</span><span class="field-chip recommended">订单号</span><span class="field-chip recommended">物料颜色</span></p>
+        <p class="guide-note">按 ERP 导出的生产工单主档原样导入，作为资料台账保存，不参与现有成本核算。同一工单编号再次上传会以最后一次为准。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>投料记录</span><small>ERP 投料明细台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span><span class="field-chip required">物料编码</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">生产任务编号</span><span class="field-chip recommended">工序编号</span><span class="field-chip recommended">工序名称</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">物料分类</span><span class="field-chip recommended">物料属性</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">投料数量</span><span class="field-chip recommended">已回撤数量</span><span class="field-chip recommended">实际投料数量</span><span class="field-chip recommended">投料单位</span><span class="field-chip recommended">辅助单位数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">质量状态</span><span class="field-chip recommended">投料仓位</span><span class="field-chip recommended">被替代物料编号</span><span class="field-chip recommended">被替代物料名称</span><span class="field-chip recommended">投料时间</span><span class="field-chip recommended">投料人员</span><span class="field-chip recommended">执行人员</span><span class="field-chip recommended">主产出物料编号</span><span class="field-chip recommended">主产出物料名称</span><span class="field-chip recommended">销售订单编号</span><span class="field-chip recommended">投料记录编号</span></p>
+        <p class="guide-note">按 ERP 导出的投料记录原样导入，作为资料台账保存，不参与现有成本核算。实际投料数量未填时按“投料数量－已回撤数量”计算。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>报工记录</span><small>ERP 报工明细台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span><span class="field-chip required">报工物料编号</span><span class="field-chip required">报工数量</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">报工时间</span><span class="field-chip recommended">生产任务编号</span><span class="field-chip recommended">工序编号</span><span class="field-chip recommended">工序名称</span><span class="field-chip recommended">报工物料名称</span><span class="field-chip recommended">生产人员</span><span class="field-chip recommended">质量状态</span><span class="field-chip recommended">不良原因</span><span class="field-chip recommended">报工单位</span><span class="field-chip recommended">辅助数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">流转卡编号</span><span class="field-chip recommended">工时</span><span class="field-chip recommended">工时单位</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">部门</span><span class="field-chip recommended">设备</span><span class="field-chip recommended">工单物料编号</span><span class="field-chip recommended">工单物料名称</span><span class="field-chip recommended">订单编号</span><span class="field-chip recommended">特纺/包覆-纸管颜色</span><span class="field-chip recommended">纺纱-班别</span><span class="field-chip recommended">染色纤维-含水率</span><span class="field-chip recommended">染色纤维-批号流水</span><span class="field-chip recommended">织布-序号</span><span class="field-chip recommended">织布-机台</span><span class="field-chip recommended">产出仓位</span><span class="field-chip recommended">工单部门</span></p>
+        <p class="guide-note">按 ERP 导出的报工记录原样导入，作为资料台账保存，不参与现有成本核算。报工数量必须大于0。</p>
       </div>
     </details>
   </div>

@@ -8,7 +8,9 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from django.conf import settings
 from django.db import transaction
+from django.utils import timezone as dj_timezone
 from openpyxl import load_workbook
 
 from settlement.models import (
@@ -18,6 +20,7 @@ from settlement.models import (
     InventoryTransaction,
     InventoryValuation,
     Material,
+    MaterialIssue,
     MatchAllocation,
     MatchingMode,
     OpeningGoodsIssued,
@@ -31,6 +34,8 @@ from settlement.models import (
     ReconciliationResult,
     SalesInvoiceLine,
     SettlementRun,
+    WorkOrder,
+    WorkReport,
     WorkshopSettlement,
     WorkshopCostPool,
 )
@@ -127,6 +132,97 @@ ALIASES = {
         "material_completion_rate": ["材料完工比例", "材料完成率", "完工比例"],
         "wip_conversion_rate": ["在制转换比例", "在制人工比例", "在制完工程度"],
         "production_receipt_document": ["生产入库单号", "完工入库单号", "入库单号"],
+    },
+    "work_order": {
+        "order_no": ["工单编号", "生产工单号", "工单号"],
+        "order_type": ["工单类型"],
+        "identifier": ["标识码"],
+        "planned_start": ["计划开始时间", "计划开工时间", "计划开始日期"],
+        "planned_finish": ["计划完工时间", "计划完成时间", "计划完工日期"],
+        "priority": ["优先级"],
+        "line_equipment": ["产线设备", "设备"],
+        "shift": ["班次", "班别"],
+        "production_dept_code": ["生产部门编号", "生产部门", "生产单位"],
+        "production_supervisor_code": ["生产主管编号", "生产主管"],
+        "planning_dept_code": ["计划部门编号", "计划部门"],
+        "planner_code": ["计划员编号", "计划员"],
+        "remark": ["备注"],
+        "specified_material": ["指定用料"],
+        "external_document_no": ["外部单据编号", "外部单号"],
+        "status": ["状态", "工单状态"],
+        "use_bom": ["是否使用物料清单", "使用物料清单"],
+        "use_routing": ["是否使用工艺路线", "使用工艺路线"],
+        "process_plan_type": ["工序计划类型"],
+        "enable_sop": ["启用SOP", "是否启用SOP", "启用sop"],
+        "production_mode": ["生产模式"],
+        "line_code": ["产线编号", "生产线编号"],
+        "source_order_no": ["订单号", "销售订单号", "关联订单号"],
+        "material_color": ["物料颜色", "颜色"],
+    },
+    "material_issue": {
+        "task_no": ["生产任务编号", "任务编号"],
+        "operation_no": ["工序编号"],
+        "operation_name": ["工序名称"],
+        "material_code": ["物料编码", "物料编号", "物料代码"],
+        "material_name": ["物料名称"],
+        "material_category": ["物料分类", "分类"],
+        "material_attribute": ["物料属性", "属性"],
+        "material_spec": ["物料规格", "规格"],
+        "issue_quantity": ["投料数量"],
+        "returned_quantity": ["已回撤数量", "回撤数量"],
+        "actual_issue_quantity": ["实际投料数量"],
+        "issue_uom": ["投料单位", "单位"],
+        "auxiliary_quantity": ["辅助单位数量", "辅助数量"],
+        "auxiliary_uom": ["辅助单位"],
+        "identifier": ["标识码"],
+        "batch_no": ["批次号", "批号"],
+        "quality_status": ["质量状态"],
+        "issue_location": ["投料仓位", "仓位"],
+        "replaced_material_code": ["被替代物料编号"],
+        "replaced_material_name": ["被替代物料名称"],
+        "issue_time": ["投料时间"],
+        "issuer": ["投料人员", "投料人"],
+        "executor": ["执行人员", "执行人"],
+        "work_order_no": ["工单编号", "工单号", "生产工单号"],
+        "main_output_code": ["主产出物料编号", "主产出物料编码"],
+        "main_output_name": ["主产出物料名称"],
+        "sales_order_no": ["销售订单编号", "销售订单号", "订单号"],
+        "record_no": ["投料记录编号", "记录编号"],
+    },
+    "work_report": {
+        "report_time": ["报工时间", "报工日期"],
+        "task_no": ["生产任务编号", "任务编号"],
+        "operation_no": ["工序编号"],
+        "operation_name": ["工序名称"],
+        "material_code": ["报工物料编号", "报工物料编码", "物料编码", "物料编号"],
+        "material_name": ["报工物料名称", "物料名称"],
+        "operator": ["生产人员", "操作人员", "报工人"],
+        "quality_status": ["质量状态"],
+        "defect_reason": ["不良原因"],
+        "quantity": ["报工数量", "数量"],
+        "uom": ["报工单位", "单位"],
+        "auxiliary_quantity": ["辅助数量", "辅助单位数量"],
+        "auxiliary_uom": ["辅助单位"],
+        "batch_no": ["批次号", "批号"],
+        "identifier": ["标识码"],
+        "route_card_no": ["流转卡编号", "流转卡号"],
+        "work_hours": ["工时"],
+        "work_hours_uom": ["工时单位"],
+        "remark": ["备注"],
+        "department": ["部门"],
+        "equipment": ["设备"],
+        "work_order_no": ["工单编号", "工单号"],
+        "work_order_material_code": ["工单物料编号", "工单物料编码"],
+        "work_order_material_name": ["工单物料名称"],
+        "order_no": ["订单编号", "订单号", "销售订单号"],
+        "paper_tube_color": ["特纺/包覆-纸管颜色", "纸管颜色"],
+        "spinning_shift": ["纺纱-班别", "班别"],
+        "moisture_content": ["染色纤维-含水率", "含水率"],
+        "dye_batch_flow": ["染色纤维-批号流水", "批号流水"],
+        "weaving_sequence": ["织布-序号", "序号"],
+        "weaving_machine": ["织布-机台", "机台"],
+        "output_location": ["产出仓位", "产出库位"],
+        "work_order_department": ["工单部门", "生产部门"],
     },
     "workshop_cost": {
         "workshop": ["车间", "生产车间", "成本中心"],
@@ -299,6 +395,9 @@ REQUIRED_FIELDS = {
         "material_code",
         "quantity",
     },
+    "work_order": {"order_no"},
+    "material_issue": {"work_order_no", "material_code"},
+    "work_report": {"work_order_no", "material_code", "quantity"},
 }
 
 
@@ -357,6 +456,60 @@ def to_date(value, default=None) -> date | None:
         except ValueError:
             continue
     raise ValueError(f"无法识别日期：{value}")
+
+
+def to_datetime(value, default=None) -> datetime | None:
+    """支持日期、日期时间、Excel 序列号的通用时间解析。"""
+    if value is None or value == "":
+        return default
+    if isinstance(value, datetime):
+        return _aware_if_needed(value)
+    if isinstance(value, date):
+        return _aware_if_needed(datetime.combine(value, datetime.min.time()))
+    if isinstance(value, (int, float)):
+        return _aware_if_needed(
+            datetime(1899, 12, 30) + __import__("datetime").timedelta(
+                days=float(value)
+            )
+        )
+    text = str(value).strip()
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%Y%m%d",
+        "%Y%m%d%H%M%S",
+    ):
+        try:
+            return _aware_if_needed(datetime.strptime(text, fmt))
+        except ValueError:
+            continue
+    raise ValueError(f"无法识别时间：{value}")
+
+
+def _aware_if_needed(value: datetime) -> datetime:
+    if settings.USE_TZ and value.tzinfo is None:
+        return dj_timezone.make_aware(value)
+    return value
+
+
+def to_bool(value, default=False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "是", "有", "启用", "使用", "开"}:
+        return True
+    if text in {"0", "false", "no", "n", "否", "无", "不启用", "不使用", "关"}:
+        return False
+    return default
 
 
 def month_start(value, fallback: date) -> date:
@@ -607,6 +760,9 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.OPENING_GOODS_ISSUED: _import_opening_goods_issued,
         ImportBatch.Kind.OPENING_INVENTORY: _import_opening_inventory,
         ImportBatch.Kind.ENDING_INVENTORY: _import_ending_inventory,
+        ImportBatch.Kind.WORK_ORDER: _import_work_order,
+        ImportBatch.Kind.MATERIAL_ISSUE: _import_material_issue,
+        ImportBatch.Kind.WORK_REPORT: _import_work_report,
     }[batch.kind]
     errors = []
     count = 0
@@ -804,6 +960,154 @@ def _import_production_order(batch, row):
                 row.get("production_receipt_document")
             ),
         },
+    )
+
+
+def _import_work_order(batch, row):
+    order_no = text(row.get("order_no"))
+    if not order_no:
+        raise ValueError("工单编号不能为空。")
+    WorkOrder.objects.update_or_create(
+        period=batch.period,
+        order_no=order_no,
+        defaults={
+            "batch": batch,
+            "order_type": text(row.get("order_type")),
+            "identifier": text(row.get("identifier")),
+            "planned_start": to_datetime(row.get("planned_start")),
+            "planned_finish": to_datetime(row.get("planned_finish")),
+            "priority": text(row.get("priority")),
+            "line_equipment": text(row.get("line_equipment")),
+            "shift": text(row.get("shift")),
+            "production_dept_code": text(row.get("production_dept_code")),
+            "production_supervisor_code": text(
+                row.get("production_supervisor_code")
+            ),
+            "planning_dept_code": text(row.get("planning_dept_code")),
+            "planner_code": text(row.get("planner_code")),
+            "remark": text(row.get("remark")),
+            "specified_material": text(row.get("specified_material")),
+            "external_document_no": text(row.get("external_document_no")),
+            "status": text(row.get("status")),
+            "use_bom": to_bool(row.get("use_bom")),
+            "use_routing": to_bool(row.get("use_routing")),
+            "process_plan_type": text(row.get("process_plan_type")),
+            "enable_sop": to_bool(row.get("enable_sop")),
+            "production_mode": text(row.get("production_mode")),
+            "line_code": text(row.get("line_code")),
+            "source_order_no": text(row.get("source_order_no")),
+            "material_color": text(row.get("material_color")),
+        },
+    )
+
+
+def _import_material_issue(batch, row):
+    work_order_no = text(row.get("work_order_no"))
+    material_code = text(row.get("material_code"))
+    if not work_order_no:
+        raise ValueError("工单编号不能为空。")
+    if not material_code:
+        raise ValueError("物料编码不能为空。")
+    issue_quantity = abs(to_decimal(row.get("issue_quantity"), Decimal("0")))
+    returned_quantity = abs(
+        to_decimal(row.get("returned_quantity"), Decimal("0"))
+    )
+    actual_issue_quantity = to_decimal(row.get("actual_issue_quantity"))
+    if actual_issue_quantity is None:
+        actual_issue_quantity = issue_quantity - returned_quantity
+    actual_issue_quantity = abs(actual_issue_quantity)
+    get_or_create_material(
+        material_code,
+        row.get("material_name"),
+        row.get("material_spec"),
+        row.get("issue_uom"),
+    )
+    MaterialIssue.objects.create(
+        period=batch.period,
+        batch=batch,
+        task_no=text(row.get("task_no")),
+        operation_no=text(row.get("operation_no")),
+        operation_name=text(row.get("operation_name")),
+        material_code=material_code,
+        material_name=text(row.get("material_name")),
+        material_category=text(row.get("material_category")),
+        material_attribute=text(row.get("material_attribute")),
+        material_spec=text(row.get("material_spec")),
+        issue_quantity=issue_quantity,
+        returned_quantity=returned_quantity,
+        actual_issue_quantity=actual_issue_quantity,
+        issue_uom=text(row.get("issue_uom")),
+        auxiliary_quantity=to_decimal(row.get("auxiliary_quantity")),
+        auxiliary_uom=text(row.get("auxiliary_uom")),
+        identifier=text(row.get("identifier")),
+        batch_no=text(row.get("batch_no")),
+        quality_status=text(row.get("quality_status")),
+        issue_location=text(row.get("issue_location")),
+        replaced_material_code=text(row.get("replaced_material_code")),
+        replaced_material_name=text(row.get("replaced_material_name")),
+        issue_time=to_datetime(row.get("issue_time")),
+        issuer=text(row.get("issuer")),
+        executor=text(row.get("executor")),
+        work_order_no=work_order_no,
+        main_output_code=text(row.get("main_output_code")),
+        main_output_name=text(row.get("main_output_name")),
+        sales_order_no=text(row.get("sales_order_no")),
+        record_no=text(row.get("record_no")),
+    )
+
+
+def _import_work_report(batch, row):
+    work_order_no = text(row.get("work_order_no"))
+    material_code = text(row.get("material_code"))
+    if not work_order_no:
+        raise ValueError("工单编号不能为空。")
+    if not material_code:
+        raise ValueError("报工物料编号不能为空。")
+    quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
+    if quantity == 0:
+        raise ValueError("报工数量必须大于0。")
+    get_or_create_material(
+        material_code,
+        row.get("material_name"),
+        None,
+        row.get("uom"),
+    )
+    WorkReport.objects.create(
+        period=batch.period,
+        batch=batch,
+        report_time=to_datetime(row.get("report_time")),
+        task_no=text(row.get("task_no")),
+        operation_no=text(row.get("operation_no")),
+        operation_name=text(row.get("operation_name")),
+        material_code=material_code,
+        material_name=text(row.get("material_name")),
+        operator=text(row.get("operator")),
+        quality_status=text(row.get("quality_status")),
+        defect_reason=text(row.get("defect_reason")),
+        quantity=quantity,
+        uom=text(row.get("uom")),
+        auxiliary_quantity=to_decimal(row.get("auxiliary_quantity")),
+        auxiliary_uom=text(row.get("auxiliary_uom")),
+        batch_no=text(row.get("batch_no")),
+        identifier=text(row.get("identifier")),
+        route_card_no=text(row.get("route_card_no")),
+        work_hours=to_decimal(row.get("work_hours")),
+        work_hours_uom=text(row.get("work_hours_uom")),
+        remark=text(row.get("remark")),
+        department=text(row.get("department")),
+        equipment=text(row.get("equipment")),
+        work_order_no=work_order_no,
+        work_order_material_code=text(row.get("work_order_material_code")),
+        work_order_material_name=text(row.get("work_order_material_name")),
+        order_no=text(row.get("order_no")),
+        paper_tube_color=text(row.get("paper_tube_color")),
+        spinning_shift=text(row.get("spinning_shift")),
+        moisture_content=text(row.get("moisture_content")),
+        dye_batch_flow=text(row.get("dye_batch_flow")),
+        weaving_sequence=text(row.get("weaving_sequence")),
+        weaving_machine=text(row.get("weaving_machine")),
+        output_location=text(row.get("output_location")),
+        work_order_department=text(row.get("work_order_department")),
     )
 
 

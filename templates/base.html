@@ -46,6 +46,9 @@
         <a href="{% url 'work_order_report' period.id %}">生产工单</a>
         <a href="{% url 'order_material_report' period.id %}">工单投料</a>
         <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
+        <a href="{% url 'work_order_imports' period.id %}">工单台账</a>
+        <a href="{% url 'material_issue_imports' period.id %}">投料台账</a>
+        <a href="{% url 'work_report_imports' period.id %}">报工台账</a>
         <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
         <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
         <a href="{% url 'inventory_results' period.id %}">库存结转</a>

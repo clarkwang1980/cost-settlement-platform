@@ -90,6 +90,21 @@ urlpatterns = [
         name="work_order_report",
     ),
     path(
+        "periods/<int:period_id>/work-order-imports/",
+        views.work_order_imports,
+        name="work_order_imports",
+    ),
+    path(
+        "periods/<int:period_id>/material-issue-imports/",
+        views.material_issue_imports,
+        name="material_issue_imports",
+    ),
+    path(
+        "periods/<int:period_id>/work-report-imports/",
+        views.work_report_imports,
+        name="work_report_imports",
+    ),
+    path(
         "periods/<int:period_id>/order-material/",
         views.order_material_report,
         name="order_material_report",

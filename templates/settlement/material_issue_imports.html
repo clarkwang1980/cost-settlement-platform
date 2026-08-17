@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}投料记录台账 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">MATERIAL ISSUE LEDGER</p>
+    <h1>投料记录台账</h1>
+    <p>按 ERP 导出格式导入的投料记录，仅作资料留存，不参与成本计算。</p>
+  </div>
+  <a class="button secondary" href="{% url 'upload_file' period.id %}">去导入</a>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="work_order_no" value="{{ request.GET.work_order_no }}"></label>
+    <label>物料编码<input name="material_code" value="{{ request.GET.material_code }}"></label>
+    <label>生产任务编号<input name="task_no" value="{{ request.GET.task_no }}"></label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'material_issue_imports' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>生产任务编号</th><th>工序</th><th>物料</th><th>规格</th>
+          <th class="num">投料数量</th><th class="num">已回撤</th><th class="num">实际投料</th>
+          <th>单位</th><th>批次号</th><th>质量状态</th><th>投料时间</th><th>投料人员</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in page %}
+        <tr>
+          <td><strong>{{ r.work_order_no }}</strong></td>
+          <td>{{ r.task_no|default:"—" }}</td>
+          <td>{{ r.operation_no|default:"" }} {{ r.operation_name|default:"" }}</td>
+          <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
+          <td>{{ r.material_spec|default:"—" }}</td>
+          <td class="num">{{ r.issue_quantity|floatformat:3 }}</td>
+          <td class="num">{{ r.returned_quantity|floatformat:3 }}</td>
+          <td class="num"><strong>{{ r.actual_issue_quantity|floatformat:3 }}</strong></td>
+          <td>{{ r.issue_uom|default:"—" }}</td>
+          <td>{{ r.batch_no|default:"—" }}</td>
+          <td>{{ r.quality_status|default:"—" }}</td>
+          <td>{{ r.issue_time|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>{{ r.issuer|default:"—" }}</td>
+        </tr>
+      {% empty %}<tr><td colspan="13" class="empty-cell">本月还没有导入投料记录。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

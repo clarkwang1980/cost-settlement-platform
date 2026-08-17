@@ -69,6 +69,18 @@ class ImportBatch(models.Model):
             "ending_inventory",
             "期末存货",
         )
+        WORK_ORDER = (
+            "work_order",
+            "生产工单",
+        )
+        MATERIAL_ISSUE = (
+            "material_issue",
+            "投料记录",
+        )
+        WORK_REPORT = (
+            "work_report",
+            "报工记录",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -358,6 +370,225 @@ class ProductionOrder(models.Model):
 
     def __str__(self):
         return f"{self.order_no} {self.product_code}"
+
+
+class WorkOrder(models.Model):
+    """生产工单主档（ERP 导入台账）。
+
+    按用户给定的 ERP 导出格式存储，不参与现有成本核算流程。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="work_orders"
+    )
+    batch = models.ForeignKey(
+        ImportBatch,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="work_orders",
+    )
+    order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    order_type = models.CharField(max_length=100, blank=True, verbose_name="工单类型")
+    identifier = models.CharField(max_length=200, blank=True, verbose_name="标识码")
+    planned_start = models.DateTimeField(null=True, blank=True, verbose_name="计划开始时间")
+    planned_finish = models.DateTimeField(null=True, blank=True, verbose_name="计划完工时间")
+    priority = models.CharField(max_length=50, blank=True, verbose_name="优先级")
+    line_equipment = models.CharField(max_length=200, blank=True, verbose_name="产线设备")
+    shift = models.CharField(max_length=100, blank=True, verbose_name="班次")
+    production_dept_code = models.CharField(
+        max_length=100, blank=True, verbose_name="生产部门编号"
+    )
+    production_supervisor_code = models.CharField(
+        max_length=100, blank=True, verbose_name="生产主管编号"
+    )
+    planning_dept_code = models.CharField(
+        max_length=100, blank=True, verbose_name="计划部门编号"
+    )
+    planner_code = models.CharField(max_length=100, blank=True, verbose_name="计划员编号")
+    remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
+    specified_material = models.CharField(
+        max_length=255, blank=True, verbose_name="指定用料"
+    )
+    external_document_no = models.CharField(
+        max_length=100, blank=True, verbose_name="外部单据编号"
+    )
+    status = models.CharField(max_length=50, blank=True, verbose_name="状态")
+    use_bom = models.BooleanField(default=False, verbose_name="是否使用物料清单")
+    use_routing = models.BooleanField(default=False, verbose_name="是否使用工艺路线")
+    process_plan_type = models.CharField(
+        max_length=100, blank=True, verbose_name="工序计划类型"
+    )
+    enable_sop = models.BooleanField(default=False, verbose_name="启用SOP")
+    production_mode = models.CharField(max_length=100, blank=True, verbose_name="生产模式")
+    line_code = models.CharField(max_length=100, blank=True, verbose_name="产线编号")
+    source_order_no = models.CharField(max_length=100, blank=True, verbose_name="订单号")
+    material_color = models.CharField(max_length=100, blank=True, verbose_name="物料颜色")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["order_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "order_no"], name="unique_work_order_per_period"
+            )
+        ]
+        verbose_name = "生产工单"
+        verbose_name_plural = "生产工单"
+
+    def __str__(self):
+        return self.order_no
+
+
+class MaterialIssue(models.Model):
+    """投料记录（ERP 导入台账）。
+
+    按用户给定的 ERP 导出格式存储，不参与现有成本核算流程。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="material_issues"
+    )
+    batch = models.ForeignKey(
+        ImportBatch,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="material_issues",
+    )
+    task_no = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="生产任务编号")
+    operation_no = models.CharField(max_length=100, blank=True, verbose_name="工序编号")
+    operation_name = models.CharField(max_length=200, blank=True, verbose_name="工序名称")
+    material_code = models.CharField(max_length=80, db_index=True, verbose_name="物料编码")
+    material_name = models.CharField(max_length=255, blank=True, verbose_name="物料名称")
+    material_category = models.CharField(max_length=255, blank=True, verbose_name="物料分类")
+    material_attribute = models.CharField(max_length=255, blank=True, verbose_name="物料属性")
+    material_spec = models.CharField(max_length=255, blank=True, verbose_name="物料规格")
+    issue_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="投料数量"
+    )
+    returned_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="已回撤数量"
+    )
+    actual_issue_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="实际投料数量"
+    )
+    issue_uom = models.CharField(max_length=30, blank=True, verbose_name="投料单位")
+    auxiliary_quantity = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="辅助单位数量",
+    )
+    auxiliary_uom = models.CharField(max_length=30, blank=True, verbose_name="辅助单位")
+    identifier = models.CharField(max_length=200, blank=True, verbose_name="标识码")
+    batch_no = models.CharField(max_length=100, blank=True, verbose_name="批次号")
+    quality_status = models.CharField(max_length=50, blank=True, verbose_name="质量状态")
+    issue_location = models.CharField(max_length=100, blank=True, verbose_name="投料仓位")
+    replaced_material_code = models.CharField(
+        max_length=80, blank=True, verbose_name="被替代物料编号"
+    )
+    replaced_material_name = models.CharField(
+        max_length=255, blank=True, verbose_name="被替代物料名称"
+    )
+    issue_time = models.DateTimeField(null=True, blank=True, verbose_name="投料时间")
+    issuer = models.CharField(max_length=100, blank=True, verbose_name="投料人员")
+    executor = models.CharField(max_length=100, blank=True, verbose_name="执行人员")
+    work_order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    main_output_code = models.CharField(
+        max_length=80, blank=True, verbose_name="主产出物料编号"
+    )
+    main_output_name = models.CharField(
+        max_length=255, blank=True, verbose_name="主产出物料名称"
+    )
+    sales_order_no = models.CharField(max_length=100, blank=True, verbose_name="销售订单编号")
+    record_no = models.CharField(max_length=100, blank=True, verbose_name="投料记录编号")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["work_order_no", "material_code", "id"]
+        verbose_name = "投料记录"
+        verbose_name_plural = "投料记录"
+
+    def __str__(self):
+        return f"{self.work_order_no} {self.material_code}"
+
+
+class WorkReport(models.Model):
+    """报工记录（ERP 导入台账）。
+
+    按用户给定的 ERP 导出格式存储，不参与现有成本核算流程。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="work_reports"
+    )
+    batch = models.ForeignKey(
+        ImportBatch,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="work_reports",
+    )
+    report_time = models.DateTimeField(null=True, blank=True, verbose_name="报工时间")
+    task_no = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="生产任务编号")
+    operation_no = models.CharField(max_length=100, blank=True, verbose_name="工序编号")
+    operation_name = models.CharField(max_length=200, blank=True, verbose_name="工序名称")
+    material_code = models.CharField(max_length=80, db_index=True, verbose_name="报工物料编号")
+    material_name = models.CharField(max_length=255, blank=True, verbose_name="报工物料名称")
+    operator = models.CharField(max_length=100, blank=True, verbose_name="生产人员")
+    quality_status = models.CharField(max_length=50, blank=True, verbose_name="质量状态")
+    defect_reason = models.CharField(max_length=500, blank=True, verbose_name="不良原因")
+    quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="报工数量"
+    )
+    uom = models.CharField(max_length=30, blank=True, verbose_name="报工单位")
+    auxiliary_quantity = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="辅助数量",
+    )
+    auxiliary_uom = models.CharField(max_length=30, blank=True, verbose_name="辅助单位")
+    batch_no = models.CharField(max_length=100, blank=True, verbose_name="批次号")
+    identifier = models.CharField(max_length=200, blank=True, verbose_name="标识码")
+    route_card_no = models.CharField(max_length=100, blank=True, verbose_name="流转卡编号")
+    work_hours = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True, verbose_name="工时"
+    )
+    work_hours_uom = models.CharField(max_length=30, blank=True, verbose_name="工时单位")
+    remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
+    department = models.CharField(max_length=100, blank=True, verbose_name="部门")
+    equipment = models.CharField(max_length=200, blank=True, verbose_name="设备")
+    work_order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    work_order_material_code = models.CharField(
+        max_length=80, blank=True, verbose_name="工单物料编号"
+    )
+    work_order_material_name = models.CharField(
+        max_length=255, blank=True, verbose_name="工单物料名称"
+    )
+    order_no = models.CharField(max_length=100, blank=True, verbose_name="订单编号")
+    paper_tube_color = models.CharField(max_length=100, blank=True, verbose_name="特纺/包覆-纸管颜色")
+    spinning_shift = models.CharField(max_length=100, blank=True, verbose_name="纺纱-班别")
+    moisture_content = models.CharField(max_length=100, blank=True, verbose_name="染色纤维-含水率")
+    dye_batch_flow = models.CharField(max_length=100, blank=True, verbose_name="染色纤维-批号流水")
+    weaving_sequence = models.CharField(max_length=100, blank=True, verbose_name="织布-序号")
+    weaving_machine = models.CharField(max_length=100, blank=True, verbose_name="织布-机台")
+    output_location = models.CharField(max_length=100, blank=True, verbose_name="产出仓位")
+    work_order_department = models.CharField(
+        max_length=100, blank=True, verbose_name="工单部门"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["work_order_no", "report_time", "id"]
+        verbose_name = "报工记录"
+        verbose_name_plural = "报工记录"
+
+    def __str__(self):
+        return f"{self.work_order_no} {self.material_code}"
 
 
 class WorkshopCostPool(models.Model):

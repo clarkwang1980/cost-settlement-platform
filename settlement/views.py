@@ -101,6 +101,9 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细.csv",
     ImportBatch.Kind.OPENING_INVENTORY: "期初存货.csv",
     ImportBatch.Kind.ENDING_INVENTORY: "期末存货.csv",
+    ImportBatch.Kind.WORK_ORDER: "生产工单.csv",
+    ImportBatch.Kind.MATERIAL_ISSUE: "投料记录.csv",
+    ImportBatch.Kind.WORK_REPORT: "报工记录.csv",
 }
 
 
@@ -1507,6 +1510,78 @@ def purchase_reversal_report(request, period_id):
             "period": period,
             "rows": rows,
             "totals": totals,
+        },
+    )
+
+
+@login_required
+def work_order_imports(request, period_id):
+    """生产工单导入台账（ERP 原始资料，不参与成本计算）。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    orders = period.work_orders.all()
+    orders = _text_filters(
+        request,
+        orders,
+        {
+            "order_no": "order_no",
+            "line_code": "line_code",
+            "status": "status",
+        },
+    )
+    return render(
+        request,
+        "settlement/work_order_imports.html",
+        {
+            "period": period,
+            "page": _page(request, orders),
+        },
+    )
+
+
+@login_required
+def material_issue_imports(request, period_id):
+    """投料记录导入台账（ERP 原始资料，不参与成本计算）。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    issues = period.material_issues.all()
+    issues = _text_filters(
+        request,
+        issues,
+        {
+            "work_order_no": "work_order_no",
+            "material_code": "material_code",
+            "task_no": "task_no",
+        },
+    )
+    return render(
+        request,
+        "settlement/material_issue_imports.html",
+        {
+            "period": period,
+            "page": _page(request, issues),
+        },
+    )
+
+
+@login_required
+def work_report_imports(request, period_id):
+    """报工记录导入台账（ERP 原始资料，不参与成本计算）。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    reports = period.work_reports.all()
+    reports = _text_filters(
+        request,
+        reports,
+        {
+            "work_order_no": "work_order_no",
+            "material_code": "material_code",
+            "quality_status": "quality_status",
+        },
+    )
+    return render(
+        request,
+        "settlement/work_report_imports.html",
+        {
+            "period": period,
+            "page": _page(request, reports),
         },
     )
 
