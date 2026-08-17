@@ -447,3 +447,120 @@ def summarize_purchase_differences(rows):
         ),
     )
     return totals, grouped_rows
+
+
+def build_purchase_reversal_rows(period, invoice_no="", supplier="", material="", cross_period=""):
+    """发票暂估回冲明细：每张采购发票核销了哪笔入库/期初暂估，一行一条。
+
+    基于 build_purchase_difference_rows 的行数据，补充：
+    该入库单入库数量、该入库单累计已核销数量、核销后剩余未到票。
+    """
+    rows = build_purchase_difference_rows(period)
+
+    # 历史累计已核销数量（截至所选期间，按入库单/期初台账聚合）
+    cumulative = defaultdict(lambda: ZERO)
+    history = (
+        MatchAllocation.objects.filter(
+            period__month__lte=period.month,
+            kind=MatchAllocation.Kind.PURCHASE_INVOICE,
+        )
+        .exclude(purchase_invoice_line__match_mode=MatchingMode.IGNORED)
+        .exclude(
+            Q(inventory_transaction__match_mode=MatchingMode.IGNORED)
+            | Q(opening_purchase_accrual__match_mode=MatchingMode.IGNORED)
+        )
+        .values_list(
+            "inventory_transaction_id",
+            "opening_purchase_accrual_id",
+            "matched_quantity",
+        )
+    )
+    for txn_id, opening_id, matched in history:
+        if txn_id is not None:
+            cumulative[("t", txn_id)] += Decimal(matched or ZERO)
+        elif opening_id is not None:
+            cumulative[("o", opening_id)] += Decimal(matched or ZERO)
+
+    result = []
+    for row in rows:
+        if invoice_no and invoice_no.lower() not in str(row.invoice.invoice_no or "").lower():
+            continue
+        if supplier and supplier.lower() not in str(
+            row.invoice.supplier_name or row.invoice.supplier_code or ""
+        ).lower():
+            continue
+        if material and material.lower() not in str(row.material_code or "").lower():
+            continue
+        if cross_period and str(row.cross_period).lower() != cross_period.lower():
+            continue
+
+        if row.transaction is not None:
+            target_type = "库存流水入库"
+            receipt_quantity = abs(Decimal(row.transaction.quantity or ZERO))
+            cum_key = ("t", row.transaction.id)
+        else:
+            target_type = "期初暂估台账"
+            receipt_quantity = Decimal(
+                row.opening_item.opening_quantity or ZERO
+            )
+            cum_key = ("o", row.opening_item.id)
+        cum_quantity = min(cumulative.get(cum_key, ZERO), receipt_quantity)
+        outstanding = max(receipt_quantity - cum_quantity, ZERO)
+
+        invoice_period = getattr(row.invoice, "invoice_period", None)
+        result.append(
+            {
+                "invoice_no": row.invoice.invoice_no,
+                "invoice_date": row.invoice.invoice_date,
+                "invoice_period": invoice_period,
+                "target_type": target_type,
+                "document_no": row.document_no,
+                "receipt_month": row.receipt_month,
+                "document_date": row.document_date,
+                "material_code": row.material_code,
+                "material_name": row.material_name,
+                "supplier_name": (
+                    row.invoice.supplier_name or row.invoice.supplier_code
+                ),
+                "matched_quantity": row.matched_quantity,
+                "provisional_unit_price": row.provisional_unit_price,
+                "provisional_amount": row.provisional_amount,
+                "invoice_unit_price": row.invoice_unit_price,
+                "invoice_amount": row.invoice_amount,
+                "difference_amount": row.difference_amount,
+                "receipt_quantity": receipt_quantity,
+                "cumulative_quantity": cum_quantity,
+                "outstanding_quantity": outstanding,
+                "cross_period": row.cross_period,
+                "status": row.status,
+            }
+        )
+    result.sort(
+        key=lambda r: (
+            str(r["invoice_no"] or ""),
+            str(r["document_no"] or ""),
+        )
+    )
+    return result
+
+
+def summarize_purchase_reversals(rows):
+    totals = {
+        "count": len(rows),
+        "matched_quantity": ZERO,
+        "provisional_amount": ZERO,
+        "invoice_amount": ZERO,
+        "difference_amount": ZERO,
+        "cross_period_count": 0,
+        "pending_count": 0,
+    }
+    for row in rows:
+        totals["matched_quantity"] += row["matched_quantity"]
+        totals["cross_period_count"] += int(row["cross_period"])
+        if row["provisional_amount"] is None:
+            totals["pending_count"] += 1
+        else:
+            totals["provisional_amount"] += row["provisional_amount"]
+            totals["invoice_amount"] += row["invoice_amount"]
+            totals["difference_amount"] += row["difference_amount"]
+    return totals

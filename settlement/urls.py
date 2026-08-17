@@ -65,6 +65,11 @@ urlpatterns = [
         name="purchase_differences",
     ),
     path(
+        "periods/<int:period_id>/purchase-reversals/",
+        views.purchase_reversal_report,
+        name="purchase_reversal_report",
+    ),
+    path(
         "periods/<int:period_id>/sales-matches/",
         views.sales_matches,
         name="sales_matches",
@@ -78,6 +83,21 @@ urlpatterns = [
         "periods/<int:period_id>/order-matches/",
         views.order_matches,
         name="order_matches",
+    ),
+    path(
+        "periods/<int:period_id>/work-orders/",
+        views.work_order_report,
+        name="work_order_report",
+    ),
+    path(
+        "periods/<int:period_id>/order-material/",
+        views.order_material_report,
+        name="order_material_report",
+    ),
+    path(
+        "periods/<int:period_id>/order-completions/",
+        views.order_completion_report,
+        name="order_completion_report",
     ),
     path(
         "periods/<int:period_id>/inventory-ledger/",

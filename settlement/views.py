@@ -1,4 +1,6 @@
 from pathlib import Path
+from collections import defaultdict
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib import messages
@@ -67,8 +69,10 @@ from settlement.services.matching import (
 from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
     build_purchase_difference_rows,
+    build_purchase_reversal_rows,
     summarize_purchase_accruals,
     summarize_purchase_differences,
+    summarize_purchase_reversals,
 )
 from settlement.services.production_costs import build_production_cost_summary
 from settlement.services.rollforward import (
@@ -1296,6 +1300,217 @@ def order_costs(request, period_id):
     )
 
 
+def build_order_material_rows(period, order_no="", workshop="", material=""):
+    """按工单 × 物料汇总领退料数量与金额，返回 (rows, totals)。"""
+    allocations = period.match_allocations.filter(
+        kind=MatchAllocation.Kind.ORDER_MATERIAL
+    ).select_related("inventory_transaction", "production_order")
+    if order_no:
+        allocations = allocations.filter(
+            production_order__order_no__icontains=order_no
+        )
+    if workshop:
+        allocations = allocations.filter(
+            production_order__workshop__icontains=workshop
+        )
+    if material:
+        allocations = allocations.filter(
+            inventory_transaction__material_code__icontains=material
+        )
+    buckets = {}
+    for allocation in allocations:
+        txn = allocation.inventory_transaction
+        order = allocation.production_order
+        if txn is None or order is None or not txn.quantity:
+            continue
+        allocated_amount = Decimal(txn.amount or 0) * (
+            allocation.matched_quantity / abs(txn.quantity)
+        )
+        key = (order.id, txn.material_code)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "order": order,
+                "material_code": txn.material_code,
+                "material_name": txn.material_name,
+                "specification": txn.specification,
+                "uom": txn.uom,
+                "issue_quantity": Decimal("0"),
+                "return_quantity": Decimal("0"),
+                "net_quantity": Decimal("0"),
+                "amount": Decimal("0"),
+            },
+        )
+        if txn.direction == InventoryTransaction.Direction.OUT:
+            bucket["issue_quantity"] += allocation.matched_quantity
+            bucket["amount"] += allocated_amount
+        else:
+            bucket["return_quantity"] += allocation.matched_quantity
+            bucket["amount"] -= allocated_amount
+    rows = []
+    for bucket in buckets.values():
+        bucket["net_quantity"] = (
+            bucket["issue_quantity"] - bucket["return_quantity"]
+        )
+        rows.append(bucket)
+    rows.sort(
+        key=lambda r: (r["order"].workshop, r["order"].order_no, r["material_code"])
+    )
+    totals = {
+        "issue_quantity": sum(r["issue_quantity"] for r in rows),
+        "return_quantity": sum(r["return_quantity"] for r in rows),
+        "net_quantity": sum(r["net_quantity"] for r in rows),
+        "amount": sum(r["amount"] for r in rows),
+    }
+    return rows, totals
+
+
+@login_required
+def work_order_report(request, period_id):
+    """生产工单报表：工单主档台账。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    orders = period.production_orders.all()
+    orders = _text_filters(
+        request,
+        orders,
+        {
+            "order_no": "order_no",
+            "workshop": "workshop",
+            "product": "product_code",
+        },
+    )
+    orders = _choice_filter(request, orders, "status", "status")
+    orders = _choice_filter(request, orders, "match_mode", "match_mode")
+    return render(
+        request,
+        "settlement/work_order_report.html",
+        {
+            "period": period,
+            "page": _page(request, orders),
+            "order_statuses": ProductionOrder.Status.choices,
+            "match_modes": MatchingMode.choices,
+        },
+    )
+
+
+@login_required
+def order_material_report(request, period_id):
+    """工单投料报表：按工单 × 物料汇总领退料数量与金额。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    rows, totals = build_order_material_rows(
+        period,
+        order_no=request.GET.get("order_no", "").strip(),
+        workshop=request.GET.get("workshop", "").strip(),
+        material=request.GET.get("material", "").strip(),
+    )
+    return render(
+        request,
+        "settlement/order_material_report.html",
+        {
+            "period": period,
+            "rows": rows,
+            "totals": totals,
+        },
+    )
+
+
+@login_required
+def order_completion_report(request, period_id):
+    """工单报工报表：完工数量、完工成本、生产入库。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    orders = period.production_orders.select_related("cost_result").all()
+    orders = _text_filters(
+        request,
+        orders,
+        {
+            "order_no": "order_no",
+            "workshop": "workshop",
+            "product": "product_code",
+        },
+    )
+    orders = _choice_filter(request, orders, "status", "status")
+    receipt_qty = defaultdict(lambda: Decimal("0"))
+    receipt_amount = defaultdict(lambda: Decimal("0"))
+    allocations = period.match_allocations.filter(
+        kind=MatchAllocation.Kind.PRODUCTION_RECEIPT
+    ).select_related("production_order")
+    for allocation in allocations:
+        if allocation.production_order_id:
+            receipt_qty[allocation.production_order_id] += allocation.matched_quantity
+            receipt_amount[allocation.production_order_id] += Decimal(
+                allocation.amount or 0
+            )
+    enriched = []
+    for order in orders:
+        enriched.append(
+            {
+                "order": order,
+                "result": getattr(order, "cost_result", None),
+                "receipt_quantity": receipt_qty.get(order.id, Decimal("0")),
+                "receipt_amount": receipt_amount.get(order.id, Decimal("0")),
+            }
+        )
+    totals = {
+        "finished_quantity": sum(
+            (item["order"].finished_quantity for item in enriched), Decimal("0")
+        ),
+        "wip_quantity": sum(
+            (item["order"].wip_quantity for item in enriched), Decimal("0")
+        ),
+        "finished_cost": sum(
+            (item["result"].finished_cost for item in enriched if item["result"]),
+            Decimal("0"),
+        ),
+        "wip_cost": sum(
+            (item["result"].wip_cost for item in enriched if item["result"]),
+            Decimal("0"),
+        ),
+        "total_cost": sum(
+            (item["result"].total_cost for item in enriched if item["result"]),
+            Decimal("0"),
+        ),
+        "receipt_quantity": sum(
+            (item["receipt_quantity"] for item in enriched), Decimal("0")
+        ),
+        "receipt_amount": sum(
+            (item["receipt_amount"] for item in enriched), Decimal("0")
+        ),
+    }
+    return render(
+        request,
+        "settlement/order_completion_report.html",
+        {
+            "period": period,
+            "page": _page(request, enriched),
+            "totals": totals,
+            "order_statuses": ProductionOrder.Status.choices,
+        },
+    )
+
+
+@login_required
+def purchase_reversal_report(request, period_id):
+    """发票暂估回冲明细：每张采购发票核销了哪笔入库/期初暂估。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    rows = build_purchase_reversal_rows(
+        period,
+        invoice_no=request.GET.get("invoice_no", "").strip(),
+        supplier=request.GET.get("supplier", "").strip(),
+        material=request.GET.get("material", "").strip(),
+        cross_period=request.GET.get("cross_period", "").strip(),
+    )
+    totals = summarize_purchase_reversals(rows)
+    return render(
+        request,
+        "settlement/purchase_reversal_report.html",
+        {
+            "period": period,
+            "rows": rows,
+            "totals": totals,
+        },
+    )
+
+
 @login_required
 def production_cost_summary(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
@@ -1395,11 +1610,15 @@ LISTING_EXPORTS = {
     "purchase_invoice": {"title": "采购发票匹配"},
     "purchase_accrual": {"title": "月末采购暂估"},
     "purchase_difference": {"title": "本月采购暂估差异"},
+    "purchase_reversal": {"title": "发票暂估回冲明细"},
     "sales_invoice": {"title": "销售发票匹配"},
     "sales_uninvoiced": {"title": "月末已出库未开票"},
     "production_order": {"title": "生产订单匹配"},
     "inventory_valuation": {"title": "库存金额结转"},
     "order_cost": {"title": "订单成本"},
+    "work_order": {"title": "生产工单"},
+    "order_material": {"title": "工单投料"},
+    "order_completion": {"title": "工单报工"},
     "reconciliation": {"title": "勾稽结果"},
     "workshop_settlement": {"title": "车间结转"},
     "opening_inventory": {"title": "期初存货"},
@@ -1667,6 +1886,51 @@ def _listing_rows(request, period, kind):
             )
         )
 
+    elif kind == "purchase_reversal":
+        rows = build_purchase_reversal_rows(
+            period,
+            invoice_no=request.GET.get("invoice_no", "").strip(),
+            supplier=request.GET.get("supplier", "").strip(),
+            material=request.GET.get("material", "").strip(),
+            cross_period=request.GET.get("cross_period", "").strip(),
+        )
+        sheets.append(
+            (
+                "发票暂估回冲明细",
+                ["发票号", "发票日期", "发票期间", "核销对象类型", "原入库单号",
+                 "原入库月份", "原入库日期", "物料编码", "物料名称", "供应商",
+                 "核销数量", "暂估单价", "暂估金额", "发票单价", "发票金额",
+                 "价差", "该入库单入库数量", "该入库单累计已核销数量",
+                 "核销后剩余未到票", "是否跨期", "状态"],
+                (
+                    (
+                        r["invoice_no"],
+                        r["invoice_date"],
+                        r["invoice_period"],
+                        r["target_type"],
+                        r["document_no"],
+                        r["receipt_month"],
+                        r["document_date"],
+                        r["material_code"],
+                        r["material_name"],
+                        r["supplier_name"],
+                        r["matched_quantity"],
+                        r["provisional_unit_price"],
+                        r["provisional_amount"],
+                        r["invoice_unit_price"],
+                        r["invoice_amount"],
+                        r["difference_amount"],
+                        r["receipt_quantity"],
+                        r["cumulative_quantity"],
+                        r["outstanding_quantity"],
+                        "是" if r["cross_period"] else "否",
+                        r["status"],
+                    )
+                    for r in rows
+                ),
+            )
+        )
+
     elif kind == "sales_invoice":
         invoices = period.sales_invoices.annotate(
             matched_total=Sum("matchallocation__matched_quantity")
@@ -1817,6 +2081,126 @@ def _listing_rows(request, period, kind):
                         item.standard_hours,
                         item.production_receipt_document,
                         item.get_match_mode_display(),
+                    )
+                    for item in orders
+                ),
+            )
+        )
+
+    elif kind == "work_order":
+        orders = period.production_orders.all()
+        orders = _text_filters(
+            request,
+            orders,
+            {
+                "order_no": "order_no",
+                "workshop": "workshop",
+                "product": "product_code",
+            },
+        )
+        orders = _choice_filter(request, orders, "status", "status")
+        orders = _choice_filter(request, orders, "match_mode", "match_mode")
+        sheets.append(
+            (
+                "生产工单",
+                ["工单编号", "车间", "产品编码", "产品名称", "计划数量", "完工数量",
+                 "在产品数量", "状态", "标准工时", "材料完工比例", "在制转换比例",
+                 "生产入库单号", "处理方式"],
+                (
+                    (
+                        item.order_no,
+                        item.workshop,
+                        item.product_code,
+                        item.product_name,
+                        item.plan_quantity,
+                        item.finished_quantity,
+                        item.wip_quantity,
+                        item.get_status_display(),
+                        item.standard_hours,
+                        item.material_completion_rate,
+                        item.wip_conversion_rate,
+                        item.production_receipt_document,
+                        item.get_match_mode_display(),
+                    )
+                    for item in orders
+                ),
+            )
+        )
+
+    elif kind == "order_material":
+        rows, _totals = build_order_material_rows(
+            period,
+            order_no=request.GET.get("order_no", "").strip(),
+            workshop=request.GET.get("workshop", "").strip(),
+            material=request.GET.get("material", "").strip(),
+        )
+        sheets.append(
+            (
+                "工单投料",
+                ["工单编号", "车间", "物料编码", "物料名称", "规格", "单位",
+                 "领料数量", "退料数量", "净投料数量", "投料金额"],
+                (
+                    (
+                        r["order"].order_no,
+                        r["order"].workshop,
+                        r["material_code"],
+                        r["material_name"],
+                        r["specification"],
+                        r["uom"],
+                        r["issue_quantity"],
+                        r["return_quantity"],
+                        r["net_quantity"],
+                        r["amount"],
+                    )
+                    for r in rows
+                ),
+            )
+        )
+
+    elif kind == "order_completion":
+        orders = period.production_orders.select_related("cost_result").all()
+        orders = _text_filters(
+            request,
+            orders,
+            {
+                "order_no": "order_no",
+                "workshop": "workshop",
+                "product": "product_code",
+            },
+        )
+        orders = _choice_filter(request, orders, "status", "status")
+        receipt_qty = defaultdict(lambda: Decimal("0"))
+        receipt_amount = defaultdict(lambda: Decimal("0"))
+        allocations = period.match_allocations.filter(
+            kind=MatchAllocation.Kind.PRODUCTION_RECEIPT
+        ).select_related("production_order")
+        for allocation in allocations:
+            if allocation.production_order_id:
+                receipt_qty[allocation.production_order_id] += allocation.matched_quantity
+                receipt_amount[allocation.production_order_id] += Decimal(
+                    allocation.amount or 0
+                )
+        sheets.append(
+            (
+                "工单报工",
+                ["工单编号", "车间", "产品编码", "产品名称", "完工数量", "在产品数量",
+                 "完工成本", "单位完工成本", "在产品成本", "总成本",
+                 "生产入库数量", "生产入库金额", "状态"],
+                (
+                    (
+                        item.order_no,
+                        item.workshop,
+                        item.product_code,
+                        item.product_name,
+                        item.finished_quantity,
+                        item.wip_quantity,
+                        item.cost_result.finished_cost if hasattr(item, "cost_result") else 0,
+                        item.cost_result.finished_unit_cost if hasattr(item, "cost_result") else 0,
+                        item.cost_result.wip_cost if hasattr(item, "cost_result") else 0,
+                        item.cost_result.total_cost if hasattr(item, "cost_result") else 0,
+                        receipt_qty.get(item.id, Decimal("0")),
+                        receipt_amount.get(item.id, Decimal("0")),
+                        item.get_status_display(),
                     )
                     for item in orders
                 ),
@@ -2049,6 +2433,8 @@ def export_center(request, period_id):
          "desc": "截至月末仍未到票的采购入库及暂估金额"},
         {"kind": "purchase_difference", "name": "本月采购暂估差异",
          "desc": "本月发票核销产生的暂估价差（交总账处理）"},
+        {"kind": "purchase_reversal", "name": "发票暂估回冲明细",
+         "desc": "每张采购发票核销了哪笔入库/期初暂估：暂估金额、发票金额、价差、累计核销与剩余未到票"},
         {"kind": "sales_invoice", "name": "销售发票匹配",
          "desc": "销售发票及核销的出库/期初发出商品明细"},
         {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
@@ -2059,6 +2445,12 @@ def export_center(request, period_id):
          "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
         {"kind": "order_cost", "name": "订单成本",
          "desc": "各生产订单完工与在制成本明细"},
+        {"kind": "work_order", "name": "生产工单",
+         "desc": "生产工单主档台账（数量、状态、标准工时、比例参数）"},
+        {"kind": "order_material", "name": "工单投料",
+         "desc": "按工单 × 物料汇总生产领退料数量与金额"},
+        {"kind": "order_completion", "name": "工单报工",
+         "desc": "工单完工汇报：完工数量、完工成本、生产入库数量与金额"},
         {"kind": "reconciliation", "name": "勾稽结果与异常清单",
          "desc": "全部勾稽项目（含异常清单），两个工作表"},
         {"kind": "workshop_settlement", "name": "车间结转",

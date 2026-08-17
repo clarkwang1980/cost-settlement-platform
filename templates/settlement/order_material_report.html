@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}工单投料报表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">MATERIAL ISSUE REPORT</p>
+    <h1>工单投料</h1>
+    <p>按工单 × 物料汇总生产领退料，与成本计算的材料归集口径一致。</p>
+  </div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'order_material' %}?{{ request.GET.urlencode }}">导出Excel</a>
+</section>
+
+<section class="summary-strip">
+  <article><span>投料行数</span><strong>{{ rows|length }}</strong></article>
+  <article><span>领料数量</span><strong>{{ totals.issue_quantity|floatformat:3 }}</strong></article>
+  <article><span>退料数量</span><strong>{{ totals.return_quantity|floatformat:3 }}</strong></article>
+  <article><span>净投料数量</span><strong>{{ totals.net_quantity|floatformat:3 }}</strong></article>
+  <article><span>投料金额</span><strong>¥{{ totals.amount|floatformat:2 }}</strong></article>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}"></label>
+    <label>物料编码<input name="material" value="{{ request.GET.material }}"></label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'order_material_report' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>车间/部门</th><th>物料</th><th>规格</th><th>单位</th>
+          <th class="num">领料数量</th><th class="num">退料数量</th><th class="num">净投料数量</th><th class="num">投料金额</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><strong>{{ r.order.order_no }}</strong></td>
+          <td>{{ r.order.workshop|default:"—" }}</td>
+          <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
+          <td>{{ r.specification|default:"—" }}</td>
+          <td>{{ r.uom|default:"—" }}</td>
+          <td class="num">{{ r.issue_quantity|floatformat:3 }}</td>
+          <td class="num">{{ r.return_quantity|floatformat:3 }}</td>
+          <td class="num"><strong>{{ r.net_quantity|floatformat:3 }}</strong></td>
+          <td class="num">¥{{ r.amount|floatformat:2 }}</td>
+        </tr>
+      {% empty %}<tr><td colspan="9" class="empty-cell">没有符合条件的投料记录。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

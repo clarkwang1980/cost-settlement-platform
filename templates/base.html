@@ -39,9 +39,13 @@
         <a href="{% url 'purchase_matches' period.id %}">采购匹配</a>
         <a href="{% url 'purchase_accruals' period.id %}">月末暂估</a>
         <a href="{% url 'purchase_differences' period.id %}">暂估差异</a>
+        <a href="{% url 'purchase_reversal_report' period.id %}">回冲明细</a>
         <a href="{% url 'sales_matches' period.id %}">销售匹配</a>
         <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
         <a href="{% url 'order_matches' period.id %}">订单匹配</a>
+        <a href="{% url 'work_order_report' period.id %}">生产工单</a>
+        <a href="{% url 'order_material_report' period.id %}">工单投料</a>
+        <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
         <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
         <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
         <a href="{% url 'inventory_results' period.id %}">库存结转</a>

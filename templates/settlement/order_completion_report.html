@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}工单报工报表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">COMPLETION REPORT</p>
+    <h1>工单报工</h1>
+    <p>工单完工汇报：完工数量、完工成本与生产入库，与订单成本计算结果一致。</p>
+  </div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'order_completion' %}?{{ request.GET.urlencode }}">导出Excel</a>
+</section>
+
+<section class="summary-strip">
+  <article><span>完工数量</span><strong>{{ totals.finished_quantity|floatformat:3 }}</strong></article>
+  <article><span>在产品数量</span><strong>{{ totals.wip_quantity|floatformat:3 }}</strong></article>
+  <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2 }}</strong></article>
+  <article><span>在产品成本</span><strong>¥{{ totals.wip_cost|floatformat:2 }}</strong></article>
+  <article><span>生产入库数量</span><strong>{{ totals.receipt_quantity|floatformat:3 }}</strong></article>
+  <article><span>生产入库金额</span><strong>¥{{ totals.receipt_amount|floatformat:2 }}</strong></article>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}"></label>
+    <label>产品编码<input name="product" value="{{ request.GET.product }}"></label>
+    <label>工单状态
+      <select name="status"><option value="">全部</option>{% for value,label in order_statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'order_completion_report' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>车间/部门</th><th>产品</th><th class="num">完工数量</th>
+          <th class="num">在产品数量</th><th class="num">完工成本</th><th class="num">单位完工成本</th>
+          <th class="num">在产品成本</th><th class="num">总成本</th>
+          <th class="num">生产入库数量</th><th class="num">生产入库金额</th><th>工单状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in page %}
+        <tr>
+          <td><strong>{{ item.order.order_no }}</strong></td>
+          <td>{{ item.order.workshop|default:"—" }}</td>
+          <td><strong>{{ item.order.product_code }}</strong><small>{{ item.order.product_name }}</small></td>
+          <td class="num">{{ item.order.finished_quantity|floatformat:3 }}</td>
+          <td class="num">{{ item.order.wip_quantity|floatformat:3 }}</td>
+          <td class="num">{% if item.result %}{{ item.result.finished_cost|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}{{ item.result.finished_unit_cost|floatformat:4 }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}{{ item.result.wip_cost|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}<strong>{{ item.result.total_cost|floatformat:2 }}</strong>{% else %}—{% endif %}</td>
+          <td class="num">{{ item.receipt_quantity|floatformat:3 }}</td>
+          <td class="num">{{ item.receipt_amount|floatformat:2 }}</td>
+          <td><span class="pill">{{ item.order.get_status_display }}</span></td>
+        </tr>
+      {% empty %}<tr><td colspan="12" class="empty-cell">没有符合条件的报工记录。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

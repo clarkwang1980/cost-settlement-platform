@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}生产工单报表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORK ORDER REPORT</p>
+    <h1>生产工单</h1>
+    <p>工单主档台账：数量、状态、标准工时与结算比例参数。</p>
+  </div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'work_order' %}?{{ request.GET.urlencode }}">导出Excel</a>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}"></label>
+    <label>产品编码<input name="product" value="{{ request.GET.product }}"></label>
+    <label>工单状态
+      <select name="status"><option value="">全部</option>{% for value,label in order_statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </label>
+    <label>处理方式
+      <select name="match_mode"><option value="">全部</option>{% for value,label in match_modes %}<option value="{{ value }}" {% if request.GET.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_order_report' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>车间/部门</th><th>产品</th><th class="num">计划数量</th>
+          <th class="num">完工数量</th><th class="num">在产品数量</th><th>工单状态</th>
+          <th class="num">标准工时</th><th class="num">材料完工比例</th><th class="num">在制转换比例</th>
+          <th>生产入库单号</th><th>处理方式</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for order in page %}
+        <tr>
+          <td><strong>{{ order.order_no }}</strong></td>
+          <td>{{ order.workshop|default:"—" }}</td>
+          <td><strong>{{ order.product_code }}</strong><small>{{ order.product_name }}</small></td>
+          <td class="num">{{ order.plan_quantity|floatformat:3 }}</td>
+          <td class="num">{{ order.finished_quantity|floatformat:3 }}</td>
+          <td class="num">{{ order.wip_quantity|floatformat:3 }}</td>
+          <td><span class="pill">{{ order.get_status_display }}</span></td>
+          <td class="num">{{ order.standard_hours|floatformat:3 }}</td>
+          <td class="num">{{ order.material_completion_rate|floatformat:2|default:"—" }}</td>
+          <td class="num">{{ order.wip_conversion_rate|floatformat:2 }}</td>
+          <td>{{ order.production_receipt_document|default:"—" }}</td>
+          <td><span class="pill {% if order.match_mode == 'ignored' %}warning{% elif order.match_mode == 'manual' %}success{% endif %}">{{ order.get_match_mode_display }}</span></td>
+        </tr>
+      {% empty %}<tr><td colspan="12" class="empty-cell">没有符合条件的生产工单。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}
