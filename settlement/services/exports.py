@@ -705,6 +705,7 @@ def build_settlement_workbook(period):
 
     # 工单成本（与页面一致：每个制造费用列后加分配率列，每车间末尾加合计行）
     WO_HEADERS = [
+        "核算期间",
         "工单编号",
         "车间",
         "产品编码",
@@ -861,6 +862,7 @@ def build_settlement_workbook(period):
                 f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
             )
             return (
+                f"{period.month:%Y-%m}",
                 item.work_order.order_no,
                 item.work_order.production_dept_code,
                 item.product_code,
@@ -897,7 +899,7 @@ def build_settlement_workbook(period):
         def _subtotal_row(ws, st):
             return (
                 f"{ws} 合计（{st['count']}张工单）",
-                "", "", "", "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "", "", "", "", "", "",
                 st["direct_material"],
                 st["water_power"],
                 "",

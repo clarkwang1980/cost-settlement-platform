@@ -109,7 +109,12 @@ def _order_product(period, order_no: str):
 
 
 def _collect_work_orders(period: AccountingPeriod):
-    """返回需要核算的工单列表，主档缺失的自动补建。"""
+    """返回需要核算的工单列表，主档缺失的自动补建。
+
+    只核算"有业务"的工单：投料记录 / 报工记录 / 报工入库流水 / 期初在产品
+    （有主档但本期间无任何业务的工单不核算——计划时间与核算月份无关，
+     成本按业务发生的期间归属）。主档仅用于补充计划数量、车间等属性。
+    """
     masters = {wo.order_no: wo for wo in period.work_orders.all()}
     issue_nos = set(
         period.material_issues.exclude(work_order_no="").values_list(
@@ -120,6 +125,12 @@ def _collect_work_orders(period: AccountingPeriod):
         period.work_reports.exclude(work_order_no="").values_list(
             "work_order_no", flat=True
         )
+    )
+    # 报工入库流水（浆粕/粗纱等中间品，单据号=工单号）
+    receipt_nos = set(
+        period.inventory_transactions.filter(business_type="报工")
+        .exclude(document_no="")
+        .values_list("document_no", flat=True)
     )
     # 期初在产品：仅纳入有成本的工单（全零占位行不参与核算）
     opening_nos = set(
@@ -134,7 +145,7 @@ def _collect_work_orders(period: AccountingPeriod):
             wages=ZERO,
         ).values_list("order_no", flat=True)
     )
-    all_nos = set(masters) | issue_nos | report_nos | opening_nos
+    all_nos = issue_nos | report_nos | receipt_nos | opening_nos
     orders = []
     for order_no in sorted(all_nos):
         wo = masters.get(order_no)

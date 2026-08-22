@@ -2699,7 +2699,7 @@ def _listing_rows(request, period, kind):
 
         # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
         headers = [
-            "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态",
+            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态",
             "累计完工", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
@@ -2763,6 +2763,7 @@ def _listing_rows(request, period, kind):
                     f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
                 )
                 return (
+                    f"{period.month:%Y-%m}",
                     item.work_order.order_no,
                     WORKSHOP_LABELS.get(ws, ws),
                     item.product_code,
@@ -2799,7 +2800,7 @@ def _listing_rows(request, period, kind):
             def _subtotal_row(ws, st):
                 return (
                     f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）",
-                    "", "", "", "", "", "", "", "", "", "", "",
+                    "", "", "", "", "", "", "", "", "", "", "", "",
                     st["direct_material"],
                     st["water_power"], "",
                     st["steam"], "",
