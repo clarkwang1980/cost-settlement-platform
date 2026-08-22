@@ -1418,6 +1418,13 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                         content = material_issue_csv
                     elif kind == ImportBatch.Kind.WORK_REPORT:
                         content = work_report_csv
+                    elif kind == ImportBatch.Kind.WORKSHOP_COST:
+                        # 车间费用用内嵌数据（染整 水电100/人工50），
+                        # 不依赖 sample_templates/车间费用.csv（该文件为用户模板，含预填车间+合计行）
+                        content = (
+                            "车间,人工费,折旧费,水电费,蒸汽费,燃气费,染料助剂费,机物料费,加工费,合计,备注\n"
+                            "染整,50,0,100,0,0,0,0,0,,\n"
+                        ).encode("utf-8-sig")
                     else:
                         content = (template_dir / filename).read_bytes()
                     uploaded = SimpleUploadedFile(filename, content, "text/csv")
