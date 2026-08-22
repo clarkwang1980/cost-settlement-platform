@@ -935,12 +935,19 @@ def settlement_excel_response(period):
 def build_listing_workbook(sheets):
     """生成单文件多工作表 Excel。
 
-    sheets: [(工作表名, 表头列表, 数据行(可迭代的元组/列表)), ...]
+    sheets: [(工作表名, 表头列表, 数据行(可迭代的元组/列表), 可选highlight_rows集合), ...]
     """
     workbook = Workbook()
     workbook.remove(workbook.active)
-    for title, headers, rows in sheets:
-        _append_table(workbook, title, headers, rows)
+    for sheet in sheets:
+        if len(sheet) >= 4:
+            title, headers, rows, highlight_rows = sheet
+        else:
+            title, headers, rows = sheet
+            highlight_rows = frozenset()
+        _append_table(
+            workbook, title, headers, rows, highlight_rows=highlight_rows
+        )
     stream = BytesIO()
     workbook.save(stream)
     stream.seek(0)

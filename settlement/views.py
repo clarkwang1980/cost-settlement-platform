@@ -2536,40 +2536,133 @@ def _listing_rows(request, period, kind):
                 "product": "product_code",
             },
         )
-        sheets.append(
-            (
-                "工单成本",
-                ["工单编号", "车间", "产品编码", "产品名称", "计划数量", "报工数量",
-                 "在产品数量", "材料成本", "水电", "蒸汽", "天然气", "折旧", "机物料",
-                 "工资", "工单总成本", "完工成本", "完工单位成本", "在产品成本"],
-                (
-                    (
-                        item.work_order.order_no,
-                        WORKSHOP_LABELS.get(
-                            item.work_order.production_dept_code,
-                            item.work_order.production_dept_code,
-                        ),
-                        item.product_code,
-                        item.product_name,
-                        item.plan_quantity,
-                        item.finished_quantity,
-                        item.wip_quantity,
-                        item.direct_material,
-                        item.water_power,
-                        item.steam,
-                        item.natural_gas,
-                        item.depreciation,
-                        item.consumables,
-                        item.wages,
-                        item.total_cost,
-                        item.finished_cost,
-                        item.finished_unit_cost,
-                        item.wip_cost,
-                    )
-                    for item in results
-                ),
+        results = list(
+            results.order_by(
+                "work_order__production_dept_code", "work_order__order_no"
             )
         )
+        from settlement.services.workorder_costing import MANUFACTURING_FIELDS
+
+        # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
+        headers = [
+            "工单编号", "车间", "产品编码", "产品名称", "计划数量", "报工数量",
+            "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
+            "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
+            "染料助剂", "染料助剂分配率%", "工资", "工资分配率%", "工单总成本",
+            "完工成本", "完工单位成本", "在产品成本",
+        ]
+        rows = []
+        highlight = set()
+        if results:
+            mat_total = {}
+            fee_total = {f: {} for f in MANUFACTURING_FIELDS}
+            equiv_total = {}
+            for item in results:
+                ws = item.work_order.production_dept_code
+                mat_total[ws] = mat_total.get(ws, Decimal("0")) + Decimal(
+                    item.direct_material or 0
+                )
+                for f in MANUFACTURING_FIELDS:
+                    fee_total[f][ws] = fee_total[f].get(ws, Decimal("0")) + Decimal(
+                        getattr(item, f) or 0
+                    )
+                equiv_total[ws] = equiv_total.get(ws, Decimal("0")) + Decimal(
+                    item.finished_quantity or 0
+                ) + Decimal(item.wip_quantity or 0) * Decimal("0.5")
+
+            def _rate(fee_field, ws):
+                denom = mat_total.get(ws, Decimal("0"))
+                return (
+                    (fee_total[fee_field].get(ws, Decimal("0")) / denom) * Decimal("100")
+                    if denom
+                    else Decimal("0")
+                )
+
+            def _wage_rate(item, ws):
+                denom = equiv_total.get(ws, Decimal("0"))
+                if not denom:
+                    return Decimal("0")
+                equivalent = Decimal(item.finished_quantity or 0) + Decimal(
+                    item.wip_quantity or 0
+                ) * Decimal("0.5")
+                return (equivalent / denom) * Decimal("100")
+
+            SUM_FIELDS = (
+                "direct_material", "water_power", "steam", "natural_gas",
+                "depreciation", "consumables", "dye_auxiliary", "wages",
+                "total_cost", "finished_cost", "wip_cost",
+            )
+            subtotals = {}
+            for item in results:
+                ws = item.work_order.production_dept_code
+                st = subtotals.setdefault(
+                    ws, {"count": 0, **{f: Decimal("0") for f in SUM_FIELDS}}
+                )
+                st["count"] += 1
+                for f in SUM_FIELDS:
+                    st[f] += Decimal(getattr(item, f) or 0)
+
+            def _detail_row(item):
+                ws = item.work_order.production_dept_code
+                return (
+                    item.work_order.order_no,
+                    WORKSHOP_LABELS.get(ws, ws),
+                    item.product_code,
+                    item.product_name,
+                    item.plan_quantity,
+                    item.finished_quantity,
+                    item.wip_quantity,
+                    item.direct_material,
+                    item.water_power,
+                    _rate("water_power", ws),
+                    item.steam,
+                    _rate("steam", ws),
+                    item.natural_gas,
+                    _rate("natural_gas", ws),
+                    item.depreciation,
+                    _rate("depreciation", ws),
+                    item.consumables,
+                    _rate("consumables", ws),
+                    item.dye_auxiliary,
+                    _rate("dye_auxiliary", ws),
+                    item.wages,
+                    _wage_rate(item, ws),
+                    item.total_cost,
+                    item.finished_cost,
+                    item.finished_unit_cost,
+                    item.wip_cost,
+                )
+
+            def _subtotal_row(ws, st):
+                return (
+                    f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）",
+                    "", "", "", "", "", "",
+                    st["direct_material"],
+                    st["water_power"], "",
+                    st["steam"], "",
+                    st["natural_gas"], "",
+                    st["depreciation"], "",
+                    st["consumables"], "",
+                    st["dye_auxiliary"], "",
+                    st["wages"], "",
+                    st["total_cost"],
+                    st["finished_cost"], "",
+                    st["wip_cost"],
+                )
+
+            current_ws = None
+            for item in results:
+                ws = item.work_order.production_dept_code
+                if current_ws is not None and ws != current_ws:
+                    rows.append(_subtotal_row(current_ws, subtotals[current_ws]))
+                    highlight.add(len(rows))
+                current_ws = ws
+                rows.append(_detail_row(item))
+            if current_ws is not None:
+                rows.append(_subtotal_row(current_ws, subtotals[current_ws]))
+                highlight.add(len(rows))
+
+        sheets.append(( "工单成本", headers, rows, highlight ))
 
     elif kind == "reconciliation":
         sheets.append(
