@@ -661,24 +661,26 @@ WORKSHOP_ALIASES = {
     "机织": "JiZhi",
     "针织": "ZhenZhi",
     "包覆": "BaoFu",
-    "染色纤维": "RanZhengXianWei",
-    "染整（纤维）": "RanZhengXianWei",
-    "染整(纤维)": "RanZhengXianWei",
-    "染整纤维": "RanZhengXianWei",
-    "染色纱线": "RanZhengShaXian",
-    "染整（纱线）": "RanZhengShaXian",
-    "染整(纱线)": "RanZhengShaXian",
-    "染整纱线": "RanZhengShaXian",
+    # 染色纤维 + 染色纱线 合并为 染色车间（产线/人员共用）
+    "染色": "RanZheng",
+    "染色车间": "RanZheng",
+    "染色纤维": "RanZheng",
+    "染整（纤维）": "RanZheng",
+    "染整(纤维)": "RanZheng",
+    "染整纤维": "RanZheng",
+    "染色纱线": "RanZheng",
+    "染整（纱线）": "RanZheng",
+    "染整(纱线)": "RanZheng",
+    "染整纱线": "RanZheng",
     "特纺投料": "tefang",
     "机织投料": "JiZhi",
     "针织投料": "ZhenZhi",
     "包覆投料": "BaoFu",
 }
 
-# 车间默认结转顺序（用户指定：染色纤维 → 染色纱线 → 纺纱 → 包覆 → 针织 → 机织）
+# 车间默认结转顺序（染色车间 → 纺纱 → 包覆 → 针织 → 机织；浆粕车间按需追加）
 WORKSHOP_ORDER = [
-    "RanZhengXianWei",
-    "RanZhengShaXian",
+    "RanZheng",
     "tefang",
     "BaoFu",
     "ZhenZhi",
@@ -687,8 +689,9 @@ WORKSHOP_ORDER = [
 
 # 车间编码 -> 中文显示名
 WORKSHOP_LABELS = {
-    "RanZhengXianWei": "染色纤维车间",
-    "RanZhengShaXian": "染色纱线车间",
+    "RanZheng": "染色车间",
+    "RanZhengXianWei": "染色纤维车间（已合并）",
+    "RanZhengShaXian": "染色纱线车间（已合并）",
     "tefang": "纺纱车间",
     "BaoFu": "包覆车间",
     "ZhenZhi": "针织车间",

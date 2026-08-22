@@ -845,7 +845,7 @@ def ensure_workshop_settlements(period: AccountingPeriod):
         item.workshop: item
         for item in period.workshop_settlements.all()
     }
-    # 默认结转顺序：WORKSHOP_ORDER（染色纤维→染色纱线→纺纱→包覆→针织→机织），
+    # 默认结转顺序：WORKSHOP_ORDER（染色车间→纺纱→包覆→针织→机织），
     # 不在列表中的车间按字母序追加到末尾
     ordered = [code for code in WORKSHOP_ORDER if code in workshops]
     ordered += sorted(workshops - set(WORKSHOP_ORDER))
