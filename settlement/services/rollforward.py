@@ -14,11 +14,10 @@ from settlement.models import (
     Material,
     OpeningInventoryBalance,
     OpeningWip,
-    OrderCostResult,
-    ProductionOrder,
     PurchaseContractLine,
     ReconciliationResult,
     SettlementRun,
+    WorkOrderCostResult,
     WorkshopSettlement,
 )
 
@@ -73,8 +72,8 @@ def carry_forward_context(period: AccountingPeriod):
         "opening_wip_count": period.opening_wip.filter(
             is_system_generated=True
         ).count(),
-        "carried_order_count": period.production_orders.filter(
-            is_system_generated=True
+        "carried_order_count": period.work_orders.filter(
+            period=period
         ).count(),
         "carried_contract_count": period.purchase_contracts.filter(
             is_system_generated=True
@@ -206,19 +205,20 @@ def _wip_components(result):
 
 
 def _carry_wip_and_orders(period, previous):
-    prior_results = [
-        item
-        for item in previous.order_cost_results.select_related("order").all()
-        if Decimal(item.wip_cost or ZERO) != ZERO
-    ]
     manual_wip_orders = set(
         period.opening_wip.filter(
             is_system_generated=False
         ).values_list("order_no", flat=True)
     )
     active_wip_orders = set()
-    for result in prior_results:
-        order_no = result.order.order_no
+
+    # 工单成本结果（生产工单+投料+报工）的在产品承接
+    for result in previous.work_order_cost_results.select_related(
+        "work_order"
+    ).all():
+        if Decimal(result.wip_cost or ZERO) == ZERO:
+            continue
+        order_no = result.work_order.order_no
         active_wip_orders.add(order_no)
         if order_no in manual_wip_orders:
             continue
@@ -242,55 +242,11 @@ def _carry_wip_and_orders(period, previous):
     period.opening_wip.filter(is_system_generated=True).exclude(
         order_no__in=active_wip_orders
     ).delete()
-
-    prior_orders = {}
-    for result in prior_results:
-        prior_orders[result.order.order_no] = result.order
-    for order in previous.production_orders.filter(
-        status=ProductionOrder.Status.OPEN
-    ).exclude(match_mode=MatchingMode.IGNORED):
-        if order.wip_quantity != ZERO:
-            prior_orders.setdefault(order.order_no, order)
-
-    manual_orders = set(
-        period.production_orders.filter(
-            is_system_generated=False
-        ).values_list("order_no", flat=True)
-    )
-    active_order_nos = set(prior_orders)
-    for order_no, prior_order in prior_orders.items():
-        if order_no in manual_orders:
-            continue
-        ProductionOrder.objects.update_or_create(
-            period=period,
-            order_no=order_no,
-            defaults={
-                "batch": None,
-                "carried_from": prior_order,
-                "is_system_generated": True,
-                "workshop": prior_order.workshop,
-                "product_code": prior_order.product_code,
-                "product_name": prior_order.product_name,
-                "plan_quantity": prior_order.wip_quantity,
-                "finished_quantity": ZERO,
-                "wip_quantity": prior_order.wip_quantity,
-                "status": ProductionOrder.Status.OPEN,
-                "standard_hours": prior_order.standard_hours,
-                "material_completion_rate": ZERO,
-                "wip_conversion_rate": prior_order.wip_conversion_rate,
-                "production_receipt_document": "",
-                "match_mode": MatchingMode.AUTO,
-                "ignore_reason": "",
-            },
-        )
-    period.production_orders.filter(is_system_generated=True).exclude(
-        order_no__in=active_order_nos
-    ).delete()
     return {
         "wip_count": len(active_wip_orders),
         "wip_manual_overrides": len(manual_wip_orders & active_wip_orders),
-        "order_count": len(active_order_nos),
-        "order_manual_overrides": len(manual_orders & active_order_nos),
+        "order_count": len(active_wip_orders),
+        "order_manual_overrides": len(manual_wip_orders & active_wip_orders),
     }
 
 
@@ -385,7 +341,7 @@ def invalidate_downstream_periods(source_period: AccountingPeriod):
         EndingInventoryBalance.objects.filter(
             period=period, is_system_generated=True
         ).delete()
-        OrderCostResult.objects.filter(period=period).delete()
+        WorkOrderCostResult.objects.filter(period=period).delete()
         ReconciliationResult.objects.filter(period=period).delete()
         SettlementRun.objects.filter(period=period).delete()
         period.exceptions.all().delete()
@@ -403,9 +359,6 @@ def invalidate_downstream_periods(source_period: AccountingPeriod):
             period=period, is_system_generated=True
         ).delete()
         OpeningWip.objects.filter(
-            period=period, is_system_generated=True
-        ).delete()
-        ProductionOrder.objects.filter(
             period=period, is_system_generated=True
         ).delete()
         PurchaseContractLine.objects.filter(

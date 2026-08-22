@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time
 from decimal import Decimal
 from io import BytesIO
 
@@ -34,6 +35,25 @@ def _is_number(value) -> bool:
     )
 
 
+def _clean_cell_value(value):
+    """Excel 不支持带时区的日期时间：统一转成本地时间的 naive datetime。
+
+    Django 开启 USE_TZ 后 DateTimeField 返回的 datetime 带 tzinfo，
+    直接写入 openpyxl 会抛
+    "Excel does not support timezones in datetimes"。
+    这里在写入前做全局兜底，覆盖所有报表。
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return timezone.localtime(value).replace(tzinfo=None)
+        return value
+    return value
+
+
+def _clean_row(row):
+    return [_clean_cell_value(value) for value in row]
+
+
 def _append_table(workbook, title, headers, rows):
     worksheet = workbook.create_sheet(title=title)
     worksheet.append(headers)
@@ -42,7 +62,7 @@ def _append_table(workbook, title, headers, rows):
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center")
     for row in rows:
-        worksheet.append(list(row))
+        worksheet.append(_clean_row(row))
     # 数据区数字单元格设置千分位+两位小数格式
     for row in worksheet.iter_rows(min_row=2):
         for cell in row:
@@ -181,19 +201,6 @@ def build_settlement_workbook(period):
                 item.total,
                 "",
                 "系统自动承接" if item.is_system_generated else "人工上传/覆盖",
-            )
-        )
-    for item in period.production_orders.filter(is_system_generated=True):
-        carry_rows.append(
-            (
-                "未完工订单",
-                item.carried_from.period.month if item.carried_from else None,
-                item.order_no,
-                item.product_name,
-                item.wip_quantity,
-                "",
-                "",
-                item.workshop,
             )
         )
     for item in period.purchase_contracts.filter(is_system_generated=True):
@@ -352,8 +359,8 @@ def build_settlement_workbook(period):
             "结转顺序",
             "车间/成本中心",
             "状态",
-            "订单成本",
-            "生产入库成本",
+            "工单成本",
+            "完工入库成本",
             "循环次数",
             "是否收敛",
             "结转时间",
@@ -692,47 +699,53 @@ def build_settlement_workbook(period):
 
     _append_table(
         workbook,
-        "订单成本",
+        "工单成本",
         [
-            "工单号",
+            "工单编号",
             "车间",
             "产品编码",
             "产品名称",
-            "完工数量",
-            "在制数量",
+            "计划数量",
+            "报工数量",
+            "在产品数量",
             "材料成本",
             "水电",
             "蒸汽",
             "天然气",
             "折旧",
             "机物料",
+            "染料助剂",
             "工资",
-            "订单总成本",
+            "工单总成本",
             "完工成本",
             "完工单位成本",
             "在产品成本",
         ],
         (
             (
-                item.order.order_no,
-                item.order.workshop,
-                item.order.product_code,
-                item.order.product_name,
-                item.order.finished_quantity,
-                item.order.wip_quantity,
+                item.work_order.order_no,
+                item.work_order.production_dept_code,
+                item.product_code,
+                item.product_name,
+                item.plan_quantity,
+                item.finished_quantity,
+                item.wip_quantity,
                 item.direct_material,
                 item.water_power,
                 item.steam,
                 item.natural_gas,
                 item.depreciation,
                 item.consumables,
+                item.dye_auxiliary,
                 item.wages,
                 item.total_cost,
                 item.finished_cost,
                 item.finished_unit_cost,
                 item.wip_cost,
             )
-            for item in period.order_cost_results.select_related("order").all()
+            for item in period.work_order_cost_results.select_related(
+                "work_order"
+            ).all()
         ),
     )
 

@@ -92,7 +92,6 @@
             {% if a.contract_line %}{{ a.contract_line.contract_no }}
             {% elif a.purchase_invoice_line %}<a class="document-link" href="{% url 'source_document_detail' a.purchase_invoice_line.period.id 'purchase_invoice' a.purchase_invoice_line.id %}">{{ a.purchase_invoice_line.invoice_no }}</a>
             {% elif a.sales_invoice_line %}<a class="document-link" href="{% url 'source_document_detail' a.sales_invoice_line.period.id 'sales_invoice' a.sales_invoice_line.id %}">{{ a.sales_invoice_line.invoice_no }}</a>
-            {% elif a.production_order %}<a class="document-link" href="{% url 'source_document_detail' a.production_order.period.id 'production_order' a.production_order.id %}">{{ a.production_order.order_no }}</a>
             {% endif %}
           </td>
           <td class="num">{{ a.matched_quantity|floatformat:3 }}</td>

@@ -5,7 +5,7 @@
   <div>
     <p class="eyebrow">INVENTORY MATCHING LEDGER</p>
     <h1>库存流水匹配</h1>
-    <p>从库存流水方向检查合同、发票和生产订单的匹配情况；点击流水可手工修改。</p>
+    <p>从库存流水方向检查合同、发票的匹配情况；点击流水可手工修改。</p>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水台账</a>
@@ -69,7 +69,6 @@
                 {% if a.contract_line %}合同 {{ a.contract_line.contract_no }}
                 {% elif a.purchase_invoice_line %}采购发票 {{ a.purchase_invoice_line.invoice_no }}
                 {% elif a.sales_invoice_line %}销售发票 {{ a.sales_invoice_line.invoice_no }}
-                {% elif a.production_order %}生产订单 {{ a.production_order.order_no }}
                 {% endif %} / {{ a.matched_quantity|floatformat:3 }}
               </span>
             {% empty %}—{% endfor %}

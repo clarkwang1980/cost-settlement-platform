@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}工单匹配 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORK ORDER MATCHING</p>
+    <h1>生产工单匹配</h1>
+    <p>以生产工单为主，集中查看投料记录、报工记录与报工入库流水的归集情况。直接材料由投料记录按工单归集，报工入库按单据号＝工单编号关联计价。</p>
+  </div>
+  <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_match' %}?{{ request.GET.urlencode }}">导出Excel</a>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 tefang / 染色纤维"></label>
+    <label>产品编码<input name="product" value="{{ request.GET.product }}"></label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_order_matches' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>车间/部门</th><th>产品</th><th class="num">计划数量</th>
+          <th class="num">投料记录</th><th class="num">报工记录</th>
+          <th class="num">报工入库流水</th><th>差异提示</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in page %}
+        <tr>
+          <td><strong>{{ row.order_no }}</strong>{% if row.status %}<small>{{ row.status }}</small>{% endif %}</td>
+          <td>{{ row.workshop|workshop_label|default:"—" }}</td>
+          <td><strong>{{ row.product_code|default:"—" }}</strong><small>{{ row.product_name }}</small></td>
+          <td class="num">{{ row.plan_quantity|floatformat:3 }}</td>
+          <td class="num">{{ row.issue_count }} 条 / {{ row.issue_qty|floatformat:3 }}</td>
+          <td class="num">{{ row.report_count }} 条 / {{ row.report_qty|floatformat:3 }}</td>
+          <td class="num">{{ row.receipt_count }} 条 / {{ row.receipt_qty|floatformat:3 }}{% if row.receipt_priced %}<small>已计价 {{ row.receipt_priced }} 条</small>{% endif %}</td>
+          <td>
+            {% if row.qty_mismatch %}
+              <span class="pill warning">报工 {{ row.report_qty|floatformat:2 }} ≠ 入库 {{ row.receipt_qty|floatformat:2 }}</span>
+            {% elif row.report_count and not row.receipt_count %}
+              <span class="pill warning">有报工无入库流水</span>
+            {% elif row.issue_count and row.report_count == 0 and row.receipt_count == 0 %}
+              <span class="pill warning">只投料未报工</span>
+            {% else %}
+              <span class="muted-text">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}<tr><td colspan="8" class="empty-cell">没有符合筛选条件的生产工单，请先上传生产工单/投料记录/报工记录。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

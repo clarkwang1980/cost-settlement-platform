@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}车间结转 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -56,7 +57,7 @@
             {% for item in settlements %}
               <tr>
                 <td><input class="sequence-input" type="number" min="1" name="sequence_{{ item.id }}" value="{{ item.sequence }}" {% if has_settled or period.status == "locked" %}disabled{% endif %}></td>
-                <td><strong>{{ item.workshop }}</strong></td>
+                <td><strong>{{ item.workshop|workshop_label }}</strong></td>
                 <td>
                   {% if item.status == "settled" %}
                     <span class="pill success">已结转</span>
@@ -92,7 +93,7 @@
   {% else %}
     <div class="empty-state">
       <strong>尚未识别到车间</strong>
-      <p>请先上传生产订单和车间费用资料。</p>
+      <p>请先上传生产工单和车间费用资料。</p>
     </div>
   {% endif %}
 </section>

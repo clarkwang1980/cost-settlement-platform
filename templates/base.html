@@ -42,7 +42,7 @@
         <a href="{% url 'purchase_reversal_report' period.id %}">回冲明细</a>
         <a href="{% url 'sales_matches' period.id %}">销售匹配</a>
         <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
-        <a href="{% url 'order_matches' period.id %}">订单匹配</a>
+        <a href="{% url 'work_order_matches' period.id %}">工单匹配</a>
         <a href="{% url 'work_order_report' period.id %}">生产工单</a>
         <a href="{% url 'order_material_report' period.id %}">工单投料</a>
         <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
@@ -53,7 +53,7 @@
         <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
         <a href="{% url 'inventory_results' period.id %}">库存结转</a>
         <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
-        <a href="{% url 'order_costs' period.id %}">订单成本</a>
+        <a href="{% url 'work_order_costs' period.id %}">工单成本</a>
         <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
         <a href="{% url 'export_center' period.id %}">报表导出</a>
       </div>

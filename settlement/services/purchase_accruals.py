@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Max, Q, Sum
@@ -11,8 +12,9 @@ from settlement.models import (
     MatchAllocation,
     MatchingMode,
     OpeningPurchaseAccrual,
+    PurchaseContractLine,
 )
-from settlement.services.matching import is_purchase_receipt
+from settlement.services.matching import _same_party, is_purchase_receipt
 
 
 ZERO = Decimal("0")
@@ -52,6 +54,9 @@ def provisional_basis(txn: InventoryTransaction):
                 .distinct()
             ),
         }
+    fallback = _contract_price_fallback(txn)
+    if fallback is not None:
+        return fallback
     if (
         txn.unit_price is not None
         and txn.price_source in {"原始金额", "手工暂估"}
@@ -68,6 +73,59 @@ def provisional_basis(txn: InventoryTransaction):
         "amount": None,
         "source": "缺少暂估价格",
         "contract_nos": "",
+    }
+
+
+def _contract_price_fallback(txn):
+    """无合同匹配分配时，用同物料合同的"原币未税单价"作为暂估价格兜底。
+
+    匹配不到合同数量（合同数量为 0/剩余不足）时，只要该物料存在供应商匹配、
+    且单价大于 0 的合同，就按最近合同的单价暂估，避免暂估金额缺失。
+    """
+    contracts = list(
+        PurchaseContractLine.objects.filter(
+            period__month__lte=txn.period.month,
+            material_code=txn.material_code,
+            unit_price_excl_tax__gt=0,
+        )
+    )
+    if not contracts:
+        return None
+    if txn.supplier_code or txn.supplier_name:
+        contracts = [
+            c
+            for c in contracts
+            if _same_party(
+                txn.supplier_code,
+                txn.supplier_name,
+                c.supplier_code,
+                c.supplier_name,
+            )
+        ]
+    else:
+        # 流水无供应商：仅当该物料所有有单价合同的供应商唯一时才取价，
+        # 多供应商时无法确定属于哪家，不兜底。
+        suppliers = {
+            (c.supplier_code or "", c.supplier_name or "")
+            for c in contracts
+        }
+        if len(suppliers) != 1:
+            return None
+    if not contracts:
+        return None
+    contracts.sort(
+        key=lambda c: (
+            (c.contract_date or date.min).toordinal(),
+            c.id,
+        )
+    )
+    latest = contracts[-1]
+    unit_price = price(latest.unit_price_excl_tax)
+    return {
+        "unit_price": unit_price,
+        "amount": money(Decimal(txn.quantity) * unit_price),
+        "source": "合同暂估（价格参考）",
+        "contract_nos": latest.contract_no,
     }
 
 

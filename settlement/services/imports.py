@@ -27,21 +27,20 @@ from settlement.models import (
     OpeningInventoryBalance,
     OpeningPurchaseAccrual,
     OpeningWip,
-    OrderCostResult,
-    ProductionOrder,
     PurchaseContractLine,
     PurchaseInvoiceLine,
     ReconciliationResult,
     SalesInvoiceLine,
     SettlementRun,
     WorkOrder,
+    WorkOrderCostResult,
     WorkReport,
     WorkshopSettlement,
     WorkshopCostPool,
 )
 
 
-HEADER_CLEANER = re.compile(r"[\s\r\n\t（）()【】\[\]：:、,，._\-]+")
+HEADER_CLEANER = re.compile(r"[\s\r\n\t（）()【】\[\]：:、,，._\-*＊#※]+")
 
 
 def normalize_header(value) -> str:
@@ -50,7 +49,7 @@ def normalize_header(value) -> str:
 
 ALIASES = {
     "inventory": {
-        "txn_date": ["创建时间", "业务日期", "单据日期", "日期", "出入库日期", "记账日期"],
+        "txn_date": ["创建时间", "业务日期", "单据日期", "日期", "出入库日期", "记账日期", "入库时间"],
         "document_no": ["业务单据编号", "单据号", "单据编号", "出入库单号", "凭证号"],
         "line_no": ["行号", "序号", "明细行"],
         "business_type": ["业务类型", "出入库类型", "单据类型", "事务类型"],
@@ -61,7 +60,7 @@ ALIASES = {
         "specification": ["物料规格", "规格", "规格型号", "型号"],
         "category_name": ["分类", "分类名称", "物料分类", "类别"],
         "batch_no": ["批号", "批次号", "批次"],
-        "quantity": ["操作数量", "数量", "实收数量", "实发数量", "出入库数量", "基本数量"],
+        "quantity": ["操作数量", "数量", "实收数量", "实发数量", "出入库数量", "基本数量", "入库数量"],
         "auxiliary_quantity": ["辅助数量", "辅数量", "辅助计量数量"],
         "uom": ["主单位", "单位", "计量单位", "基本单位"],
         "auxiliary_uom": ["辅助单位", "辅单位"],
@@ -85,6 +84,7 @@ ALIASES = {
         "material_code": ["物料编码", "物料代码", "存货编码", "品名编码"],
         "material_name": ["物料名称", "存货名称", "品名"],
         "quantity": ["合同数量", "数量"],
+        "received_quantity": ["已签收数量", "签收数量"],
         "unit_price_excl_tax": [
             "不含税单价",
             "合同不含税价",
@@ -95,14 +95,15 @@ ALIASES = {
     },
     "purchase_invoice": {
         "invoice_no": ["发票号", "发票号码"],
-        "invoice_date": ["发票日期", "开票日期", "日期"],
+        "invoice_date": ["收票日期", "发票日期", "开票日期", "日期"],
         "invoice_period": ["发票期间", "开票期间", "所属期间"],
         "contract_no": ["合同号", "采购合同号", "合同编号"],
         "supplier_code": ["供应商编码", "供应商代码"],
         "supplier_name": ["供应商", "供应商名称"],
         "material_code": ["物料编码", "物料代码", "存货编码"],
         "material_name": ["物料名称", "存货名称", "品名"],
-        "quantity": ["发票数量", "数量"],
+        "uom": ["单位", "计量单位"],
+        "quantity": ["发票数量", "签收数量", "数量"],
         "unit_price_excl_tax": ["不含税单价", "发票不含税单价", "单价"],
         "amount_excl_tax": ["不含税金额", "金额"],
     },
@@ -119,24 +120,11 @@ ALIASES = {
         "unit_price_excl_tax": ["不含税单价", "销售单价", "单价"],
         "amount_excl_tax": ["不含税金额", "金额"],
     },
-    "production_order": {
-        "order_no": ["工单编号", "工单号", "生产订单号", "生产订单", "订单号"],
-        "workshop": ["车间", "生产车间", "成本中心"],
-        "product_code": ["产品编码", "产出物料编码", "主产品编码", "物料编码"],
-        "product_name": ["产品名称", "产出物料名称", "物料名称"],
-        "plan_quantity": ["计划数量", "订单数量", "计划产量"],
-        "finished_quantity": ["完工数量", "报工数量", "入库数量"],
-        "wip_quantity": ["在产品数量", "在制数量", "未完工数量"],
-        "status": ["状态", "完工状态", "订单状态"],
-        "standard_hours": ["标准工时", "单位工时", "工时"],
-        "material_completion_rate": ["材料完工比例", "材料完成率", "完工比例"],
-        "wip_conversion_rate": ["在制转换比例", "在制人工比例", "在制完工程度"],
-        "production_receipt_document": ["生产入库单号", "完工入库单号", "入库单号"],
-    },
     "work_order": {
         "order_no": ["工单编号", "生产工单号", "工单号"],
         "order_type": ["工单类型"],
         "identifier": ["标识码"],
+        "plan_quantity": ["计划数量", "计划产量", "计划数"],
         "planned_start": ["计划开始时间", "计划开工时间", "计划开始日期"],
         "planned_finish": ["计划完工时间", "计划完成时间", "计划完工日期"],
         "priority": ["优先级"],
@@ -228,10 +216,11 @@ ALIASES = {
         "workshop": ["车间", "生产车间", "成本中心"],
         "water_power": ["水电", "水电费", "电费"],
         "steam": ["蒸汽", "蒸汽费"],
-        "natural_gas": ["天然气", "天然气费"],
+        "natural_gas": ["天然气", "天然气费", "燃气费"],
         "depreciation": ["折旧", "折旧费"],
-        "consumables": ["机物料", "机物料消耗", "辅料"],
-        "wages": ["工资", "人工", "直接人工"],
+        "consumables": ["机物料", "机物料消耗", "辅料", "机物料费"],
+        "dye_auxiliary": ["染料助剂", "染料助剂费", "助剂费"],
+        "wages": ["工资", "人工", "直接人工", "人工费"],
     },
     "opening_wip": {
         "order_no": ["工单号", "生产订单号", "订单号"],
@@ -241,6 +230,7 @@ ALIASES = {
         "natural_gas": ["天然气", "天然气费"],
         "depreciation": ["折旧", "折旧费"],
         "consumables": ["机物料", "机物料消耗"],
+        "dye_auxiliary": ["染料助剂", "染料助剂费"],
         "wages": ["工资", "人工"],
     },
     "opening_purchase_accrual": {
@@ -341,9 +331,13 @@ ALIASES = {
     },
 }
 
+# 浆粕成品入库：与库存出入库流水同一套表头别名与必填校验
+ALIASES["pulp_receipt"] = ALIASES["inventory"]
+
 
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
+    "pulp_receipt": {"txn_date", "business_type", "material_code", "quantity"},
     "purchase_contract": {
         "contract_no",
         "material_code",
@@ -351,7 +345,6 @@ REQUIRED_FIELDS = {
         "unit_price_excl_tax",
     },
     "purchase_invoice": {
-        "invoice_no",
         "invoice_date",
         "material_code",
         "quantity",
@@ -363,20 +356,13 @@ REQUIRED_FIELDS = {
         "material_code",
         "quantity",
     },
-    "production_order": {
-        "order_no",
-        "workshop",
-        "product_code",
-        "finished_quantity",
-    },
     "workshop_cost": {"workshop"},
     "opening_wip": {"order_no"},
     "opening_purchase_accrual": {
         "original_period",
-        "document_date",
         "document_no",
         "material_code",
-        "opening_quantity",
+        "original_quantity",
         "provisional_unit_price",
     },
     "opening_goods_issued": {
@@ -512,8 +498,10 @@ def to_bool(value, default=False) -> bool:
     return default
 
 
-def month_start(value, fallback: date) -> date:
+def month_start(value, fallback: date) -> date | None:
     parsed = to_date(value, fallback)
+    if parsed is None:
+        return None
     return parsed.replace(day=1)
 
 
@@ -617,6 +605,7 @@ def infer_direction(value, business_type: str, quantity=None) -> str:
         "调拨发出": InventoryTransaction.Direction.OUT,
         "调拨接收": InventoryTransaction.Direction.IN,
         "投料撤回": InventoryTransaction.Direction.IN,
+        "投料回撤": InventoryTransaction.Direction.IN,
         "投料": InventoryTransaction.Direction.OUT,
         "出库冲销": InventoryTransaction.Direction.IN,
         "冲销入库": InventoryTransaction.Direction.OUT,
@@ -648,11 +637,53 @@ def infer_direction(value, business_type: str, quantity=None) -> str:
     raise ValueError(f"无法根据业务类型判断出入库方向：{business_type}")
 
 
-def normalize_order_status(value) -> str:
-    normalized = text(value).lower()
-    if normalized in {"完工", "完成", "已完工", "closed", "completed", "1", "是"}:
-        return ProductionOrder.Status.COMPLETED
-    return ProductionOrder.Status.OPEN
+# 车间/部门名称归一化：ERP 中文部门名 -> 部门编码
+# （生产工单.生产部门编号 使用编码，如 tefang/JiZhi/RanZhengXianWei）
+WORKSHOP_ALIASES = {
+    "特纺": "tefang",
+    "纺纱": "tefang",
+    "机织": "JiZhi",
+    "针织": "ZhenZhi",
+    "包覆": "BaoFu",
+    "染色纤维": "RanZhengXianWei",
+    "染整（纤维）": "RanZhengXianWei",
+    "染整(纤维)": "RanZhengXianWei",
+    "染整纤维": "RanZhengXianWei",
+    "染色纱线": "RanZhengShaXian",
+    "染整（纱线）": "RanZhengShaXian",
+    "染整(纱线)": "RanZhengShaXian",
+    "染整纱线": "RanZhengShaXian",
+    "特纺投料": "tefang",
+    "机织投料": "JiZhi",
+    "针织投料": "ZhenZhi",
+    "包覆投料": "BaoFu",
+}
+
+# 车间默认结转顺序（用户指定：染色纤维 → 染色纱线 → 纺纱 → 包覆 → 针织 → 机织）
+WORKSHOP_ORDER = [
+    "RanZhengXianWei",
+    "RanZhengShaXian",
+    "tefang",
+    "BaoFu",
+    "ZhenZhi",
+    "JiZhi",
+]
+
+# 车间编码 -> 中文显示名
+WORKSHOP_LABELS = {
+    "RanZhengXianWei": "染色纤维车间",
+    "RanZhengShaXian": "染色纱线车间",
+    "tefang": "纺纱车间",
+    "BaoFu": "包覆车间",
+    "ZhenZhi": "针织车间",
+    "JiZhi": "机织车间",
+}
+
+
+def normalize_workshop(value) -> str:
+    """将 ERP 中文部门名归一化为部门编码；已是编码的原样返回。"""
+    key = text(value)
+    return WORKSHOP_ALIASES.get(key, key)
 
 
 def get_or_create_material(code, name="", specification="", uom=""):
@@ -685,7 +716,7 @@ def clear_calculation_outputs(period: AccountingPeriod):
     EndingInventoryBalance.objects.filter(
         period=period, is_system_generated=True
     ).delete()
-    OrderCostResult.objects.filter(period=period).delete()
+    WorkOrderCostResult.objects.filter(period=period).delete()
     ReconciliationResult.objects.filter(period=period).delete()
     SettlementRun.objects.filter(period=period).delete()
     period.exceptions.all().delete()
@@ -751,7 +782,6 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.PURCHASE_CONTRACT: _import_purchase_contract,
         ImportBatch.Kind.PURCHASE_INVOICE: _import_purchase_invoice,
         ImportBatch.Kind.SALES_INVOICE: _import_sales_invoice,
-        ImportBatch.Kind.PRODUCTION_ORDER: _import_production_order,
         ImportBatch.Kind.WORKSHOP_COST: _import_workshop_cost,
         ImportBatch.Kind.OPENING_WIP: _import_opening_wip,
         ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: (
@@ -763,6 +793,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.WORK_ORDER: _import_work_order,
         ImportBatch.Kind.MATERIAL_ISSUE: _import_material_issue,
         ImportBatch.Kind.WORK_REPORT: _import_work_report,
+        ImportBatch.Kind.PULP_RECEIPT: _import_inventory,
     }[batch.kind]
     errors = []
     count = 0
@@ -786,19 +817,28 @@ def process_batch(batch: ImportBatch):
 
 def _import_inventory(batch, row):
     business_type = text(row.get("business_type"))
+    document_no = text(row.get("document_no"))
+    if not document_no and business_type == "报工":
+        # 浆粕车间无报工记录，成品入库流水不填工单号时自动关联当月浆粕工单
+        pulp_wo = WorkOrder.objects.filter(
+            period=batch.period, production_dept_code="浆粕车间"
+        ).first()
+        if pulp_wo:
+            document_no = pulp_wo.order_no
     raw_quantity = to_decimal(row.get("quantity"), Decimal("0"))
     direction = infer_direction(row.get("direction"), business_type, raw_quantity)
     quantity = abs(raw_quantity)
     is_zero_quantity = quantity == 0
 
-    # 内部流转类型不参与成本核算：报工、调拨、库存调整、库存转换、投料等；
-    # 数量为 0 的行也作为忽略/无需匹配记录导入（行数与上传一致，不参与计价）
+    # 内部流转类型不参与成本核算：调拨、库存调整、库存转换、报工调整等；
+    # 数量为 0 的行也作为忽略/无需匹配记录导入（行数与上传一致，不参与计价）。
+    # 注意：投料/投料回撤/报工不再按内部流转忽略——
+    #   投料出库按月末加权价出库、报工入库按工单完工成本入库，参与存货计价。
     INTERNAL_TRANSFER_TYPES = (
-        "报工",
         "调拨",
         "库存调整",
         "库存转换",
-        "投料",
+        "报工调整",
     )
     is_internal = any(
         token in business_type for token in INTERNAL_TRANSFER_TYPES
@@ -819,7 +859,7 @@ def _import_inventory(batch, row):
         period=batch.period,
         batch=batch,
         txn_date=to_date(row.get("txn_date")),
-        document_no=text(row.get("document_no")),
+        document_no=document_no,
         line_no=text(row.get("line_no") or row["_row_number"]),
         business_type=business_type,
         direction=direction,
@@ -859,6 +899,15 @@ def _import_inventory(batch, row):
 
 def _import_purchase_contract(batch, row):
     quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
+    unit_price = to_decimal(row.get("unit_price_excl_tax"), Decimal("0"))
+    if unit_price > 0:
+        # 合同数量取 max(合同数量, 已签收数量)：
+        #  - 合同数量为空/0（如 R11.504）：用已签收数量兜底
+        #  - 已签收超合同数量（超签，如 R82.203 5000/14650）：提升到已签收
+        # 单价=0 的合同保持 0 数量，不参与匹配，流水继续用原始金额
+        received = abs(to_decimal(row.get("received_quantity"), Decimal("0")))
+        if received > quantity:
+            quantity = received
     PurchaseContractLine.objects.create(
         period=batch.period,
         batch=batch,
@@ -870,7 +919,7 @@ def _import_purchase_contract(batch, row):
         material_name=text(row.get("material_name")),
         quantity=quantity,
         remaining_quantity=quantity,
-        unit_price_excl_tax=to_decimal(row.get("unit_price_excl_tax"), Decimal("0")),
+        unit_price_excl_tax=unit_price,
     )
 
 
@@ -881,10 +930,16 @@ def _import_purchase_invoice(batch, row):
     if amount is None:
         amount = (quantity * unit_price).quantize(Decimal("0.01"))
     invoice_date = to_date(row.get("invoice_date"))
+    if invoice_date is None:
+        # 收票日期为空时，兜底用核算月份首日（发票期间随之落入核算月）
+        invoice_date = batch.period.month
+    invoice_no = text(row.get("invoice_no"))
+    if not invoice_no:
+        invoice_no = f"B{batch.id}-{row['_row_number']}"
     PurchaseInvoiceLine.objects.create(
         period=batch.period,
         batch=batch,
-        invoice_no=text(row.get("invoice_no")),
+        invoice_no=invoice_no,
         invoice_date=invoice_date,
         invoice_period=month_start(row.get("invoice_period"), invoice_date),
         contract_no=text(row.get("contract_no")),
@@ -892,6 +947,7 @@ def _import_purchase_invoice(batch, row):
         supplier_name=text(row.get("supplier_name")),
         material_code=text(row.get("material_code")),
         material_name=text(row.get("material_name")),
+        uom=text(row.get("uom")),
         quantity=quantity,
         unit_price_excl_tax=unit_price,
         amount_excl_tax=amount,
@@ -906,6 +962,8 @@ def _import_sales_invoice(batch, row):
     if amount is None and unit_price is not None:
         amount = (quantity * unit_price).quantize(Decimal("0.01"))
     invoice_date = to_date(row.get("invoice_date"))
+    if invoice_date is None:
+        invoice_date = batch.period.month
     SalesInvoiceLine.objects.create(
         period=batch.period,
         batch=batch,
@@ -924,45 +982,6 @@ def _import_sales_invoice(batch, row):
     )
 
 
-def _import_production_order(batch, row):
-    plan_quantity = abs(to_decimal(row.get("plan_quantity"), Decimal("0")))
-    finished_quantity = abs(to_decimal(row.get("finished_quantity"), Decimal("0")))
-    wip_quantity = to_decimal(row.get("wip_quantity"))
-    if wip_quantity is None:
-        wip_quantity = max(plan_quantity - finished_quantity, Decimal("0"))
-    status = normalize_order_status(row.get("status"))
-    if status == ProductionOrder.Status.COMPLETED:
-        wip_quantity = Decimal("0")
-    ProductionOrder.objects.update_or_create(
-        period=batch.period,
-        order_no=text(row.get("order_no")),
-        defaults={
-            "batch": batch,
-            "carried_from": None,
-            "is_system_generated": False,
-            "workshop": text(row.get("workshop")),
-            "product_code": text(row.get("product_code")),
-            "product_name": text(row.get("product_name")),
-            "plan_quantity": plan_quantity,
-            "finished_quantity": finished_quantity,
-            "wip_quantity": abs(wip_quantity),
-            "status": status,
-            "standard_hours": to_decimal(
-                row.get("standard_hours"), Decimal("1")
-            ),
-            "material_completion_rate": to_decimal(
-                row.get("material_completion_rate")
-            ),
-            "wip_conversion_rate": to_decimal(
-                row.get("wip_conversion_rate"), Decimal("0.5")
-            ),
-            "production_receipt_document": text(
-                row.get("production_receipt_document")
-            ),
-        },
-    )
-
-
 def _import_work_order(batch, row):
     order_no = text(row.get("order_no"))
     if not order_no:
@@ -974,6 +993,7 @@ def _import_work_order(batch, row):
             "batch": batch,
             "order_type": text(row.get("order_type")),
             "identifier": text(row.get("identifier")),
+            "plan_quantity": abs(to_decimal(row.get("plan_quantity"), Decimal("0"))),
             "planned_start": to_datetime(row.get("planned_start")),
             "planned_finish": to_datetime(row.get("planned_finish")),
             "priority": text(row.get("priority")),
@@ -1115,12 +1135,13 @@ def _import_workshop_cost(batch, row):
     WorkshopCostPool.objects.create(
         period=batch.period,
         batch=batch,
-        workshop=text(row.get("workshop")),
+        workshop=normalize_workshop(text(row.get("workshop"))),
         water_power=to_decimal(row.get("water_power"), Decimal("0")),
         steam=to_decimal(row.get("steam"), Decimal("0")),
         natural_gas=to_decimal(row.get("natural_gas"), Decimal("0")),
         depreciation=to_decimal(row.get("depreciation"), Decimal("0")),
         consumables=to_decimal(row.get("consumables"), Decimal("0")),
+        dye_auxiliary=to_decimal(row.get("dye_auxiliary"), Decimal("0")),
         wages=to_decimal(row.get("wages"), Decimal("0")),
     )
 
@@ -1145,6 +1166,9 @@ def _import_opening_wip(batch, row):
             "consumables": to_decimal(
                 row.get("consumables"), Decimal("0")
             ),
+            "dye_auxiliary": to_decimal(
+                row.get("dye_auxiliary"), Decimal("0")
+            ),
             "wages": to_decimal(row.get("wages"), Decimal("0")),
         },
     )
@@ -1152,28 +1176,40 @@ def _import_opening_wip(batch, row):
 
 def _opening_ledger_values(batch, row, *, price_field, ledger_name):
     original_period = month_start(row.get("original_period"), batch.period.month)
-    document_date = to_date(row.get("document_date"))
     if original_period >= batch.period.month:
         raise ValueError(f"{ledger_name}的原业务月份必须早于系统首个核算月份。")
-    if document_date is None or document_date >= batch.period.month:
+    document_date = to_date(row.get("document_date"))
+    if document_date is None:
+        # 模板只填"原入库月份"时，默认取该月最后一天作为原单据日期
+        import calendar
+
+        last_day = calendar.monthrange(
+            original_period.year, original_period.month
+        )[1]
+        document_date = original_period.replace(day=last_day)
+    elif document_date >= batch.period.month:
         raise ValueError(f"{ledger_name}的原单据日期必须早于系统首个核算月份。")
-    if document_date.replace(day=1) != original_period:
+    elif document_date.replace(day=1) != original_period:
         raise ValueError("原业务月份必须与原单据日期所在月份一致。")
 
-    opening_quantity = to_decimal(row.get("opening_quantity"))
     prior_quantity = to_decimal(
         row.get("prior_invoiced_quantity"), Decimal("0")
     )
-    if opening_quantity is None or opening_quantity <= 0:
-        raise ValueError("期初未核销数量必须大于0。")
     if prior_quantity is None or prior_quantity < 0:
         raise ValueError("以前累计核销数量不能小于0。")
 
     original_quantity = to_decimal(row.get("original_quantity"))
+    opening_quantity = to_decimal(row.get("opening_quantity"))
+    if original_quantity is None and opening_quantity is None:
+        raise ValueError("原业务数量与期初未核销数量至少填一个。")
     if original_quantity is None:
         original_quantity = opening_quantity + prior_quantity
+    if opening_quantity is None:
+        opening_quantity = original_quantity - prior_quantity
     if original_quantity <= 0 or prior_quantity > original_quantity:
         raise ValueError("原业务数量或以前累计核销数量不合理。")
+    if opening_quantity <= 0:
+        raise ValueError("期初未核销数量必须大于0。")
     expected_opening = original_quantity - prior_quantity
     if abs(expected_opening - opening_quantity) > Decimal("0.000001"):
         raise ValueError(

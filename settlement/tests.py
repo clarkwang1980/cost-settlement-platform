@@ -19,15 +19,18 @@ from settlement.models import (
     MatchAllocation,
     MatchingMode,
     Material,
+    MaterialIssue,
     OpeningGoodsIssued,
     OpeningInventoryBalance,
     OpeningPurchaseAccrual,
     OpeningWip,
-    ProductionOrder,
     PurchaseContractLine,
     PurchaseInvoiceLine,
     ReconciliationResult,
     SalesInvoiceLine,
+    WorkOrder,
+    WorkOrderCostResult,
+    WorkReport,
     WorkshopSettlement,
     WorkshopCostPool,
 )
@@ -44,7 +47,9 @@ from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
     build_purchase_difference_rows,
 )
-from settlement.services.production_costs import build_production_cost_summary
+from settlement.services.workorder_costing import (
+    build_work_order_cost_summary,
+)
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
     build_sales_uninvoiced_rows,
@@ -130,7 +135,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period, ImportBatch.Kind.SALES_INVOICE, "sales-invoice-a"
         )
         order_batch = self.create_batch(
-            period, ImportBatch.Kind.PRODUCTION_ORDER, "order-a"
+            period, ImportBatch.Kind.WORK_ORDER, "order-a"
         )
         cost_batch = self.create_batch(
             period, ImportBatch.Kind.WORKSHOP_COST, "cost-a"
@@ -181,18 +186,30 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             quantity=Decimal("4"),
             remaining_quantity=Decimal("4"),
         )
-        order = ProductionOrder.objects.create(
+        order = WorkOrder.objects.create(
             period=period,
             batch=order_batch,
             order_no="WO-A",
-            workshop="染整",
-            product_code=product.code,
-            product_name=product.name,
+            production_dept_code="染整",
             plan_quantity=Decimal("10"),
-            finished_quantity=Decimal("10"),
-            status=ProductionOrder.Status.COMPLETED,
-            standard_hours=Decimal("1"),
-            production_receipt_document="PR-A",
+        )
+        MaterialIssue.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order.order_no,
+            material_code=raw.code,
+            material_name=raw.name,
+            issue_quantity=Decimal("50"),
+            actual_issue_quantity=Decimal("50"),
+            issue_uom="kg",
+        )
+        WorkReport.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order.order_no,
+            material_code=product.code,
+            material_name=product.name,
+            quantity=Decimal("10"),
         )
         WorkshopCostPool.objects.create(
             period=period,
@@ -219,7 +236,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             inventory_batch,
             txn_date=date(2026, 6, 10),
             document_no="MI-A",
-            business_type="生产领料",
+            business_type="投料",
             direction=InventoryTransaction.Direction.OUT,
             material=raw,
             quantity=Decimal("50"),
@@ -230,8 +247,8 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period,
             inventory_batch,
             txn_date=date(2026, 6, 20),
-            document_no="PR-A",
-            business_type="生产入库",
+            document_no=order.order_no,
+            business_type="报工",
             direction=InventoryTransaction.Direction.IN,
             material=product,
             quantity=Decimal("10"),
@@ -306,7 +323,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
                 "销售匹配",
                 "月末已出库未开票",
                 "发出商品滚动",
-                "订单成本",
+                "工单成本",
                 "勾稽结果",
                 "异常清单",
             ],
@@ -824,7 +841,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period, ImportBatch.Kind.PURCHASE_CONTRACT, "contract-chain"
         )
         order_batch = self.create_batch(
-            period, ImportBatch.Kind.PRODUCTION_ORDER, "order-chain"
+            period, ImportBatch.Kind.WORK_ORDER, "order-chain"
         )
         raw = Material.objects.create(code="RAW", name="原料", uom="kg")
         semi = Material.objects.create(code="SEMI", name="半成品", uom="kg")
@@ -839,27 +856,55 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             remaining_quantity=Decimal("100"),
             unit_price_excl_tax=Decimal("10"),
         )
-        order_a = ProductionOrder.objects.create(
+        order_a = WorkOrder.objects.create(
             period=period,
             batch=order_batch,
             order_no="WO-UP",
-            workshop="上游车间",
-            product_code=semi.code,
-            finished_quantity=Decimal("10"),
+            production_dept_code="上游车间",
             plan_quantity=Decimal("10"),
-            status=ProductionOrder.Status.COMPLETED,
-            production_receipt_document="PR-SEMI",
         )
-        order_b = ProductionOrder.objects.create(
+        order_b = WorkOrder.objects.create(
             period=period,
             batch=order_batch,
             order_no="WO-DOWN",
-            workshop="下游车间",
-            product_code=final.code,
-            finished_quantity=Decimal("5"),
+            production_dept_code="下游车间",
             plan_quantity=Decimal("5"),
-            status=ProductionOrder.Status.COMPLETED,
-            production_receipt_document="PR-FINAL",
+        )
+        MaterialIssue.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order_a.order_no,
+            material_code=raw.code,
+            material_name=raw.name,
+            issue_quantity=Decimal("40"),
+            actual_issue_quantity=Decimal("40"),
+            issue_uom="kg",
+        )
+        MaterialIssue.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order_b.order_no,
+            material_code=semi.code,
+            material_name=semi.name,
+            issue_quantity=Decimal("5"),
+            actual_issue_quantity=Decimal("5"),
+            issue_uom="kg",
+        )
+        WorkReport.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order_a.order_no,
+            material_code=semi.code,
+            material_name=semi.name,
+            quantity=Decimal("10"),
+        )
+        WorkReport.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order_b.order_no,
+            material_code=final.code,
+            material_name=final.name,
+            quantity=Decimal("5"),
         )
         self.create_txn(
             period,
@@ -878,7 +923,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             inventory_batch,
             txn_date=date(2026, 7, 2),
             document_no="MI-RAW",
-            business_type="生产领料",
+            business_type="投料",
             direction=InventoryTransaction.Direction.OUT,
             material=raw,
             quantity=Decimal("40"),
@@ -888,8 +933,8 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period,
             inventory_batch,
             txn_date=date(2026, 7, 3),
-            document_no="PR-SEMI",
-            business_type="生产入库",
+            document_no=order_a.order_no,
+            business_type="报工",
             direction=InventoryTransaction.Direction.IN,
             material=semi,
             quantity=Decimal("10"),
@@ -900,7 +945,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             inventory_batch,
             txn_date=date(2026, 7, 4),
             document_no="MI-SEMI",
-            business_type="生产领料",
+            business_type="投料",
             direction=InventoryTransaction.Direction.OUT,
             material=semi,
             quantity=Decimal("5"),
@@ -910,8 +955,8 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period,
             inventory_batch,
             txn_date=date(2026, 7, 5),
-            document_no="PR-FINAL",
-            business_type="生产入库",
+            document_no=order_b.order_no,
+            business_type="报工",
             direction=InventoryTransaction.Direction.IN,
             material=final,
             quantity=Decimal("5"),
@@ -992,7 +1037,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             june, ImportBatch.Kind.PURCHASE_CONTRACT, "roll-contract"
         )
         order_batch = self.create_batch(
-            june, ImportBatch.Kind.PRODUCTION_ORDER, "roll-order"
+            june, ImportBatch.Kind.WORK_ORDER, "roll-order"
         )
         raw = Material.objects.create(
             code="ROLL-RM", name="跨期原料", uom="kg"
@@ -1023,24 +1068,29 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
         opening_txn.amount = Decimal("100")
         opening_txn.price_source = "原始金额"
         opening_txn.save(update_fields=["unit_price", "amount", "price_source"])
-        order = ProductionOrder.objects.create(
+        order = WorkOrder.objects.create(
             period=june,
             batch=order_batch,
             order_no="ROLL-WO",
-            workshop="跨期车间",
-            product_code="ROLL-FG",
-            product_name="跨期产品",
+            production_dept_code="跨期车间",
             plan_quantity=Decimal("10"),
-            finished_quantity=Decimal("0"),
-            wip_quantity=Decimal("10"),
-            status=ProductionOrder.Status.OPEN,
+        )
+        MaterialIssue.objects.create(
+            period=june,
+            batch=inventory_batch,
+            work_order_no=order.order_no,
+            material_code=raw.code,
+            material_name=raw.name,
+            issue_quantity=Decimal("4"),
+            actual_issue_quantity=Decimal("4"),
+            issue_uom="kg",
         )
         self.create_txn(
             june,
             inventory_batch,
             txn_date=date(2026, 6, 15),
             document_no="MI-ROLL",
-            business_type="生产领料",
+            business_type="投料",
             direction=InventoryTransaction.Direction.OUT,
             material=raw,
             quantity=Decimal("4"),
@@ -1053,6 +1103,13 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
         june.save(update_fields=["status", "locked_by"])
 
         july = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        # 模拟用户重传生产工单主档（含计划数量）
+        WorkOrder.objects.create(
+            period=july,
+            order_no=order.order_no,
+            production_dept_code="跨期车间",
+            plan_quantity=Decimal("10"),
+        )
         july_run = run_settlement(july, self.user)
         self.assertTrue(july_run.converged)
         opening_inventory = OpeningInventoryBalance.objects.get(
@@ -1071,12 +1128,11 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
         self.assertTrue(opening_wip.is_system_generated)
         self.assertEqual(opening_wip.source_period, june)
         self.assertEqual(opening_wip.total, Decimal("40.00"))
-        carried_order = ProductionOrder.objects.get(
-            period=july, order_no=order.order_no
+        carried_result = WorkOrderCostResult.objects.get(
+            period=july, work_order__order_no=order.order_no
         )
-        self.assertTrue(carried_order.is_system_generated)
-        self.assertEqual(carried_order.finished_quantity, Decimal("0"))
-        self.assertEqual(carried_order.cost_result.wip_cost, Decimal("40.00"))
+        self.assertEqual(carried_result.wip_cost, Decimal("40.00"))
+        self.assertEqual(carried_result.finished_cost, Decimal("0.00"))
         carried_contract = july.purchase_contracts.get(
             contract_no="ROLL-PC"
         )
@@ -1103,7 +1159,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period, ImportBatch.Kind.PURCHASE_CONTRACT, "contract-wip"
         )
         order_batch = self.create_batch(
-            period, ImportBatch.Kind.PRODUCTION_ORDER, "order-wip"
+            period, ImportBatch.Kind.WORK_ORDER, "order-wip"
         )
         cost_batch = self.create_batch(
             period, ImportBatch.Kind.WORKSHOP_COST, "cost-wip"
@@ -1120,20 +1176,30 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             remaining_quantity=Decimal("100"),
             unit_price_excl_tax=Decimal("10"),
         )
-        order = ProductionOrder.objects.create(
+        order = WorkOrder.objects.create(
             period=period,
             batch=order_batch,
             order_no="WO-WIP",
-            workshop="特纺",
-            product_code=product.code,
-            product_name=product.name,
+            production_dept_code="特纺",
             plan_quantity=Decimal("10"),
-            finished_quantity=Decimal("8"),
-            wip_quantity=Decimal("2"),
-            status=ProductionOrder.Status.OPEN,
-            standard_hours=Decimal("1"),
-            wip_conversion_rate=Decimal("0.5"),
-            production_receipt_document="PR-WIP",
+        )
+        MaterialIssue.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order.order_no,
+            material_code=raw.code,
+            material_name=raw.name,
+            issue_quantity=Decimal("50"),
+            actual_issue_quantity=Decimal("50"),
+            issue_uom="kg",
+        )
+        WorkReport.objects.create(
+            period=period,
+            batch=inventory_batch,
+            work_order_no=order.order_no,
+            material_code=product.code,
+            material_name=product.name,
+            quantity=Decimal("8"),
         )
         WorkshopCostPool.objects.create(
             period=period,
@@ -1159,7 +1225,7 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             inventory_batch,
             txn_date=date(2026, 9, 2),
             document_no="MI-WIP",
-            business_type="生产领料",
+            business_type="投料",
             direction=InventoryTransaction.Direction.OUT,
             material=raw,
             quantity=Decimal("50"),
@@ -1170,8 +1236,8 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period,
             inventory_batch,
             txn_date=date(2026, 9, 28),
-            document_no="PR-WIP",
-            business_type="生产入库",
+            document_no=order.order_no,
+            business_type="报工",
             direction=InventoryTransaction.Direction.IN,
             material=product,
             quantity=Decimal("8"),
@@ -1195,64 +1261,6 @@ class SettlementEngineTests(SettlementFixtureMixin, TestCase):
             period.reconciliations.filter(
                 status=ReconciliationResult.Status.FAIL
             ).exists()
-        )
-
-    def test_ignored_production_order_is_excluded_from_settlement(self):
-        period = AccountingPeriod.objects.create(month=date(2026, 10, 1))
-        order_batch = self.create_batch(
-            period, ImportBatch.Kind.PRODUCTION_ORDER, "ignored-order"
-        )
-        inventory_batch = self.create_batch(
-            period, ImportBatch.Kind.INVENTORY, "ignored-order-inventory"
-        )
-        product = Material.objects.create(
-            code="IGNORED-FG", name="不参与本月核算", uom="件"
-        )
-        order = ProductionOrder.objects.create(
-            period=period,
-            batch=order_batch,
-            order_no="MO-IGNORED",
-            workshop="忽略车间",
-            product_code="IGNORED-FG",
-            product_name="不参与本月核算",
-            plan_quantity=Decimal("10"),
-            finished_quantity=Decimal("10"),
-            wip_quantity=Decimal("0"),
-            status=ProductionOrder.Status.COMPLETED,
-            match_mode=MatchingMode.IGNORED,
-            ignore_reason="非成本核算订单",
-        )
-        receipt = self.create_txn(
-            period,
-            inventory_batch,
-            txn_date=date(2026, 10, 20),
-            document_no="PR-IGNORED",
-            business_type="生产入库",
-            direction=InventoryTransaction.Direction.IN,
-            material=product,
-            quantity=Decimal("10"),
-            order_no=order.order_no,
-            workshop=order.workshop,
-        )
-
-        run = run_settlement(period)
-
-        self.assertTrue(run.converged)
-        receipt.refresh_from_db()
-        self.assertEqual(
-            receipt.match_status,
-            InventoryTransaction.MatchStatus.NOT_REQUIRED,
-        )
-        self.assertFalse(receipt.allocations.exists())
-        self.assertFalse(period.order_cost_results.filter(order=order).exists())
-        self.assertFalse(
-            period.workshop_settlements.filter(workshop="忽略车间").exists()
-        )
-        self.assertFalse(
-            period.exceptions.filter(reference=order.order_no).exists()
-        )
-        self.assertFalse(
-            period.exceptions.filter(reference__contains="PR-IGNORED").exists()
         )
 
 
@@ -1302,7 +1310,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertEqual(upload_page.status_code, 200)
         self.assertContains(upload_page, "上传前必须注意")
-        self.assertContains(upload_page, "十四类资料字段说明")
+        self.assertContains(upload_page, "十五类资料字段说明")
         self.assertContains(upload_page, "“替换”会删除本月整类资料")
         self.assertContains(upload_page, "同车间费用必须先汇总")
         self.assertContains(upload_page, "销售订单号、客户和产品一致")
@@ -1360,7 +1368,6 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             (ImportBatch.Kind.PURCHASE_CONTRACT, "采购合同.csv"),
             (ImportBatch.Kind.PURCHASE_INVOICE, "采购发票.csv"),
             (ImportBatch.Kind.SALES_INVOICE, "销售发票.csv"),
-            (ImportBatch.Kind.PRODUCTION_ORDER, "生产订单.csv"),
             (ImportBatch.Kind.WORKSHOP_COST, "车间费用.csv"),
             (ImportBatch.Kind.OPENING_WIP, "期初在产品.csv"),
             (ImportBatch.Kind.OPENING_INVENTORY, "期初存货.csv"),
@@ -1378,14 +1385,26 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             (ImportBatch.Kind.WORK_REPORT, "报工记录.csv"),
         ]
         # 库存流水用含自动匹配列的完整格式，保证采购/生产/销售全链路数字成立；
-        # 页面上发布的模板（创建时间/物料编号/操作数量…）由
-        # test_inventory_template_new_format_imports_with_inferred_direction 单独覆盖。
+        # 生产环节使用新口径：投料出库 + 报工入库（单据号=工单编号）。
         inventory_csv = (
             "业务日期,单据号,行号,业务类型,方向,仓库,物料编码,物料名称,规格型号,数量,单位,工单号,车间,供应商编码,供应商名称,客户编码,客户名称,合同号,发票号,不含税单价,金额,备注\n"
             "2026-06-05,GR-001,1,采购入库,入库,原料仓,RM-001,示例原料,,100,kg,,,SUP-001,示例供应商,,,PC-001,,,,示例行\n"
-            "2026-06-10,MI-001,1,生产领料,出库,原料仓,RM-001,示例原料,,50,kg,WO-001,染整,,,,,,,,,\n"
-            "2026-06-20,PR-001,1,生产入库,入库,成品仓,FG-001,示例产品,,10,kg,WO-001,染整,,,,,,,,,\n"
+            "2026-06-10,MI-001,1,投料,出库,原料仓,RM-001,示例原料,,50,kg,WO-001,染整,,,,,,,,,\n"
+            "2026-06-20,WO-001,1,报工,入库,成品仓,FG-001,示例产品,,10,kg,WO-001,染整,,,,,,,,,\n"
             "2026-06-24,SO-001,1,销售出库,出库,成品仓,FG-001,示例产品,,4,kg,SO-001,,,,CUS-001,示例客户,,,,,\n"
+        ).encode("utf-8-sig")
+        # 三个生产台账模板按新口径提供与库存流水一致的工单数据（WO-001）
+        work_order_csv = (
+            "工单编号,工单类型,标识码,计划数量,计划开始时间,计划完工时间,优先级,产线设备,班次,生产部门编号,生产主管编号,计划部门编号,计划员编号,备注,指定用料,外部单据编号,状态,是否使用物料清单,是否使用工艺路线,工序计划类型,启用SOP,生产模式,产线编号,订单号,物料颜色\n"
+            "WO-001,普通工单,WO-001,10,,,,,,染整,,,,,,,,,,,,,,,\n"
+        ).encode("utf-8-sig")
+        material_issue_csv = (
+            "生产任务编号,工序编号,工序名称,物料编码,物料名称,物料分类,物料属性,物料规格,投料数量,已回撤数量,实际投料数量,投料单位,辅助单位数量,辅助单位,标识码,批次号,质量状态,投料仓位,被替代物料编号,被替代物料名称,投料时间,投料人员,执行人员,工单编号,主产出物料编号,主产出物料名称,销售订单编号,投料记录编号\n"
+            "TASK-001,OP10,投料,RM-001,示例原料,,,,50,0,50,kg,,,,,,,,,2026-06-10 09:00,,,WO-001,FG-001,示例产品,,\n"
+        ).encode("utf-8-sig")
+        work_report_csv = (
+            "报工时间,生产任务编号,工序编号,工序名称,报工物料编号,报工物料名称,生产人员,质量状态,不良原因,报工数量,报工单位,辅助数量,辅助单位,批次号,标识码,流转卡编号,工时,工时单位,备注,部门,设备,工单编号,工单物料编号,工单物料名称,订单编号,特纺/包覆-纸管颜色,纺纱-班别,染色纤维-含水率,染色纤维-批号流水,织布-序号,织布-机台,产出仓位,工单部门\n"
+            "2026-06-20 16:00,TASK-001,OP10,报工,FG-001,示例产品,,,,10,kg,,,,,,,,,,,WO-001,RM-001,示例原料,,,,,,,,\n"
         ).encode("utf-8-sig")
         template_dir = Path(settings.BASE_DIR) / "sample_templates"
         with TemporaryDirectory() as media_root:
@@ -1393,6 +1412,12 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 for kind, filename in template_map:
                     if kind == ImportBatch.Kind.INVENTORY:
                         content = inventory_csv
+                    elif kind == ImportBatch.Kind.WORK_ORDER:
+                        content = work_order_csv
+                    elif kind == ImportBatch.Kind.MATERIAL_ISSUE:
+                        content = material_issue_csv
+                    elif kind == ImportBatch.Kind.WORK_REPORT:
+                        content = work_report_csv
                     else:
                         content = (template_dir / filename).read_bytes()
                     uploaded = SimpleUploadedFile(filename, content, "text/csv")
@@ -1407,11 +1432,11 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 run = run_settlement(self.period)
 
         self.assertTrue(run.converged)
-        self.assertEqual(self.period.import_batches.count(), 14)
+        self.assertEqual(self.period.import_batches.count(), 13)
         self.assertEqual(self.period.inventory_transactions.count(), 4)
-        self.assertEqual(self.period.production_orders.count(), 1)
-        self.assertEqual(self.period.order_cost_results.count(), 1)
-        result = self.period.order_cost_results.get()
+        self.assertEqual(self.period.work_orders.count(), 1)
+        self.assertEqual(self.period.work_order_cost_results.count(), 1)
+        result = self.period.work_order_cost_results.get()
         self.assertEqual(result.finished_cost, Decimal("650.00"))
         self.assertEqual(result.wip_cost, Decimal("0.00"))
         # 期末存货以用户上传报表为准：本测试上传了期末模板(OP-RM 100kg/1000元)
@@ -1443,7 +1468,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             valuation.issue_amount + valuation.ending_amount,
             "勾稽期末应使用上传的期末金额而非系统计算值",
         )
-        summary = build_production_cost_summary(self.period)
+        summary = build_work_order_cost_summary(self.period)
         self.assertEqual(summary["totals"]["current_material"], Decimal("500.00"))
         self.assertEqual(summary["totals"]["current_expenses"], Decimal("150.00"))
         self.assertEqual(summary["totals"]["current_input"], Decimal("650.00"))
@@ -1470,7 +1495,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             ),
             {"workshop": "染整"},
         )
-        self.assertContains(workshop_page, "染整订单成本明细")
+        self.assertContains(workshop_page, "染整工单成本明细")
         self.assertContains(workshop_page, "WO-001")
 
     def test_work_order_issue_report_templates_import_into_ledgers(self):
@@ -1702,7 +1727,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         order_batch = self.create_batch(
             self.period,
-            ImportBatch.Kind.PRODUCTION_ORDER,
+            ImportBatch.Kind.WORK_ORDER,
             "workbench-order",
         )
         raw = Material.objects.create(code="WB-RM", name="工作台原料", uom="kg")
@@ -1773,17 +1798,12 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             amount_excl_tax=Decimal("100"),
             remaining_quantity=Decimal("5"),
         )
-        order = ProductionOrder.objects.create(
+        order = WorkOrder.objects.create(
             period=self.period,
             batch=order_batch,
             order_no="MO-WB",
-            workshop="测试车间",
-            product_code=product.code,
-            product_name=product.name,
+            production_dept_code="测试车间",
             plan_quantity=Decimal("5"),
-            finished_quantity=Decimal("5"),
-            wip_quantity=Decimal("0"),
-            status=ProductionOrder.Status.COMPLETED,
         )
         auto_match_all(self.period)
 
@@ -1799,10 +1819,9 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertContains(sales_page, "SI-WB")
         self.assertContains(sales_page, "SO-WB")
         order_page = self.client.get(
-            reverse("order_matches", kwargs={"period_id": self.period.id})
+            reverse("work_order_matches", kwargs={"period_id": self.period.id})
         )
         self.assertContains(order_page, "MO-WB")
-        self.assertContains(order_page, "ISS-WB")
         inventory_page = self.client.get(
             reverse("inventory_matches", kwargs={"period_id": self.period.id}),
             {"document_no": "GR-WB"},
@@ -1882,8 +1901,6 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             InventoryTransaction.MatchStatus.NOT_REQUIRED,
         )
         self.assertFalse(sales_issue.allocations.exists())
-        self.assertEqual(order.match_mode, MatchingMode.AUTO)
-        self.assertEqual(material_issue.match_mode, MatchingMode.AUTO)
         self.assertEqual(sales_invoice.match_mode, MatchingMode.AUTO)
 
     def test_xlsx_inventory_upload(self):

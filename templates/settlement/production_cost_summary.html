@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}本月生产成本与费用 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -9,7 +10,7 @@
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'workshop_settlements' period.id %}">进入车间结转</a>
-    <a class="button secondary" href="{% url 'order_costs' period.id %}">查看订单成本</a>
+    <a class="button secondary" href="{% url 'work_order_costs' period.id %}">查看工单成本</a>
   </div>
 </section>
 
@@ -19,7 +20,7 @@
       <select name="workshop">
         <option value="">全部车间</option>
         {% for workshop in workshop_choices %}
-          <option value="{{ workshop }}" {% if selected_workshop == workshop %}selected{% endif %}>{{ workshop }}</option>
+          <option value="{{ workshop }}" {% if selected_workshop == workshop %}selected{% endif %}>{{ workshop|workshop_label }}</option>
         {% endfor %}
       </select>
     </label>
@@ -37,8 +38,8 @@
 {% endif %}
 
 <section class="summary-strip six">
-  <article><span>查看范围</span><strong class="small-value">{{ scope_label }}</strong></article>
-  <article><span>生产订单</span><strong>{{ totals.order_count }}</strong></article>
+  <article><span>查看范围</span><strong class="small-value">{{ scope_label|workshop_label }}</strong></article>
+  <article><span>生产工单</span><strong>{{ totals.order_count }}</strong></article>
   <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2 }}</strong></article>
   <article><span>本期材料</span><strong>¥{{ totals.current_material|floatformat:2 }}</strong></article>
   <article><span>本期费用</span><strong>¥{{ totals.current_expenses|floatformat:2 }}</strong></article>
@@ -94,7 +95,7 @@
       <tbody>
         {% for row in rows %}
         <tr>
-          <td><a class="document-link" href="?workshop={{ row.workshop|urlencode }}"><strong>{{ row.workshop }}</strong></a><small>完工数量 {{ row.finished_quantity|floatformat:2 }} / 在制数量 {{ row.wip_quantity|floatformat:2 }}</small></td>
+          <td><a class="document-link" href="?workshop={{ row.workshop|urlencode }}"><strong>{{ row.workshop|workshop_label }}</strong></a><small>完工数量 {{ row.finished_quantity|floatformat:2 }} / 在制数量 {{ row.wip_quantity|floatformat:2 }}</small></td>
           <td>{% if row.is_calculated %}<span class="pill success">{{ row.status_label }}</span>{% else %}<span class="pill warning">{{ row.status_label }}</span>{% endif %}</td>
           <td class="num">{{ row.order_count }}</td>
           <td class="num">{{ row.opening_wip|floatformat:2 }}</td>
@@ -105,7 +106,7 @@
           <td class="num">{% if row.is_calculated %}{{ row.ending_wip|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
           <td class="num">{% if row.is_calculated %}<strong class="{% if row.difference %}difference-text{% endif %}">{{ row.difference|floatformat:2 }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
-        {% empty %}<tr><td colspan="10" class="empty-cell">本期间尚无车间费用或生产订单。</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="10" class="empty-cell">本期间尚无车间费用或生产工单。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -113,7 +114,7 @@
 
 <section class="section-card">
   <div class="section-heading">
-    <div><p class="eyebrow">EXPENSE BREAKDOWN</p><h2>{{ scope_label }}本期费用构成</h2></div>
+    <div><p class="eyebrow">EXPENSE BREAKDOWN</p><h2>{{ scope_label|workshop_label }}本期费用构成</h2></div>
     <strong>合计 ¥{{ totals.current_expenses|floatformat:2 }}</strong>
   </div>
   <div class="expense-breakdown">
@@ -126,13 +127,13 @@
 {% if selected_workshop %}
 <section class="section-card">
   <div class="section-heading">
-    <div><p class="eyebrow">ORDER DETAIL</p><h2>{{ selected_workshop }}订单成本明细</h2></div>
+    <div><p class="eyebrow">ORDER DETAIL</p><h2>{{ selected_workshop|workshop_label }}工单成本明细</h2></div>
     <small class="muted-text">本期分配费用仅在该车间完成结转后显示</small>
   </div>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>生产订单</th><th>产品</th><th>状态</th>
+        <th>生产工单</th><th>产品</th><th>状态</th>
         <th class="num">完工数量</th><th class="num">在制数量</th>
         <th class="num">期初在制</th><th class="num">本期材料</th><th class="num">本期分配费用</th>
         <th class="num">订单总成本</th><th class="num">完工成本</th><th class="num">期末在制</th>
@@ -143,8 +144,8 @@
           <td><strong>{{ item.order.order_no }}</strong></td>
           <td><strong>{{ item.order.product_code }}</strong><small>{{ item.order.product_name }}</small></td>
           <td>{{ item.order.get_status_display }}</td>
-          <td class="num">{{ item.order.finished_quantity|floatformat:2 }}</td>
-          <td class="num">{{ item.order.wip_quantity|floatformat:2 }}</td>
+          <td class="num">{{ item.result.finished_quantity|floatformat:2 }}</td>
+          <td class="num">{{ item.result.wip_quantity|floatformat:2 }}</td>
           <td class="num">{{ item.opening_wip|floatformat:2 }}</td>
           <td class="num">{{ item.current_material|floatformat:2 }}</td>
           <td class="num">{% if item.is_calculated %}{{ item.current_allocated_fees|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
@@ -152,7 +153,7 @@
           <td class="num">{% if item.is_calculated %}{{ item.finished_cost|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
           <td class="num">{% if item.is_calculated %}{{ item.ending_wip|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
-        {% empty %}<tr><td colspan="11" class="empty-cell">该车间尚无生产订单。</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="11" class="empty-cell">该车间尚无生产工单。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

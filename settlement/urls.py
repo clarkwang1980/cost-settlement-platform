@@ -80,9 +80,9 @@ urlpatterns = [
         name="sales_uninvoiced",
     ),
     path(
-        "periods/<int:period_id>/order-matches/",
-        views.order_matches,
-        name="order_matches",
+        "periods/<int:period_id>/work-order-matches/",
+        views.work_order_matches,
+        name="work_order_matches",
     ),
     path(
         "periods/<int:period_id>/work-orders/",
@@ -146,9 +146,9 @@ urlpatterns = [
         name="inventory_results",
     ),
     path(
-        "periods/<int:period_id>/orders/",
-        views.order_costs,
-        name="order_costs",
+        "periods/<int:period_id>/work-order-costs/",
+        views.work_order_costs,
+        name="work_order_costs",
     ),
     path(
         "periods/<int:period_id>/production-costs/",

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}资料导入 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -21,7 +21,7 @@
   </section>
   <aside class="section-card guidance">
     <p class="eyebrow">UPLOAD CHECKLIST</p>
-    <h2>下载十四类导入模板</h2>
+    <h2>下载十五类导入模板</h2>
     <div class="template-links">
       {% for kind, label in template_kinds %}
         <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
@@ -51,11 +51,11 @@
   <div class="upload-alert-grid">
     <article>
       <strong>分部门、分车间可以追加上传</strong>
-      <p>不同车间的生产订单和费用可以放在不同文件中，依次上传即可。追加上传时不要勾选“替换”。系统按每行的“车间”字段归集，不按文件名归集。</p>
+      <p>不同车间的生产工单和费用可以放在不同文件中，依次上传即可。追加上传时不要勾选“替换”。系统按每行的“车间”字段归集，不按文件名归集。</p>
     </article>
     <article class="warning-card">
       <strong>“替换”会删除本月整类资料</strong>
-      <p>替换不是只替换当前文件或当前车间。例如替换“生产订单”，会删除本月已经上传的全部生产订单文件。只有上传完整汇总替代文件时才使用。</p>
+      <p>替换不是只替换当前文件或当前车间。例如替换“生产工单”，会删除本月已经上传的全部生产工单文件。只有上传完整汇总替代文件时才使用。</p>
     </article>
     <article>
       <strong>同车间费用必须先汇总</strong>
@@ -70,7 +70,7 @@
     <p><strong>文件格式：</strong>支持 CSV、XLSX、XLSM；表头可出现在前10行，系统支持模板中的常见中文别名。</p>
     <p><strong>日期格式：</strong>建议使用 <span class="field-chip">2026-07-31</span>；月份建议使用 <span class="field-chip">2026-07</span>。</p>
     <p><strong>编码原则：</strong>工单号、单据号、物料编码应保持唯一且前后一致；供应商、客户建议同时提供编码和名称。</p>
-    <p><strong>重复规则：</strong>完全相同的文件不能重复上传；相同生产订单号再次上传会以最后一次数据为准。</p>
+    <p><strong>重复规则：</strong>完全相同的文件不能重复上传；相同生产工单号再次上传会以最后一次数据为准。</p>
   </div>
 </section>
 
@@ -78,7 +78,7 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">FIELD REQUIREMENTS</p>
-      <h2>十四类资料字段说明</h2>
+      <h2>十五类资料字段说明</h2>
     </div>
     <div class="field-legend">
       <span class="field-chip required">最低必填</span>
@@ -95,7 +95,7 @@
         <p><span class="field-chip required">创建时间</span><span class="field-chip required">物料编号</span><span class="field-chip required">操作数量</span><span class="field-chip required">业务类型</span></p>
         <h3>按模板格式填写</h3>
         <p><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批号</span><span class="field-chip recommended">主单位</span><span class="field-chip recommended">辅助数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">业务单据编号</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">单价</span><span class="field-chip recommended">金额</span></p>
-        <p class="guide-note">出入库方向按业务类型自动判断（采购入库、生产入库为入库；生产领料、销售出库、发货为出库）。需要自动匹配合同、发票、生产订单时，可在模板后追加可选列：供应商编码、合同号、工单号、车间、销售订单号、客户编码、客户名称、发票号、方向。创建时间支持日期或“日期 时分秒”。</p>
+        <p class="guide-note">出入库方向按业务类型自动判断（采购入库、生产入库为入库；生产领料、销售出库、发货为出库）。需要自动匹配合同、发票、生产工单时，可在模板后追加可选列：供应商编码、合同号、工单号、车间、销售订单号、客户编码、客户名称、发票号、方向。创建时间支持日期或“日期 时分秒”。</p>
       </div>
     </details>
 
@@ -133,10 +133,10 @@
     </details>
 
     <details>
-      <summary><span>生产订单</span><small>可按车间分文件追加</small></summary>
+      <summary><span>生产工单</span><small>可按车间分文件追加</small></summary>
       <div class="guide-body">
         <h3>最低必填</h3>
-        <p><span class="field-chip required">生产订单号</span><span class="field-chip required">车间</span><span class="field-chip required">产品编码</span><span class="field-chip required">完工数量</span></p>
+        <p><span class="field-chip required">生产工单号</span><span class="field-chip required">车间</span><span class="field-chip required">产品编码</span><span class="field-chip required">完工数量</span></p>
         <h3>成本计算建议</h3>
         <p><span class="field-chip recommended">计划数量</span><span class="field-chip recommended">在产品数量</span><span class="field-chip recommended">订单状态</span><span class="field-chip recommended">标准工时</span><span class="field-chip recommended">生产入库单号</span></p>
         <p class="guide-note">不同车间可以分别上传且不要勾选替换。同一订单号再次上传会覆盖原订单；订单中的车间必须与费用和库存流水使用完全一致的名称。</p>
@@ -149,7 +149,7 @@
         <h3>最低必填</h3>
         <p><span class="field-chip required">车间</span></p>
         <h3>按实际发生填写</h3>
-        <p><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">工资</span></p>
+        <p><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">染料助剂</span><span class="field-chip recommended">工资</span></p>
         <p class="guide-note">未填写的费用项目按0处理。同一车间的多份费用必须先汇总为一行；不同车间可以分别上传，追加时不要勾选替换。</p>
       </div>
     </details>
@@ -177,13 +177,13 @@
     </details>
 
     <details>
-      <summary><span>期初在产品</span><small>按生产订单承接</small></summary>
+      <summary><span>期初在产品</span><small>按生产工单承接</small></summary>
       <div class="guide-body">
         <h3>最低必填</h3>
-        <p><span class="field-chip required">生产订单号</span></p>
+        <p><span class="field-chip required">生产工单号</span></p>
         <h3>有余额时填写</h3>
-        <p><span class="field-chip recommended">材料成本</span><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">工资</span></p>
-        <p class="guide-note">订单号必须能与本期生产订单对应。后续月份通常由上期锁账结果自动承接，人工上传同工单数据时会覆盖自动承接数。</p>
+        <p><span class="field-chip recommended">材料成本</span><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">染料助剂</span><span class="field-chip recommended">工资</span></p>
+        <p class="guide-note">订单号必须能与本期生产工单对应。后续月份通常由上期锁账结果自动承接，人工上传同工单数据时会覆盖自动承接数。</p>
       </div>
     </details>
 

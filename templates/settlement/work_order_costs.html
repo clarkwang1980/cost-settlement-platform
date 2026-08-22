@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}工单成本 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">WORK ORDER COSTING</p><h1>工单完工与在制成本</h1><p>直接材料＝投料记录×月末加权价；制造费用按材料占比、工资按折合数量分配；完工数量＝报工数量。</p></div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_cost' %}?{{ request.GET.urlencode }}">导出Excel</a>
+  </div>
+</section>
+<section class="summary-strip">
+  <article><span>工单总成本</span><strong>¥{{ totals.total|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>完工成本</span><strong>¥{{ totals.finished|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>在产品</span><strong>¥{{ totals.wip|floatformat:2|default:"0.00" }}</strong></article>
+  <article><span>直接材料</span><strong>¥{{ totals.material|floatformat:2|default:"0.00" }}</strong></article>
+</section>
+<section class="section-card filter-card">
+  <form method="get" class="production-cost-filter">
+    <label>工单编号
+      <input type="text" name="order_no" value="{{ request.GET.order_no }}" placeholder="模糊查询"></label>
+    <label>车间
+      <input type="text" name="workshop" value="{{ request.GET.workshop }}" placeholder="如 tefang / JiZhi"></label>
+    <label>产品编码
+      <input type="text" name="product" value="{{ request.GET.product }}" placeholder="模糊查询"></label>
+      <input type="text" name="product" value="{{ request.GET.product }}" placeholder="模糊查询"></label>
+    <div class="filter-actions">
+      <button class="button primary" type="submit">查询</button>
+      <a class="button secondary" href="{% url 'work_order_costs' period.id %}">重置</a>
+    </div>
+  </form>
+</section>
+<section class="section-card">
+  <div class="table-wrap"><table><thead><tr><th>工单</th><th>车间</th><th>产品</th><th class="num">计划数量</th><th class="num">报工数量</th><th class="num">在产品</th><th class="num">材料</th><th class="num">水电</th><th class="num">蒸汽</th><th class="num">天然气</th><th class="num">折旧</th><th class="num">机物料</th><th class="num">染料助剂</th><th class="num">工资</th><th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">在产品成本</th></tr></thead>
+  <tbody>{% for item in page %}<tr><td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small></td><td>{{ item.work_order.production_dept_code|workshop_label }}</td><td><strong>{{ item.product_code }}</strong><small>{{ item.product_name }}</small></td><td class="num">{{ item.plan_quantity|floatformat:2 }}</td><td class="num">{{ item.finished_quantity|floatformat:2 }}</td><td class="num">{{ item.wip_quantity|floatformat:2 }}</td><td class="num">{{ item.direct_material|floatformat:2 }}</td><td class="num">{{ item.water_power|floatformat:2 }}</td><td class="num">{{ item.steam|floatformat:2 }}</td><td class="num">{{ item.natural_gas|floatformat:2 }}</td><td class="num">{{ item.depreciation|floatformat:2 }}</td><td class="num">{{ item.consumables|floatformat:2 }}</td><td class="num">{{ item.dye_auxiliary|floatformat:2 }}</td><td class="num">{{ item.wages|floatformat:2 }}</td><td class="num"><strong>{{ item.total_cost|floatformat:2 }}</strong></td><td class="num">{{ item.finished_cost|floatformat:2 }}</td><td class="num">{{ item.finished_unit_cost|floatformat:6 }}</td><td class="num">{{ item.wip_cost|floatformat:2 }}</td></tr>{% empty %}<tr><td colspan="18" class="empty-cell">尚未生成工单成本，请先上传生产工单/投料/报工并执行结算。</td></tr>{% endfor %}</tbody></table></div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

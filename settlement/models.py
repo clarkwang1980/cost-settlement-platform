@@ -50,7 +50,6 @@ class ImportBatch(models.Model):
         PURCHASE_CONTRACT = "purchase_contract", "采购合同"
         PURCHASE_INVOICE = "purchase_invoice", "采购发票"
         SALES_INVOICE = "sales_invoice", "销售发票"
-        PRODUCTION_ORDER = "production_order", "生产订单"
         WORKSHOP_COST = "workshop_cost", "车间费用"
         OPENING_WIP = "opening_wip", "期初在产品"
         OPENING_PURCHASE_ACCRUAL = (
@@ -80,6 +79,10 @@ class ImportBatch(models.Model):
         WORK_REPORT = (
             "work_report",
             "报工记录",
+        )
+        PULP_RECEIPT = (
+            "pulp_receipt",
+            "浆粕成品入库",
         )
 
     class Status(models.TextChoices):
@@ -263,6 +266,7 @@ class PurchaseInvoiceLine(models.Model):
     supplier_name = models.CharField(max_length=255, blank=True)
     material_code = models.CharField(max_length=80, db_index=True)
     material_name = models.CharField(max_length=255, blank=True)
+    uom = models.CharField(max_length=50, blank=True)
     quantity = models.DecimalField(max_digits=20, decimal_places=6)
     unit_price_excl_tax = models.DecimalField(max_digits=20, decimal_places=8)
     amount_excl_tax = models.DecimalField(max_digits=20, decimal_places=2)
@@ -312,66 +316,6 @@ class SalesInvoiceLine(models.Model):
         ordering = ["invoice_date", "invoice_no", "id"]
 
 
-class ProductionOrder(models.Model):
-    class Status(models.TextChoices):
-        OPEN = "open", "未完工"
-        COMPLETED = "completed", "完工"
-
-    period = models.ForeignKey(
-        AccountingPeriod, on_delete=models.CASCADE, related_name="production_orders"
-    )
-    batch = models.ForeignKey(
-        ImportBatch,
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        related_name="production_orders",
-    )
-    carried_from = models.ForeignKey(
-        "self",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="carried_orders",
-    )
-    is_system_generated = models.BooleanField(default=False)
-    order_no = models.CharField(max_length=100, db_index=True)
-    workshop = models.CharField(max_length=100, db_index=True)
-    product_code = models.CharField(max_length=80, db_index=True)
-    product_name = models.CharField(max_length=255, blank=True)
-    plan_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
-    finished_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
-    wip_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
-    standard_hours = models.DecimalField(
-        max_digits=20, decimal_places=6, default=Decimal("1")
-    )
-    material_completion_rate = models.DecimalField(
-        max_digits=8, decimal_places=6, null=True, blank=True
-    )
-    wip_conversion_rate = models.DecimalField(
-        max_digits=8, decimal_places=6, default=Decimal("0.5")
-    )
-    production_receipt_document = models.CharField(max_length=100, blank=True)
-    match_mode = models.CharField(
-        max_length=20,
-        choices=MatchingMode.choices,
-        default=MatchingMode.AUTO,
-    )
-    ignore_reason = models.CharField(max_length=500, blank=True)
-
-    class Meta:
-        ordering = ["workshop", "order_no"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["period", "order_no"], name="unique_order_per_period"
-            )
-        ]
-
-    def __str__(self):
-        return f"{self.order_no} {self.product_code}"
-
-
 class WorkOrder(models.Model):
     """生产工单主档（ERP 导入台账）。
 
@@ -391,6 +335,9 @@ class WorkOrder(models.Model):
     order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
     order_type = models.CharField(max_length=100, blank=True, verbose_name="工单类型")
     identifier = models.CharField(max_length=200, blank=True, verbose_name="标识码")
+    plan_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="计划数量"
+    )
     planned_start = models.DateTimeField(null=True, blank=True, verbose_name="计划开始时间")
     planned_finish = models.DateTimeField(null=True, blank=True, verbose_name="计划完工时间")
     priority = models.CharField(max_length=50, blank=True, verbose_name="优先级")
@@ -604,6 +551,9 @@ class WorkshopCostPool(models.Model):
     natural_gas = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     depreciation = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     consumables = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    dye_auxiliary = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
+    )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
 
     class Meta:
@@ -685,6 +635,9 @@ class OpeningWip(models.Model):
     natural_gas = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     depreciation = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     consumables = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    dye_auxiliary = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
+    )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
 
     class Meta:
@@ -703,6 +656,7 @@ class OpeningWip(models.Model):
             + self.natural_gas
             + self.depreciation
             + self.consumables
+            + self.dye_auxiliary
             + self.wages
         )
 
@@ -946,8 +900,6 @@ class MatchAllocation(models.Model):
         PURCHASE_CONTRACT = "purchase_contract", "采购入库-合同"
         PURCHASE_INVOICE = "purchase_invoice", "采购入库-发票"
         SALES_INVOICE = "sales_invoice", "销售出库-发票"
-        ORDER_MATERIAL = "order_material", "生产领退料-订单"
-        PRODUCTION_RECEIPT = "production_receipt", "生产入库-订单"
 
     period = models.ForeignKey(
         AccountingPeriod, on_delete=models.CASCADE, related_name="match_allocations"
@@ -982,9 +934,6 @@ class MatchAllocation(models.Model):
     )
     sales_invoice_line = models.ForeignKey(
         SalesInvoiceLine, null=True, blank=True, on_delete=models.CASCADE
-    )
-    production_order = models.ForeignKey(
-        ProductionOrder, null=True, blank=True, on_delete=models.CASCADE
     )
     matched_quantity = models.DecimalField(max_digits=20, decimal_places=6)
     unit_price = models.DecimalField(
@@ -1052,19 +1001,31 @@ class InventoryValuation(models.Model):
         ]
 
 
-class OrderCostResult(models.Model):
+class WorkOrderCostResult(models.Model):
+    """工单成本结果（按生产工单+投料记录+报工记录核算）。"""
+
     period = models.ForeignKey(
-        AccountingPeriod, on_delete=models.CASCADE, related_name="order_cost_results"
+        AccountingPeriod,
+        on_delete=models.CASCADE,
+        related_name="work_order_cost_results",
     )
-    order = models.OneToOneField(
-        ProductionOrder, on_delete=models.CASCADE, related_name="cost_result"
+    work_order = models.OneToOneField(
+        WorkOrder, on_delete=models.CASCADE, related_name="cost_result"
     )
+    product_code = models.CharField(max_length=80, blank=True, verbose_name="产品编码")
+    product_name = models.CharField(max_length=255, blank=True, verbose_name="产品名称")
+    plan_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    finished_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    wip_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
     direct_material = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     water_power = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     steam = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     natural_gas = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     depreciation = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     consumables = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    dye_auxiliary = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
+    )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     total_cost = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     finished_material = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
@@ -1080,7 +1041,12 @@ class OrderCostResult(models.Model):
     )
 
     class Meta:
-        ordering = ["order__workshop", "order__order_no"]
+        ordering = ["work_order__production_dept_code", "work_order__order_no"]
+        verbose_name = "工单成本"
+        verbose_name_plural = "工单成本"
+
+    def __str__(self):
+        return self.work_order.order_no
 
 
 class ReconciliationResult(models.Model):

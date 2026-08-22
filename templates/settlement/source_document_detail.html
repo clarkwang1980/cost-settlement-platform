@@ -23,12 +23,6 @@
     <article><span>产品</span><strong class="small-value">{{ source.material_code }}</strong></article>
     <article><span>数量</span><strong>{{ source.quantity|floatformat:3 }}</strong></article>
     <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3 }}</strong></article>
-  {% else %}
-    <article><span>生产订单</span><strong class="small-value">{{ source.order_no }}</strong></article>
-    <article><span>车间/部门</span><strong class="small-value">{{ source.workshop }}</strong></article>
-    <article><span>产品</span><strong class="small-value">{{ source.product_code }}</strong></article>
-    <article><span>完工数量</span><strong>{{ source.finished_quantity|floatformat:3 }}</strong></article>
-    <article><span>在产品数量</span><strong>{{ source.wip_quantity|floatformat:3 }}</strong></article>
   {% endif %}
 </section>
 

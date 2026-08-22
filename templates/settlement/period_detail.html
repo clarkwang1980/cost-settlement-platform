@@ -49,7 +49,7 @@
   <a class="workflow-step {% if counts.sales_invoices %}done{% endif %}" href="{% url 'sales_matches' period.id %}">
     <span>03</span><strong>销售匹配</strong><small>{{ counts.sales_invoices }}条发票</small>
   </a>
-  <a class="workflow-step {% if counts.orders %}done{% endif %}" href="{% url 'order_matches' period.id %}">
+  <a class="workflow-step {% if counts.orders %}done{% endif %}" href="{% url 'work_order_matches' period.id %}">
     <span>04</span><strong>订单匹配</strong><small>{{ counts.orders }}张工单</small>
   </a>
   <a class="workflow-step {% if counts.workshops and counts.workshops == counts.settled_workshops %}done{% endif %}" href="{% url 'workshop_settlements' period.id %}">
@@ -65,7 +65,7 @@
 
 <section class="summary-strip">
   <article><span>库存流水</span><strong>{{ counts.inventory }}</strong></article>
-  <article><span>生产订单</span><strong>{{ counts.orders }}</strong></article>
+  <article><span>生产工单</span><strong>{{ counts.orders }}</strong></article>
   <article><span>期末存货</span><strong>{{ counts.ending_inventory }}</strong></article>
   <article><span>车间结转</span><strong>{{ counts.settled_workshops }}/{{ counts.workshops }}</strong></article>
   <article><span>阻断异常</span><strong class="{% if counts.blocking %}danger-text{% endif %}">{{ counts.blocking }}</strong></article>

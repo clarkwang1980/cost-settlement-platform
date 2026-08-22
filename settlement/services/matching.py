@@ -12,7 +12,6 @@ from settlement.models import (
     MatchingMode,
     OpeningGoodsIssued,
     OpeningPurchaseAccrual,
-    ProductionOrder,
     PurchaseContractLine,
     PurchaseInvoiceLine,
     SalesInvoiceLine,
@@ -27,11 +26,21 @@ def _norm(value: str) -> str:
 
 
 def _same_party(code_a, name_a, code_b, name_b) -> bool:
+    """供应商匹配：编码相等，或名称归一化后相等/互相包含（简称对全称）。
+
+    任一方完全没有供应商信息时返回 False，避免无供应商的流水/发票被盲目匹配。
+    """
     if code_a and code_b:
         return _norm(code_a) == _norm(code_b)
     if name_a and name_b:
-        return _norm(name_a) == _norm(name_b)
-    return True
+        name_a_norm = _norm(name_a)
+        name_b_norm = _norm(name_b)
+        return (
+            name_a_norm == name_b_norm
+            or name_a_norm in name_b_norm
+            or name_b_norm in name_a_norm
+        )
+    return False
 
 
 def _same_party_strict(code_a, name_a, code_b, name_b) -> bool:
@@ -43,9 +52,10 @@ def _same_party_strict(code_a, name_a, code_b, name_b) -> bool:
 
 
 def is_production_receipt(txn: InventoryTransaction) -> bool:
-    kind = _norm(txn.business_type)
-    return txn.direction == InventoryTransaction.Direction.IN and any(
-        token in kind for token in ("生产入库", "完工入库", "产成品入库", "半成品入库")
+    """完工入库（报工入库）：业务类型为"报工"的入库。"""
+    return (
+        txn.direction == InventoryTransaction.Direction.IN
+        and (txn.business_type or "").strip() == "报工"
     )
 
 
@@ -64,15 +74,6 @@ def is_sales_issue(txn: InventoryTransaction) -> bool:
         return False
     return any(token in kind for token in ("销售", "发货", "样品")) or bool(
         txn.customer_code or txn.customer_name
-    )
-
-
-def is_order_material(txn: InventoryTransaction) -> bool:
-    kind = _norm(txn.business_type)
-    if is_production_receipt(txn):
-        return False
-    return any(token in kind for token in ("领料", "退料", "生产出库", "材料出库")) or (
-        bool(txn.order_no) and not is_sales_issue(txn)
     )
 
 
@@ -160,23 +161,60 @@ def _candidate_contracts(period, txn):
             material_code=txn.material_code, remaining_quantity__gt=0
         )
     )
-    contracts = [
-        item
-        for item in contracts
-        if _same_party(
-            txn.supplier_code,
-            txn.supplier_name,
-            item.supplier_code,
-            item.supplier_name,
-        )
-    ]
-    contracts.sort(
-        key=lambda item: (
-            0 if txn.contract_no and item.contract_no == txn.contract_no else 1,
-            item.contract_date or period.month,
-            item.id,
-        )
+    if txn.supplier_code or txn.supplier_name:
+        contracts = [
+            item
+            for item in contracts
+            if _same_party(
+                txn.supplier_code,
+                txn.supplier_name,
+                item.supplier_code,
+                item.supplier_name,
+            )
+        ]
+    else:
+        # 流水无供应商：仅当该物料所有剩余合同的供应商唯一时才自动匹配，
+        # 避免 R82.101（多供应商）这类流水被错误匹配到任意合同。
+        suppliers = {
+            (item.supplier_code or "", item.supplier_name or "")
+            for item in contracts
+        }
+        if len(suppliers) != 1:
+            return []
+    # 剩余待匹配数量：一条流水可能已部分匹配到合同（人工或历史分配）
+    remaining = max(
+        txn.quantity
+        - _txn_matched_quantity(txn, MatchAllocation.Kind.PURCHASE_CONTRACT),
+        ZERO,
     )
+    own_contract_no = txn.contract_no or ""
+
+    def _contract_sort_key(item):
+        if own_contract_no and item.contract_no == own_contract_no:
+            # 流水自带合同号：优先匹配该合同（原逻辑）
+            return (
+                0,
+                0,
+                -(item.contract_date or period.month).toordinal(),
+                -item.id,
+            )
+        if item.remaining_quantity <= remaining:
+            # 能整块吃下：剩余数量大的先，减少拆单混价（如 R11.504 两价合同）
+            return (
+                1,
+                -item.remaining_quantity,
+                -(item.contract_date or period.month).toordinal(),
+                -item.id,
+            )
+        # 不能整块吃下：剩余数量最小的先（最小拆分）
+        return (
+            2,
+            item.remaining_quantity,
+            -(item.contract_date or period.month).toordinal(),
+            -item.id,
+        )
+
+    contracts.sort(key=_contract_sort_key)
     return contracts
 
 
@@ -200,23 +238,32 @@ def _candidate_purchase_receipts(period, invoice):
             invoice.supplier_name,
         )
     ]
-    txns.sort(
-        key=lambda txn: (
-            0
-            if invoice.contract_no
-            and (
-                txn.contract_no == invoice.contract_no
-                or txn.allocations.filter(
-                    kind=MatchAllocation.Kind.PURCHASE_CONTRACT,
-                    contract_line__contract_no=invoice.contract_no,
-                ).exists()
-            )
-            else 1,
+    def _receipt_sort_key(txn):
+        # 流水自带合同号与发票合同号一致优先（原逻辑）
+        if invoice.contract_no and (
+            txn.contract_no == invoice.contract_no
+            or txn.allocations.filter(
+                kind=MatchAllocation.Kind.PURCHASE_CONTRACT,
+                contract_line__contract_no=invoice.contract_no,
+            ).exists()
+        ):
+            contract_bonus = 0
+        else:
+            contract_bonus = 1
+        # 流水暂估单价与发票单价差：越小越优先，避免不同价发票核销到错价流水产生假差异
+        if txn.unit_price is not None and invoice.unit_price_excl_tax is not None:
+            price_diff = abs(txn.unit_price - invoice.unit_price_excl_tax)
+        else:
+            price_diff = Decimal("1e9")
+        return (
+            contract_bonus,
+            price_diff,
             txn.period.month,
             txn.txn_date,
             txn.id,
         )
-    )
+
+    txns.sort(key=_receipt_sort_key)
     return txns
 
 
@@ -331,12 +378,14 @@ def _allocate_contracts(period):
             - _txn_matched_quantity(txn, MatchAllocation.Kind.PURCHASE_CONTRACT),
             ZERO,
         )
-        for contract in _candidate_contracts(period, txn):
-            if remaining <= 0:
+        while remaining > 0:
+            candidates = _candidate_contracts(period, txn)
+            if not candidates:
                 break
+            contract = candidates[0]
             qty = min(remaining, contract.remaining_quantity)
             if qty <= 0:
-                continue
+                break
             MatchAllocation.objects.create(
                 period=period,
                 kind=MatchAllocation.Kind.PURCHASE_CONTRACT,
@@ -459,51 +508,6 @@ def _allocate_sales_invoices(period):
             remaining_invoice -= qty
             invoice.remaining_quantity -= qty
             invoice.save(update_fields=["remaining_quantity"])
-
-
-def _allocate_production_orders(period):
-    orders = {
-        order.order_no: order
-        for order in period.production_orders.filter(
-            match_mode=MatchingMode.AUTO
-        )
-    }
-    receipt_docs = {
-        order.production_receipt_document: order
-        for order in orders.values()
-        if order.production_receipt_document
-    }
-    for txn in period.inventory_transactions.all():
-        if txn.match_mode != MatchingMode.AUTO:
-            continue
-        if is_production_receipt(txn):
-            kind = MatchAllocation.Kind.PRODUCTION_RECEIPT
-            if _txn_matched_quantity(txn, kind) >= txn.quantity:
-                continue
-            order = orders.get(txn.order_no) or receipt_docs.get(txn.document_no)
-            if order:
-                MatchAllocation.objects.create(
-                    period=period,
-                    kind=kind,
-                    inventory_transaction=txn,
-                    production_order=order,
-                    matched_quantity=txn.quantity,
-                    confidence=100 if txn.order_no == order.order_no else 90,
-                )
-        elif is_order_material(txn):
-            kind = MatchAllocation.Kind.ORDER_MATERIAL
-            if _txn_matched_quantity(txn, kind) >= txn.quantity:
-                continue
-            order = orders.get(txn.order_no)
-            if order:
-                MatchAllocation.objects.create(
-                    period=period,
-                    kind=kind,
-                    inventory_transaction=txn,
-                    production_order=order,
-                    matched_quantity=txn.quantity,
-                    confidence=100,
-                )
 
 
 def _refresh_purchase_transaction_prices(period):
@@ -711,48 +715,6 @@ def refresh_sales_invoice_metadata(period):
         )
 
 
-def _refresh_order_match_status(period):
-    ignored_orders = period.production_orders.filter(
-        match_mode=MatchingMode.IGNORED
-    )
-    ignored_order_nos = set(
-        ignored_orders.values_list("order_no", flat=True)
-    )
-    ignored_receipt_documents = set(
-        ignored_orders.exclude(
-            production_receipt_document=""
-        ).values_list("production_receipt_document", flat=True)
-    )
-    for txn in period.inventory_transactions.all():
-        if is_order_material(txn):
-            matched = _txn_matched_quantity(txn, MatchAllocation.Kind.ORDER_MATERIAL)
-        elif is_production_receipt(txn):
-            matched = _txn_matched_quantity(
-                txn, MatchAllocation.Kind.PRODUCTION_RECEIPT
-            )
-        else:
-            continue
-        if txn.match_mode == MatchingMode.IGNORED:
-            txn.match_status = InventoryTransaction.MatchStatus.NOT_REQUIRED
-            txn.save(update_fields=["match_status"])
-            continue
-        if (
-            txn.order_no in ignored_order_nos
-            or txn.document_no in ignored_receipt_documents
-        ):
-            txn.match_status = InventoryTransaction.MatchStatus.NOT_REQUIRED
-            txn.save(update_fields=["match_status"])
-            continue
-        txn.match_status = (
-            InventoryTransaction.MatchStatus.MATCHED
-            if matched >= txn.quantity
-            else InventoryTransaction.MatchStatus.PARTIAL
-            if matched > 0
-            else InventoryTransaction.MatchStatus.UNMATCHED
-        )
-        txn.save(update_fields=["match_status"])
-
-
 @transaction.atomic
 def auto_match_all(period: AccountingPeriod):
     if period.status == AccountingPeriod.Status.LOCKED:
@@ -762,11 +724,9 @@ def auto_match_all(period: AccountingPeriod):
     _allocate_contracts(period)
     _allocate_purchase_invoices(period)
     _allocate_sales_invoices(period)
-    _allocate_production_orders(period)
     _refresh_purchase_transaction_prices(period)
     refresh_purchase_invoice_metadata(period)
     refresh_sales_invoice_metadata(period)
-    _refresh_order_match_status(period)
 
 
 @transaction.atomic
@@ -816,11 +776,6 @@ def manual_match(
             SalesInvoiceLine,
             "sales_invoice_line",
         ),
-        MatchAllocation.Kind.ORDER_MATERIAL: (ProductionOrder, "production_order"),
-        MatchAllocation.Kind.PRODUCTION_RECEIPT: (
-            ProductionOrder,
-            "production_order",
-        ),
     }
     model, field_name = fields[kind]
     source = model.objects.get(id=source_id, period=period)
@@ -846,11 +801,6 @@ def manual_match(
     if used_on_txn + quantity > txn.quantity:
         raise ValueError("人工匹配数量超过该库存流水的剩余数量。")
     source_capacity = getattr(source, "quantity", None)
-    if (
-        isinstance(source, ProductionOrder)
-        and kind == MatchAllocation.Kind.PRODUCTION_RECEIPT
-    ):
-        source_capacity = source.finished_quantity
     if source_capacity is not None:
         used_on_source = (
             MatchAllocation.objects.filter(
@@ -978,8 +928,6 @@ def _source_allocation_filter(source):
         return {"purchase_invoice_line": source}
     if isinstance(source, SalesInvoiceLine):
         return {"sales_invoice_line": source}
-    if isinstance(source, ProductionOrder):
-        return {"production_order": source}
     raise ValueError("不支持的单据类型。")
 
 
