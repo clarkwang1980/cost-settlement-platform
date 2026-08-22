@@ -1657,7 +1657,12 @@ def production_cost_summary(request, period_id):
 
 @login_required
 def work_order_costs(request, period_id):
-    """工单成本明细（生产工单+投料+报工核算结果）。"""
+    """工单成本明细（生产工单+投料+报工核算结果）。
+
+    分配率口径（与分摊逻辑一致）：
+    - 水电/蒸汽/天然气/折旧/机物料/染料助剂 = 工单本期材料成本 ÷ 车间本期材料成本合计
+    - 工资 = 工单折合数量（完工+0.5×在产品）÷ 车间折合数量合计
+    """
     period = get_object_or_404(AccountingPeriod, id=period_id)
     results = period.work_order_cost_results.select_related("work_order")
     results = _text_filters(
@@ -1669,20 +1674,88 @@ def work_order_costs(request, period_id):
             "product": "product_code",
         },
     )
-    totals = results.aggregate(
-        material=Sum("direct_material"),
-        finished=Sum("finished_cost"),
-        wip=Sum("wip_cost"),
-        total=Sum("total_cost"),
+    results = list(
+        results.order_by("work_order__production_dept_code", "work_order__order_no")
     )
+    openings = {
+        item.order_no: item for item in period.opening_wip.all()
+    }
+
+    # 车间聚合：本期材料合计 / 折合数量合计（分母）
+    workshop_material = defaultdict(Decimal)
+    workshop_equivalent = defaultdict(Decimal)
+    for item in results:
+        opening = openings.get(item.work_order.order_no)
+        current_material = Decimal(item.direct_material or 0) - Decimal(
+            opening.material if opening else 0
+        )
+        workshop_material[item.work_order.production_dept_code] += current_material
+        equivalent = Decimal(item.finished_quantity or 0) + Decimal(
+            item.wip_quantity or 0
+        ) * Decimal("0.5")
+        workshop_equivalent[item.work_order.production_dept_code] += equivalent
+
+    # 每个工单的分配率（材料占比类 / 工资折合占比类）
+    for item in results:
+        ws = item.work_order.production_dept_code
+        opening = openings.get(item.work_order.order_no)
+        current_material = Decimal(item.direct_material or 0) - Decimal(
+            opening.material if opening else 0
+        )
+        denom = workshop_material[ws]
+        item.rate_material_pct = (
+            (current_material / denom * Decimal("100")) if denom else Decimal("0")
+        )
+        equivalent = Decimal(item.finished_quantity or 0) + Decimal(
+            item.wip_quantity or 0
+        ) * Decimal("0.5")
+        denom2 = workshop_equivalent[ws]
+        item.rate_wages_pct = (
+            (equivalent / denom2 * Decimal("100")) if denom2 else Decimal("0")
+        )
+
+    # 车间合计（全量，金额列汇总）
+    SUM_FIELDS = (
+        "direct_material", "water_power", "steam", "natural_gas", "depreciation",
+        "consumables", "dye_auxiliary", "wages", "total_cost",
+        "finished_cost", "wip_cost",
+    )
+    subtotals = {}
+    for item in results:
+        ws = item.work_order.production_dept_code
+        st = subtotals.setdefault(
+            ws,
+            {"workshop": ws, "count": 0, **{f: Decimal("0") for f in SUM_FIELDS}},
+        )
+        st["count"] += 1
+        for f in SUM_FIELDS:
+            st[f] += Decimal(getattr(item, f) or 0)
+
+    page = _page(request, results)
+
+    # 按当前页内工单的车间分组（合计行插在每组末尾）
+    groups = []
+    for item in page.object_list:
+        ws = item.work_order.production_dept_code
+        if not groups or groups[-1]["workshop"] != ws:
+            groups.append(
+                {"workshop": ws, "rows": [], "subtotal": subtotals.get(ws)}
+            )
+        groups[-1]["rows"].append(item)
+
+    totals = {
+        "material": sum((Decimal(r.direct_material or 0) for r in results), Decimal("0")),
+        "finished": sum((Decimal(r.finished_cost or 0) for r in results), Decimal("0")),
+        "wip": sum((Decimal(r.wip_cost or 0) for r in results), Decimal("0")),
+        "total": sum((Decimal(r.total_cost or 0) for r in results), Decimal("0")),
+    }
     return render(
         request,
         "settlement/work_order_costs.html",
         {
             "period": period,
-            "page": _page(request, results.order_by(
-                "work_order__production_dept_code", "work_order__order_no"
-            )),
+            "page": page,
+            "groups": groups,
             "totals": totals,
         },
     )
