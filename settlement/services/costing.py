@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from settlement.models import (
     AccountingPeriod,
+    BomLine,
     EndingInventoryBalance,
     ExceptionItem,
     InventoryTransaction,
@@ -1209,6 +1210,28 @@ def settle_workshop(period, settlement_id, user=None):
         raise
 
 
+def _fill_bom_prices(period: AccountingPeriod):
+    """回填BOM单价：子项单价 = 子项物料本月月末加权平均价；
+    标准成品单价 = 按工单汇总 Σ(子项用量 × 子项单价)。"""
+    lines = list(period.bom_lines.all())
+    if not lines:
+        return
+    prices = {
+        row["material_code"]: row["weighted_average_price"]
+        for row in period.inventory_valuations.values(
+            "material_code", "weighted_average_price"
+        )
+    }
+    standard_by_order = defaultdict(Decimal)
+    for line in lines:
+        unit_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
+        line.unit_price = unit_price
+        standard_by_order[line.work_order_no] += line.qty * unit_price
+    for line in lines:
+        line.standard_price = money(standard_by_order[line.work_order_no])
+    BomLine.objects.bulk_update(lines, ["unit_price", "standard_price"])
+
+
 def run_settlement(period: AccountingPeriod, user=None):
     run = SettlementRun.objects.create(
         period=period,
@@ -1230,6 +1253,9 @@ def run_settlement(period: AccountingPeriod, user=None):
             final_state = _finalize_period_state(period)
             converged = final_state["all_settled"]
             total_iterations = final_state["total_iterations"]
+
+            # 回填BOM单价：子项单价=子项物料月末加权价；标准成品单价=Σ(子项用量×子项单价)
+            _fill_bom_prices(period)
 
             run.status = SettlementRun.Status.SUCCESS
             run.iterations = total_iterations

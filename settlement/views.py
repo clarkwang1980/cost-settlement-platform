@@ -1642,6 +1642,30 @@ def work_report_imports(request, period_id):
 
 
 @login_required
+def bom_imports(request, period_id):
+    """BOM 表导入台账：子项单价与标准成品单价由系统按月末加权价回填。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    lines = period.bom_lines.all()
+    lines = _text_filters(
+        request,
+        lines,
+        {
+            "work_order_no": "work_order_no",
+            "material_code": "material_code",
+            "sub_item_code": "sub_item_code",
+        },
+    )
+    return render(
+        request,
+        "settlement/bom_imports.html",
+        {
+            "period": period,
+            "page": _page(request, lines),
+        },
+    )
+
+
+@login_required
 def production_cost_summary(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     selected_workshop = request.GET.get("workshop", "").strip()

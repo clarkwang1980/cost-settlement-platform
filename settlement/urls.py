@@ -105,6 +105,11 @@ urlpatterns = [
         name="work_report_imports",
     ),
     path(
+        "periods/<int:period_id>/bom-imports/",
+        views.bom_imports,
+        name="bom_imports",
+    ),
+    path(
         "periods/<int:period_id>/order-material/",
         views.order_material_report,
         name="order_material_report",
