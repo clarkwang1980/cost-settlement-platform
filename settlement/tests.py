@@ -1310,7 +1310,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertEqual(upload_page.status_code, 200)
         self.assertContains(upload_page, "上传前必须注意")
-        self.assertContains(upload_page, "十五类资料字段说明")
+        self.assertContains(upload_page, "十六类资料字段说明")
         self.assertContains(upload_page, "“替换”会删除本月整类资料")
         self.assertContains(upload_page, "同车间费用必须先汇总")
         self.assertContains(upload_page, "销售订单号、客户和产品一致")

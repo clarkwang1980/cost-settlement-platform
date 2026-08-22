@@ -104,6 +104,7 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.MATERIAL_ISSUE: "投料记录.csv",
     ImportBatch.Kind.WORK_REPORT: "报工记录.csv",
     ImportBatch.Kind.PULP_RECEIPT: "浆粕成品入库.xlsx",
+    ImportBatch.Kind.BOM: "BOM表.xlsx",
 }
 
 

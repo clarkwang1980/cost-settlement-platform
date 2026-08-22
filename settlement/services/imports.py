@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 
 from settlement.models import (
     AccountingPeriod,
+    BomLine,
     EndingInventoryBalance,
     ImportBatch,
     InventoryTransaction,
@@ -334,10 +335,25 @@ ALIASES = {
 # 浆粕成品入库：与库存出入库流水同一套表头别名与必填校验
 ALIASES["pulp_receipt"] = ALIASES["inventory"]
 
+ALIASES["bom"] = {
+    "work_order_no": ["工单编号", "工单号"],
+    "material_code": ["物料编号", "成品物料编号", "父项物料编号"],
+    "material_name": ["物料名称", "成品物料名称", "父项物料名称"],
+    "line_no": ["项次", "行次", "序号"],
+    "sub_item_code": ["子项物料编号", "子项物料编码", "子项编码"],
+    "sub_item_name": ["子项物料名称", "子项名称"],
+    "qty_numerator": ["子项用量:分子", "子项用量分子", "用量分子", "分子"],
+    "qty_denominator": ["子项用量:分母", "子项用量分母", "用量分母", "分母"],
+    "uom": ["单位名称", "单位", "计量单位"],
+    "unit_price": ["单价（子项物料的单价）", "单价子项物料的单价", "子项单价", "单价"],
+    "standard_price": ["标准成品单价", "标准单价", "成品标准单价"],
+}
+
 
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_receipt": {"txn_date", "business_type", "material_code", "quantity"},
+    "bom": {"work_order_no", "sub_item_code"},
     "purchase_contract": {
         "contract_no",
         "material_code",
@@ -794,6 +810,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.MATERIAL_ISSUE: _import_material_issue,
         ImportBatch.Kind.WORK_REPORT: _import_work_report,
         ImportBatch.Kind.PULP_RECEIPT: _import_inventory,
+        ImportBatch.Kind.BOM: _import_bom,
     }[batch.kind]
     errors = []
     count = 0
@@ -1128,6 +1145,36 @@ def _import_work_report(batch, row):
         weaving_machine=text(row.get("weaving_machine")),
         output_location=text(row.get("output_location")),
         work_order_department=text(row.get("work_order_department")),
+    )
+
+
+def _import_bom(batch, row):
+    work_order_no = text(row.get("work_order_no"))
+    sub_item_code = text(row.get("sub_item_code"))
+    if not work_order_no:
+        raise ValueError("工单编号不能为空。")
+    if not sub_item_code:
+        raise ValueError("子项物料编号不能为空。")
+    denominator = to_decimal(row.get("qty_denominator"), Decimal("1"))
+    if denominator is None or denominator <= 0:
+        raise ValueError("子项用量分母必须大于0。")
+    numerator = to_decimal(row.get("qty_numerator"), Decimal("0"))
+    if numerator < 0:
+        raise ValueError("子项用量分子不能小于0。")
+    BomLine.objects.create(
+        period=batch.period,
+        batch=batch,
+        work_order_no=work_order_no,
+        material_code=text(row.get("material_code")),
+        material_name=text(row.get("material_name")),
+        line_no=text(row.get("line_no")),
+        sub_item_code=sub_item_code,
+        sub_item_name=text(row.get("sub_item_name")),
+        qty_numerator=numerator,
+        qty_denominator=denominator,
+        uom=text(row.get("uom")),
+        unit_price=to_decimal(row.get("unit_price")),
+        standard_price=to_decimal(row.get("standard_price")),
     )
 
 

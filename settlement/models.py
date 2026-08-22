@@ -84,6 +84,10 @@ class ImportBatch(models.Model):
             "pulp_receipt",
             "浆粕成品入库",
         )
+        BOM = (
+            "bom",
+            "BOM表",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -536,6 +540,52 @@ class WorkReport(models.Model):
 
     def __str__(self):
         return f"{self.work_order_no} {self.material_code}"
+
+
+class BomLine(models.Model):
+    """BOM 表：按工单展开的子项物料清单（用于中间品自动流转与投料校验）。"""
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="bom_lines"
+    )
+    batch = models.ForeignKey(
+        ImportBatch, on_delete=models.CASCADE, related_name="bom_lines"
+    )
+    work_order_no = models.CharField(max_length=100, db_index=True)
+    material_code = models.CharField(max_length=80, blank=True, verbose_name="成品物料编号")
+    material_name = models.CharField(max_length=255, blank=True, verbose_name="成品物料名称")
+    line_no = models.CharField(max_length=40, blank=True, verbose_name="项次")
+    sub_item_code = models.CharField(max_length=80, db_index=True, verbose_name="子项物料编号")
+    sub_item_name = models.CharField(max_length=255, blank=True, verbose_name="子项物料名称")
+    qty_numerator = models.DecimalField(
+        max_digits=20, decimal_places=6, default=1, verbose_name="子项用量分子"
+    )
+    qty_denominator = models.DecimalField(
+        max_digits=20, decimal_places=6, default=1, verbose_name="子项用量分母"
+    )
+    uom = models.CharField(max_length=30, blank=True, verbose_name="单位")
+    unit_price = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True, verbose_name="子项单价"
+    )
+    standard_price = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True, verbose_name="标准成品单价"
+    )
+
+    class Meta:
+        ordering = ["work_order_no", "line_no", "id"]
+        verbose_name = "BOM表"
+        verbose_name_plural = "BOM表"
+
+    def __str__(self):
+        return f"{self.work_order_no} {self.sub_item_code}"
+
+    @property
+    def qty(self):
+        """子项用量（分子/分母）。"""
+        denominator = self.qty_denominator or 1
+        if not denominator:
+            return 1
+        return self.qty_numerator / denominator
 
 
 class WorkshopCostPool(models.Model):
