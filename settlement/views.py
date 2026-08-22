@@ -1660,8 +1660,9 @@ def work_order_costs(request, period_id):
     """工单成本明细（生产工单+投料+报工核算结果）。
 
     分配率口径（与分摊逻辑一致）：
-    - 水电/蒸汽/天然气/折旧/机物料/染料助剂 = 工单本期材料成本 ÷ 车间本期材料成本合计
-    - 工资 = 工单折合数量（完工+0.5×在产品）÷ 车间折合数量合计
+    - 制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）分配率
+      = 车间该费用总额 ÷ 车间材料成本总额（每元材料承担的费用）
+    - 工资分配率 = 工单折合数量（完工+0.5×在产品）÷ 车间折合数量合计
     """
     period = get_object_or_404(AccountingPeriod, id=period_id)
     results = period.work_order_cost_results.select_related("work_order")
@@ -1681,7 +1682,7 @@ def work_order_costs(request, period_id):
         item.order_no: item for item in period.opening_wip.all()
     }
 
-    # 车间聚合：本期材料合计 / 折合数量合计（分母）
+    # 车间聚合：材料总额 / 折合数量合计（分母）
     workshop_material = defaultdict(Decimal)
     workshop_equivalent = defaultdict(Decimal)
     for item in results:
@@ -1695,17 +1696,30 @@ def work_order_costs(request, period_id):
         ) * Decimal("0.5")
         workshop_equivalent[item.work_order.production_dept_code] += equivalent
 
-    # 每个工单的分配率（材料占比类 / 工资折合占比类）
+    # 车间级制造费用分配率 = 该费用总额 ÷ 车间材料成本总额（每元材料承担的费用）
+    from settlement.services.workorder_costing import MANUFACTURING_FIELDS
+
+    workshop_fee_total = defaultdict(lambda: defaultdict(Decimal))
+    workshop_material_total = defaultdict(Decimal)
     for item in results:
         ws = item.work_order.production_dept_code
-        opening = openings.get(item.work_order.order_no)
-        current_material = Decimal(item.direct_material or 0) - Decimal(
-            opening.material if opening else 0
-        )
-        denom = workshop_material[ws]
-        item.rate_material_pct = (
-            (current_material / denom * Decimal("100")) if denom else Decimal("0")
-        )
+        workshop_material_total[ws] += Decimal(item.direct_material or 0)
+        for field in MANUFACTURING_FIELDS:
+            workshop_fee_total[ws][field] += Decimal(getattr(item, field) or 0)
+
+    # 每个工单的分配率（制造费用 = 车间级费用/材料；工资 = 折合数量占比）
+    for item in results:
+        ws = item.work_order.production_dept_code
+        for field in MANUFACTURING_FIELDS:
+            fee_total = workshop_fee_total[ws][field]
+            mat_total = workshop_material_total[ws]
+            setattr(
+                item,
+                f"rate_{field}_pct",
+                ((fee_total / mat_total) * Decimal("100"))
+                if mat_total
+                else Decimal("0"),
+            )
         equivalent = Decimal(item.finished_quantity or 0) + Decimal(
             item.wip_quantity or 0
         ) * Decimal("0.5")
@@ -1733,9 +1747,9 @@ def work_order_costs(request, period_id):
 
     page = _page(request, results)
 
-    # 按当前页内工单的车间分组（合计行插在每组末尾）
+    # 按车间分组（合计行插在每组末尾）；全量显示以保证车间合计准确
     groups = []
-    for item in page.object_list:
+    for item in results:
         ws = item.work_order.production_dept_code
         if not groups or groups[-1]["workshop"] != ws:
             groups.append(

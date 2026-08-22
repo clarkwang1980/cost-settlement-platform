@@ -29,7 +29,7 @@
   </form>
 </section>
 <section class="section-card">
-  <p class="help-text">分配率口径：水电/蒸汽/天然气/折旧/机物料/染料助剂＝该工单本期材料成本÷车间本期材料成本合计；工资＝该工单折合数量（完工+0.5×在产品）÷车间折合数量合计。车间费用×分配率＝该工单分摊的费用。</p>
+  <p class="help-text">分配率口径：制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）分配率＝车间该费用总额÷车间材料成本总额（每元材料承担的费用，与结算分摊口径一致）；工资分配率＝该工单折合数量（完工+0.5×在产品）÷车间折合数量合计。完工费用＝完工材料×分配率，在产品费用＝在产品材料×分配率。</p>
   <div class="table-wrap"><table><thead><tr><th>工单</th><th>车间</th><th>产品</th><th class="num">计划数量</th><th class="num">报工数量</th><th class="num">在产品</th><th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th><th class="num">蒸汽</th><th class="num">蒸汽分配率</th><th class="num">天然气</th><th class="num">天然气分配率</th><th class="num">折旧</th><th class="num">折旧分配率</th><th class="num">机物料</th><th class="num">机物料分配率</th><th class="num">染料助剂</th><th class="num">染料助剂分配率</th><th class="num">工资</th><th class="num">工资分配率</th><th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">在产品成本</th></tr></thead>
   <tbody>
   {% for group in groups %}
@@ -43,17 +43,17 @@
       <td class="num">{{ item.wip_quantity|floatformat:2 }}</td>
       <td class="num">{{ item.direct_material|floatformat:2 }}</td>
       <td class="num">{{ item.water_power|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_water_power_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.steam|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_steam_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.natural_gas|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_natural_gas_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.depreciation|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_depreciation_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.consumables|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_consumables_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.dye_auxiliary|floatformat:2 }}</td>
-      <td class="num">{{ item.rate_material_pct|floatformat:2 }}%</td>
+      <td class="num">{{ item.rate_dye_auxiliary_pct|floatformat:2 }}%</td>
       <td class="num">{{ item.wages|floatformat:2 }}</td>
       <td class="num">{{ item.rate_wages_pct|floatformat:2 }}%</td>
       <td class="num"><strong>{{ item.total_cost|floatformat:2 }}</strong></td>
@@ -67,13 +67,13 @@
       <td colspan="3"><strong>{{ group.subtotal.workshop|workshop_label }}合计（{{ group.subtotal.count }}张工单）</strong></td>
       <td class="num"></td><td class="num"></td><td class="num"></td>
       <td class="num">{{ group.subtotal.material|floatformat:2 }}</td>
-      <td class="num">{{ group.subtotal.water_power|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.steam|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.natural_gas|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.depreciation|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.consumables|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.dye_auxiliary|floatformat:2 }}</td><td class="num">100%</td>
-      <td class="num">{{ group.subtotal.wages|floatformat:2 }}</td><td class="num">100%</td>
+      <td class="num">{{ group.subtotal.water_power|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.steam|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.natural_gas|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.depreciation|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.consumables|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.dye_auxiliary|floatformat:2 }}</td><td class="num"></td>
+      <td class="num">{{ group.subtotal.wages|floatformat:2 }}</td><td class="num"></td>
       <td class="num"><strong>{{ group.subtotal.total_cost|floatformat:2 }}</strong></td>
       <td class="num">{{ group.subtotal.finished_cost|floatformat:2 }}</td>
       <td class="num"></td>
@@ -84,6 +84,5 @@
     <tr><td colspan="25" class="empty-cell">尚未生成工单成本，请先上传生产工单/投料/报工并执行结算。</td></tr>
   {% endfor %}
   </tbody></table></div>
-  {% include "settlement/_pagination.html" %}
 </section>
 {% endblock %}

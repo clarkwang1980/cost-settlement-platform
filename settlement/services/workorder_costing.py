@@ -5,9 +5,10 @@
 - 车间 = 工单主档.生产部门编号；主档缺失时按 报工记录.工单部门 → 投料记录.工序名称 兜底映射
 - 直接材料 = Σ(投料记录.实际投料数量 × 物料月末加权平均价)
 - 完工数量 = Σ(报工记录.报工数量)；在产品 = max(计划数量 - 完工数量, 0)，计划缺失视为 0（全完工）
-- 制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）按直接材料占比分摊
+- 制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）按材料成本口径分摊：
+  分配率 = (本期车间费用 + 期初在产品费用) ÷ 车间材料成本总额；工单费用 = 工单直接材料 × 分配率
 - 工资按折合数量（完工 + 0.5×在产品）分摊
-- 完工/在产品按数量比例拆分；完工单位成本 = 完工成本 / 完工数量
+- 完工/在产品按材料成本比例拆分（公斤产品单位材料成本一致时即数量比例）；完工单位成本 = 完工成本 / 完工数量
 - 库存流水"报工"入库按单据号=工单编号关联工单，单价 = 该工单完工单位成本
 """
 from __future__ import annotations
@@ -39,6 +40,15 @@ FEE_FIELDS = (
     ("consumables", "机物料"),
     ("dye_auxiliary", "染料助剂"),
     ("wages", "工资"),
+)
+# 制造费用类（按材料成本口径分摊）；工资单独按折合数量分摊
+MANUFACTURING_FIELDS = (
+    "water_power",
+    "steam",
+    "natural_gas",
+    "depreciation",
+    "consumables",
+    "dye_auxiliary",
 )
 WIP_CONVERSION_RATE = Decimal("0.5")
 
@@ -228,30 +238,33 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         for field, _label in FEE_FIELDS:
             allocated[field] = ZERO
 
-        # 制造费用（水电/蒸汽/天然气/折旧/机物料）按材料成本占比分摊
-        workshop_total_material = ZERO
+        # 制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）按材料成本口径分摊：
+        #   分配率 = (本期车间费用 + 期初在产品费用合计) ÷ 车间材料成本总额
+        #            （材料成本总额 = Σ工单直接材料 = 完工材料 + 在产品材料）
+        #   工单费用 = 工单直接材料 × 分配率（完工/在产品按材料成本比例拆分）
+        ws = wo.production_dept_code
+        workshop_material_total = ZERO
+        workshop_opening_fee = defaultdict(Decimal)
         for other in orders:
-            if other.production_dept_code == wo.production_dept_code:
-                workshop_total_material += Decimal(
-                    material_by_order.get(other.order_no, ZERO)
+            if other.production_dept_code != ws:
+                continue
+            opening_other = opening_map.get(other.order_no)
+            workshop_material_total += Decimal(
+                material_by_order.get(other.order_no, ZERO)
+            ) + Decimal(opening_other.material if opening_other else ZERO)
+            for field in MANUFACTURING_FIELDS:
+                workshop_opening_fee[field] += Decimal(
+                    getattr(opening_other, field, ZERO) if opening_other else ZERO
                 )
-        for field in (
-            "water_power",
-            "steam",
-            "natural_gas",
-            "depreciation",
-            "consumables",
-            "dye_auxiliary",
-        ):
+        for field in MANUFACTURING_FIELDS:
             pool_amount = Decimal(getattr(pool, field, ZERO) if pool else ZERO)
-            if workshop_total_material:
-                rate = Decimal(direct_material - opening_material) / workshop_total_material
-            else:
-                rate = ZERO
-            allocated[field] = money(
-                pool_amount * rate
-                + Decimal(getattr(opening, field, ZERO) if opening else ZERO)
+            total_fee = workshop_opening_fee[field] + pool_amount
+            rate = (
+                (total_fee / workshop_material_total)
+                if workshop_material_total
+                else ZERO
             )
+            allocated[field] = money(Decimal(direct_material) * rate)
 
         # 工资按折合数量（完工 + 0.5×在产品）占比分摊
         workshop_equivalent = ZERO
@@ -276,8 +289,8 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         )
 
         # 完工/在产品拆分：
-        #   材料、制造费用按数量比例（完工 / (完工+在产品)）
-        #   工资按折合工时（完工 + 0.5×在产品）占比拆分（与旧工时口径一致）
+        #   材料、制造费用按材料成本比例（公斤产品单位材料成本一致时即数量比例）
+        #   工资按折合工时（完工 + 0.5×在产品）占比拆分（工资口径暂保持）
         if wip_qty <= ZERO:
             finished_share = Decimal("1")
         elif finished_qty <= ZERO:
