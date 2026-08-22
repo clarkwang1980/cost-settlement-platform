@@ -672,6 +672,10 @@ WORKSHOP_ALIASES = {
     "染整（纱线）": "RanZheng",
     "染整(纱线)": "RanZheng",
     "染整纱线": "RanZheng",
+    "纺纱车间": "tefang",
+    "包覆车间": "BaoFu",
+    "针织车间": "ZhenZhi",
+    "机织车间": "JiZhi",
     "特纺投料": "tefang",
     "机织投料": "JiZhi",
     "针织投料": "ZhenZhi",
@@ -1182,10 +1186,14 @@ def _import_bom(batch, row):
 
 
 def _import_workshop_cost(batch, row):
+    workshop = normalize_workshop(text(row.get("workshop")))
+    # 模板末行的"合计/总计"行仅作汇总提示，不导入
+    if workshop in ("合计", "总计"):
+        return
     WorkshopCostPool.objects.create(
         period=batch.period,
         batch=batch,
-        workshop=normalize_workshop(text(row.get("workshop"))),
+        workshop=workshop,
         water_power=to_decimal(row.get("water_power"), Decimal("0")),
         steam=to_decimal(row.get("steam"), Decimal("0")),
         natural_gas=to_decimal(row.get("natural_gas"), Decimal("0")),
