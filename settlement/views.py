@@ -105,6 +105,7 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.WORK_REPORT: "报工记录.csv",
     ImportBatch.Kind.PULP_RECEIPT: "浆粕成品入库.xlsx",
     ImportBatch.Kind.BOM: "BOM表.xlsx",
+    ImportBatch.Kind.ISSUE_PROGRESS: "投料进度表.xlsx",
 }
 
 
@@ -1753,6 +1754,73 @@ def work_order_costs(request, period_id):
             (equivalent / denom2 * Decimal("100")) if denom2 else Decimal("0")
         )
 
+    # 投料进度（投料进度表）与粗纱标志
+    from settlement.models import BomLine, IssueProgress
+
+    progress_rows = list(
+        period.issue_progress.values("work_order_no").annotate(
+            total=Sum("actual_issue_quantity")
+        )
+    )
+    progress_qty_by_order = {
+        row["work_order_no"]: Decimal(row["total"] or 0) for row in progress_rows
+    }
+    progress_status_by_order = defaultdict(set)
+    for status, wo in period.issue_progress.exclude(
+        issue_status=""
+    ).values_list("issue_status", "work_order_no"):
+        progress_status_by_order[wo].add(status)
+    roving_codes = set(
+        BomLine.objects.filter(period=period, sub_item_code__startswith="BC-")
+        .values_list("sub_item_code", flat=True)
+    )
+    roving_issue_orders = set(
+        period.material_issues.filter(material_code__startswith="BC-")
+        .exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    roving_progress_orders = set(
+        period.issue_progress.filter(material_code__startswith="BC-")
+        .exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+
+    for item in results:
+        order_no = item.work_order.order_no
+        ws = item.work_order.production_dept_code
+        # 累计投料：投料进度表优先，无则用实际投料记录合计
+        if order_no in progress_qty_by_order:
+            item.accum_issue = progress_qty_by_order[order_no]
+        else:
+            item.accum_issue = Decimal(
+                period.material_issues.filter(work_order_no=order_no)
+                .aggregate(total=Sum("actual_issue_quantity"))["total"]
+                or 0
+            )
+        # 投料状态：进度表该工单各行状态去重
+        statuses = progress_status_by_order.get(order_no)
+        item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
+        # 累计完工 / 完工率
+        item.accum_finished = Decimal(item.finished_quantity or 0)
+        plan = Decimal(item.plan_quantity or 0)
+        item.finish_rate_pct = (
+            (item.accum_finished / plan * Decimal("100")) if plan else None
+        )
+        # 是否用粗纱：BOM子项/实际投料/投料进度 含 BC- 粗纱
+        if ws == "tefang":
+            uses_roving = (
+                (order_no in roving_issue_orders)
+                or (order_no in roving_progress_orders)
+                or BomLine.objects.filter(
+                    period=period,
+                    work_order_no=order_no,
+                    sub_item_code__in=roving_codes,
+                ).exists()
+            )
+            item.uses_roving = "是" if uses_roving else "否"
+        else:
+            item.uses_roving = "—"
+
     # 车间合计（全量，金额列汇总）
     SUM_FIELDS = (
         "direct_material", "water_power", "steam", "natural_gas", "depreciation",
@@ -2567,10 +2635,72 @@ def _listing_rows(request, period, kind):
             )
         )
         from settlement.services.workorder_costing import MANUFACTURING_FIELDS
+        from settlement.models import BomLine, IssueProgress
+
+        # 投料进度与粗纱标志（与页面一致）
+        progress_rows = list(
+            period.issue_progress.values("work_order_no").annotate(
+                total=Sum("actual_issue_quantity")
+            )
+        )
+        progress_qty_by_order = {
+            row["work_order_no"]: Decimal(row["total"] or 0) for row in progress_rows
+        }
+        progress_status_by_order = defaultdict(set)
+        for status, wo in period.issue_progress.exclude(
+            issue_status=""
+        ).values_list("issue_status", "work_order_no"):
+            progress_status_by_order[wo].add(status)
+        roving_codes = set(
+            BomLine.objects.filter(period=period, sub_item_code__startswith="BC-")
+            .values_list("sub_item_code", flat=True)
+        )
+        roving_issue_orders = set(
+            period.material_issues.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        roving_progress_orders = set(
+            period.issue_progress.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        for item in results:
+            order_no = item.work_order.order_no
+            ws = item.work_order.production_dept_code
+            if order_no in progress_qty_by_order:
+                item.accum_issue = progress_qty_by_order[order_no]
+            else:
+                item.accum_issue = Decimal(
+                    period.material_issues.filter(work_order_no=order_no)
+                    .aggregate(total=Sum("actual_issue_quantity"))["total"]
+                    or 0
+                )
+            statuses = progress_status_by_order.get(order_no)
+            item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
+            item.accum_finished = Decimal(item.finished_quantity or 0)
+            plan = Decimal(item.plan_quantity or 0)
+            item.finish_rate_pct = (
+                (item.accum_finished / plan * Decimal("100")) if plan else None
+            )
+            if ws == "tefang":
+                uses_roving = (
+                    (order_no in roving_issue_orders)
+                    or (order_no in roving_progress_orders)
+                    or BomLine.objects.filter(
+                        period=period,
+                        work_order_no=order_no,
+                        sub_item_code__in=roving_codes,
+                    ).exists()
+                )
+                item.uses_roving = "是" if uses_roving else "否"
+            else:
+                item.uses_roving = "—"
 
         # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
         headers = [
-            "工单编号", "车间", "产品编码", "产品名称", "计划数量", "报工数量",
+            "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态",
+            "累计完工", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
             "染料助剂", "染料助剂分配率%", "工资", "工资分配率%", "工单总成本",
@@ -2629,12 +2759,20 @@ def _listing_rows(request, period, kind):
 
             def _detail_row(item):
                 ws = item.work_order.production_dept_code
+                rate_text = (
+                    f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
+                )
                 return (
                     item.work_order.order_no,
                     WORKSHOP_LABELS.get(ws, ws),
                     item.product_code,
                     item.product_name,
                     item.plan_quantity,
+                    item.accum_issue,
+                    item.issue_status,
+                    item.accum_finished,
+                    rate_text,
+                    item.uses_roving,
                     item.finished_quantity,
                     item.wip_quantity,
                     item.direct_material,
@@ -2661,7 +2799,7 @@ def _listing_rows(request, period, kind):
             def _subtotal_row(ws, st):
                 return (
                     f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）",
-                    "", "", "", "", "", "",
+                    "", "", "", "", "", "", "", "", "", "", "",
                     st["direct_material"],
                     st["water_power"], "",
                     st["steam"], "",

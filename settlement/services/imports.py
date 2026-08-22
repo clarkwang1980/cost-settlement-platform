@@ -20,6 +20,7 @@ from settlement.models import (
     ImportBatch,
     InventoryTransaction,
     InventoryValuation,
+    IssueProgress,
     Material,
     MaterialIssue,
     MatchAllocation,
@@ -349,11 +350,27 @@ ALIASES["bom"] = {
     "standard_price": ["标准成品单价", "标准单价", "成品标准单价"],
 }
 
+ALIASES["issue_progress"] = {
+    "create_date": ["创建日期", "日期"],
+    "department": ["部门名称", "部门", "车间"],
+    "work_order_no": ["工单编号", "工单号"],
+    "line_no": ["行号", "行次", "序号"],
+    "material_code": ["物料编号", "物料编码", "物料代码"],
+    "apply_quantity": ["申请数量", "申请量"],
+    "issue_quantity": ["发料数量", "实发数量"],
+    "issue_batch_mark": ["发料批次-标识码", "发料批次标识码", "发料批次", "标识码"],
+    "actual_issue_quantity": ["投料数量", "实投数量"],
+    "actual_batch_mark": ["投料批次-标识码", "投料批次标识码", "投料批次"],
+    "uom": ["单位", "计量单位"],
+    "issue_status": ["投料状态", "状态"],
+}
+
 
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_receipt": {"txn_date", "business_type", "material_code", "quantity"},
     "bom": {"work_order_no", "sub_item_code"},
+    "issue_progress": {"work_order_no", "material_code"},
     "purchase_contract": {
         "contract_no",
         "material_code",
@@ -818,6 +835,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.WORK_REPORT: _import_work_report,
         ImportBatch.Kind.PULP_RECEIPT: _import_inventory,
         ImportBatch.Kind.BOM: _import_bom,
+        ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
     }[batch.kind]
     errors = []
     count = 0
@@ -1182,6 +1200,33 @@ def _import_bom(batch, row):
         uom=text(row.get("uom")),
         unit_price=to_decimal(row.get("unit_price")),
         standard_price=to_decimal(row.get("standard_price")),
+    )
+
+
+def _import_issue_progress(batch, row):
+    work_order_no = text(row.get("work_order_no"))
+    material_code = text(row.get("material_code"))
+    if not work_order_no:
+        raise ValueError("工单编号不能为空。")
+    if not material_code:
+        raise ValueError("物料编号不能为空。")
+    IssueProgress.objects.create(
+        period=batch.period,
+        batch=batch,
+        create_date=text(row.get("create_date")),
+        department=text(row.get("department")),
+        work_order_no=work_order_no,
+        line_no=text(row.get("line_no")),
+        material_code=material_code,
+        apply_quantity=to_decimal(row.get("apply_quantity"), Decimal("0")),
+        issue_quantity=to_decimal(row.get("issue_quantity"), Decimal("0")),
+        issue_batch_mark=text(row.get("issue_batch_mark")),
+        actual_issue_quantity=to_decimal(
+            row.get("actual_issue_quantity"), Decimal("0")
+        ),
+        actual_batch_mark=text(row.get("actual_batch_mark")),
+        uom=text(row.get("uom")),
+        issue_status=text(row.get("issue_status")),
     )
 
 

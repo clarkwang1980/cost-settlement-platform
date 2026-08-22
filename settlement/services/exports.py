@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, time
 from decimal import Decimal
 from io import BytesIO
 
+from django.db.models import Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from openpyxl import Workbook
@@ -708,6 +710,11 @@ def build_settlement_workbook(period):
         "产品编码",
         "产品名称",
         "计划数量",
+        "累计投料",
+        "投料状态",
+        "累计完工",
+        "累计完工率",
+        "是否用粗纱",
         "报工数量",
         "在产品数量",
         "材料成本",
@@ -731,6 +738,7 @@ def build_settlement_workbook(period):
         "在产品成本",
     ]
     from settlement.services.workorder_costing import MANUFACTURING_FIELDS
+    from settlement.models import BomLine
 
     wo_items = list(
         period.work_order_cost_results.select_related("work_order").order_by(
@@ -740,6 +748,66 @@ def build_settlement_workbook(period):
     wo_rows = []
     wo_highlight = set()
     if wo_items:
+        # 投料进度与粗纱标志
+        progress_rows = list(
+            period.issue_progress.values("work_order_no").annotate(
+                total=Sum("actual_issue_quantity")
+            )
+        )
+        progress_qty_by_order = {
+            row["work_order_no"]: Decimal(row["total"] or 0) for row in progress_rows
+        }
+        progress_status_by_order = defaultdict(set)
+        for status, wo in period.issue_progress.exclude(
+            issue_status=""
+        ).values_list("issue_status", "work_order_no"):
+            progress_status_by_order[wo].add(status)
+        roving_codes = set(
+            BomLine.objects.filter(period=period, sub_item_code__startswith="BC-")
+            .values_list("sub_item_code", flat=True)
+        )
+        roving_issue_orders = set(
+            period.material_issues.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        roving_progress_orders = set(
+            period.issue_progress.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        for item in wo_items:
+            order_no = item.work_order.order_no
+            ws = item.work_order.production_dept_code
+            if order_no in progress_qty_by_order:
+                item.accum_issue = progress_qty_by_order[order_no]
+            else:
+                item.accum_issue = Decimal(
+                    period.material_issues.filter(work_order_no=order_no)
+                    .aggregate(total=Sum("actual_issue_quantity"))["total"]
+                    or 0
+                )
+            statuses = progress_status_by_order.get(order_no)
+            item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
+            item.accum_finished = Decimal(item.finished_quantity or 0)
+            plan = Decimal(item.plan_quantity or 0)
+            item.finish_rate_pct = (
+                (item.accum_finished / plan * Decimal("100")) if plan else None
+            )
+            if ws == "tefang":
+                uses_roving = (
+                    (order_no in roving_issue_orders)
+                    or (order_no in roving_progress_orders)
+                    or BomLine.objects.filter(
+                        period=period,
+                        work_order_no=order_no,
+                        sub_item_code__in=roving_codes,
+                    ).exists()
+                )
+                item.uses_roving = "是" if uses_roving else "否"
+            else:
+                item.uses_roving = "—"
+
         mat_total = {}
         fee_total = {field: {} for field in MANUFACTURING_FIELDS}
         equiv_total = {}
@@ -789,12 +857,20 @@ def build_settlement_workbook(period):
 
         def _detail_row(item):
             ws = item.work_order.production_dept_code
+            rate_text = (
+                f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
+            )
             return (
                 item.work_order.order_no,
                 item.work_order.production_dept_code,
                 item.product_code,
                 item.product_name,
                 item.plan_quantity,
+                item.accum_issue,
+                item.issue_status,
+                item.accum_finished,
+                rate_text,
+                item.uses_roving,
                 item.finished_quantity,
                 item.wip_quantity,
                 item.direct_material,
@@ -821,12 +897,7 @@ def build_settlement_workbook(period):
         def _subtotal_row(ws, st):
             return (
                 f"{ws} 合计（{st['count']}张工单）",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
+                "", "", "", "", "", "", "", "", "", "", "",
                 st["direct_material"],
                 st["water_power"],
                 "",

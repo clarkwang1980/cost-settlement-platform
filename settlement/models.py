@@ -88,6 +88,10 @@ class ImportBatch(models.Model):
             "bom",
             "BOM表",
         )
+        ISSUE_PROGRESS = (
+            "issue_progress",
+            "投料进度表",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -586,6 +590,47 @@ class BomLine(models.Model):
         if not denominator:
             return 1
         return self.qty_numerator / denominator
+
+
+class IssueProgress(models.Model):
+    """工单投料进度表（ERP 导出台账）：投料状态等用于工单成本页展示。"""
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="issue_progress"
+    )
+    batch = models.ForeignKey(
+        ImportBatch, on_delete=models.CASCADE, related_name="issue_progress"
+    )
+    create_date = models.CharField(max_length=50, blank=True, verbose_name="创建日期")
+    department = models.CharField(max_length=100, blank=True, verbose_name="部门名称")
+    work_order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    line_no = models.CharField(max_length=40, blank=True, verbose_name="行号")
+    material_code = models.CharField(max_length=80, db_index=True, verbose_name="物料编号")
+    apply_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="申请数量"
+    )
+    issue_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="发料数量"
+    )
+    issue_batch_mark = models.CharField(
+        max_length=100, blank=True, verbose_name="发料批次-标识码"
+    )
+    actual_issue_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="投料数量"
+    )
+    actual_batch_mark = models.CharField(
+        max_length=100, blank=True, verbose_name="投料批次-标识码"
+    )
+    uom = models.CharField(max_length=30, blank=True, verbose_name="单位")
+    issue_status = models.CharField(max_length=50, blank=True, verbose_name="投料状态")
+
+    class Meta:
+        ordering = ["work_order_no", "line_no", "id"]
+        verbose_name = "投料进度表"
+        verbose_name_plural = "投料进度表"
+
+    def __str__(self):
+        return f"{self.work_order_no} {self.material_code} {self.issue_status}"
 
 
 class WorkshopCostPool(models.Model):
