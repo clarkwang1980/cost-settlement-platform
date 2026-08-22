@@ -2679,9 +2679,12 @@ def _listing_rows(request, period, kind):
             statuses = progress_status_by_order.get(order_no)
             item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
             item.accum_finished = Decimal(item.finished_quantity or 0)
-            plan = Decimal(item.plan_quantity or 0)
+            wip_qty = Decimal(item.wip_quantity or 0)
+            # 完工率 = 完工÷(完工+在产品)：纺纱不用粗纱工单的在产品=投料-完工，即 完工÷投料
             item.finish_rate_pct = (
-                (item.accum_finished / plan * Decimal("100")) if plan else None
+                (item.accum_finished / (item.accum_finished + wip_qty) * Decimal("100"))
+                if (item.accum_finished + wip_qty)
+                else None
             )
             if ws == "tefang":
                 uses_roving = (
