@@ -984,6 +984,10 @@ def _normalize_priced_production_flows(period: AccountingPeriod):
 
 
 def _settle_workshop_core(period, settlement, user=None):
+    # 粗纱链自动流转（幂等）：BC粗纱工单自动完工入库 + 下游工单自动补粗纱投料
+    from settlement.services.workorder_costing import prepare_roving_chain
+
+    prepare_roving_chain(period)
     previous_prices = {}
     summaries = {}
     converged = False
