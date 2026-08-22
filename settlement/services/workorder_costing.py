@@ -460,7 +460,7 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         issue_qty_by_order[row["work_order_no"]] += Decimal(
             row["actual_issue_quantity"] or ZERO
         )
-    # 用粗纱的工单（BOM子项或投料含 BC-）：维持原口径（计划-完工）
+    # 用粗纱的工单（BOM子项或投料含 BC-）：粗纱自动补投=按完工反推，无在产品
     roving_orders = set(
         period.bom_lines.filter(sub_item_code__startswith="BC-")
         .values_list("work_order_no", flat=True)
@@ -469,6 +469,21 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         .exclude(work_order_no="")
         .values_list("work_order_no", flat=True)
     )
+
+    def _wip_qty(wo_obj, finished_qty_val, plan_qty_val):
+        """纺纱车间在产品口径（用户规则）：
+        粗纱工单(BC-)/用粗纱工单 → 0（粗纱无在产品）；
+        不用粗纱工单 → max(投料kg-完工kg, 0)；
+        其他车间 → max(计划-完工, 0)。
+        """
+        ws = wo_obj.production_dept_code
+        order_no = wo_obj.order_no
+        if ws == "tefang":
+            if str(order_no).upper().startswith("BC-") or order_no in roving_orders:
+                return ZERO
+            if issue_qty_by_order.get(order_no, ZERO) > ZERO:
+                return max(issue_qty_by_order[order_no] - finished_qty_val, ZERO)
+        return max(plan_qty_val - finished_qty_val, ZERO)
 
     for wo in orders:
         opening = opening_map.get(wo.order_no)
@@ -480,18 +495,7 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         finished_qty = finished_by_order.get(wo.order_no, ZERO)
         plan_qty = Decimal(wo.plan_quantity or ZERO)
         ws = wo.production_dept_code
-        if (
-            ws == "tefang"
-            and wo.order_no not in roving_orders
-            and issue_qty_by_order.get(wo.order_no, ZERO) > ZERO
-        ):
-            # 纺纱不用粗纱的工单：投料kg与报工kg直接相减（不考虑损耗）
-            # 在产品 = 投料kg - 完工kg；完工率 = 完工/(完工+在产品)
-            wip_qty = max(
-                issue_qty_by_order[wo.order_no] - finished_qty, ZERO
-            )
-        else:
-            wip_qty = max(plan_qty - finished_qty, ZERO)
+        wip_qty = _wip_qty(wo, finished_qty, plan_qty)
         if (
             direct_material == ZERO
             and finished_qty == ZERO
@@ -541,17 +545,7 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
                 continue
             other_finished = finished_by_order.get(other.order_no, ZERO)
             other_plan = Decimal(other.plan_quantity or ZERO)
-            other_ws = other.production_dept_code
-            if (
-                other_ws == "tefang"
-                and other.order_no not in roving_orders
-                and issue_qty_by_order.get(other.order_no, ZERO) > ZERO
-            ):
-                other_wip = max(
-                    issue_qty_by_order[other.order_no] - other_finished, ZERO
-                )
-            else:
-                other_wip = max(other_plan - other_finished, ZERO)
+            other_wip = _wip_qty(other, other_finished, other_plan)
             equivalent = other_finished + other_wip * WIP_CONVERSION_RATE
             equivalent_by_order[other.order_no] = equivalent
             workshop_equivalent += equivalent
