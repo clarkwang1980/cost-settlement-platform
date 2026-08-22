@@ -1800,12 +1800,21 @@ def work_order_costs(request, period_id):
         # 投料状态：进度表该工单各行状态去重
         statuses = progress_status_by_order.get(order_no)
         item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
-        # 累计完工 / 完工率
+        # 累计完工 / 完工率（完工÷(完工+在产品)，与核算口径一致）
         item.accum_finished = Decimal(item.finished_quantity or 0)
-        plan = Decimal(item.plan_quantity or 0)
+        wip_qty = Decimal(item.wip_quantity or 0)
         item.finish_rate_pct = (
-            (item.accum_finished / plan * Decimal("100")) if plan else None
+            (item.accum_finished / (item.accum_finished + wip_qty) * Decimal("100"))
+            if (item.accum_finished + wip_qty)
+            else None
         )
+        # 完成状态：未开工 / 部分完成 / 已完成
+        if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
+            item.completion_status = "未开工"
+        elif wip_qty <= Decimal("0"):
+            item.completion_status = "已完成"
+        else:
+            item.completion_status = "部分完成"
         # 是否用粗纱：BOM子项/实际投料/投料进度 含 BC- 粗纱
         if ws == "tefang":
             uses_roving = (
@@ -2686,6 +2695,12 @@ def _listing_rows(request, period, kind):
                 if (item.accum_finished + wip_qty)
                 else None
             )
+            if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
+                item.completion_status = "未开工"
+            elif wip_qty <= Decimal("0"):
+                item.completion_status = "已完成"
+            else:
+                item.completion_status = "部分完成"
             if ws == "tefang":
                 uses_roving = (
                     (order_no in roving_issue_orders)
@@ -2702,7 +2717,7 @@ def _listing_rows(request, period, kind):
 
         # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
         headers = [
-            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态",
+            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态", "完成状态",
             "累计完工", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
@@ -2774,6 +2789,7 @@ def _listing_rows(request, period, kind):
                     item.plan_quantity,
                     item.accum_issue,
                     item.issue_status,
+                    item.completion_status,
                     item.accum_finished,
                     rate_text,
                     item.uses_roving,
@@ -2803,7 +2819,7 @@ def _listing_rows(request, period, kind):
             def _subtotal_row(ws, st):
                 return (
                     f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）",
-                    "", "", "", "", "", "", "", "", "", "", "", "",
+                    "", "", "", "", "", "", "", "", "", "", "", "", "",
                     st["direct_material"],
                     st["water_power"], "",
                     st["steam"], "",

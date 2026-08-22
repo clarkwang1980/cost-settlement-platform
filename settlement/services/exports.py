@@ -713,6 +713,7 @@ def build_settlement_workbook(period):
         "计划数量",
         "累计投料",
         "投料状态",
+        "完成状态",
         "累计完工",
         "累计完工率",
         "是否用粗纱",
@@ -797,6 +798,12 @@ def build_settlement_workbook(period):
                 if (item.accum_finished + wip_qty)
                 else None
             )
+            if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
+                item.completion_status = "未开工"
+            elif wip_qty <= Decimal("0"):
+                item.completion_status = "已完成"
+            else:
+                item.completion_status = "部分完成"
             if ws == "tefang":
                 uses_roving = (
                     (order_no in roving_issue_orders)
@@ -872,6 +879,7 @@ def build_settlement_workbook(period):
                 item.plan_quantity,
                 item.accum_issue,
                 item.issue_status,
+                item.completion_status,
                 item.accum_finished,
                 rate_text,
                 item.uses_roving,
@@ -901,7 +909,7 @@ def build_settlement_workbook(period):
         def _subtotal_row(ws, st):
             return (
                 f"{ws} 合计（{st['count']}张工单）",
-                "", "", "", "", "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "", "", "", "", "", "", "",
                 st["direct_material"],
                 st["water_power"],
                 "",
