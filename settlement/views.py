@@ -89,6 +89,7 @@ from settlement.services.sales_uninvoiced import (
 )
 from urllib.parse import quote
 from io import BytesIO
+import re
 import zipfile
 
 
@@ -1868,10 +1869,18 @@ def work_order_costs(request, period_id):
             item.uses_roving = "—"
         # 类别/计划完工时间/实际完工时间/完成状态：优先取工单明细（用户上传），无则系统回退
         detail = work_order_details.get(order_no)
+        # 产品编码兜底：product_code 为空时从工单标识码提取（如 14.1661-BF20260413 -> 14.1661），并回填显示
+        product_code = item.product_code
+        if not product_code:
+            _ident = item.work_order.identifier or order_no
+            _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
+            product_code = _m.group(1) if _m else _ident
+            item.product_code = product_code
         # 类别：流水匹配优先（用户要求：类别从流水里匹配）
         # 流水该产品物料的分类名（纱线/面料/染色纤维/原料/坯布等）→ 工单明细类别 → 工单类型
         item.wo_category = (
-            category_by_code.get(item.product_code)
+            category_by_code.get(product_code)
+            or category_by_code.get(item.product_code or "")
             or (detail.category if detail is not None else "")
             or item.work_order.order_type
             or ""
@@ -3507,8 +3516,15 @@ def _listing_rows(request, period, kind):
             # 类别/计划完工/实际完工/完成状态（优先工单明细）
             detail = work_order_details.get(order_no)
             # 类别：流水匹配优先（用户要求：类别从流水里匹配）
+            product_code = item.product_code
+            if not product_code:
+                _ident = item.work_order.identifier or order_no
+                _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
+                product_code = _m.group(1) if _m else _ident
+                item.product_code = product_code
             item.wo_category = (
-                category_by_code.get(item.product_code)
+                category_by_code.get(product_code)
+                or category_by_code.get(item.product_code or "")
                 or (detail.category if detail is not None else "")
                 or item.work_order.order_type
                 or ""
