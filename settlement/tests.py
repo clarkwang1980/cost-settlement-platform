@@ -1535,6 +1535,62 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 break
         self.assertTrue(found)
 
+    def test_ledger_pages_hidden_and_exports_available(self):
+        """工单/投料/报工台账不再出现在页面导航，仅在报表导出中心可导出（原样明细）。"""
+        from zipfile import ZipFile
+
+        from settlement.models import MaterialIssue, WorkReport
+
+        WorkOrder.objects.create(
+            period=self.period, order_no="LEDGER-1",
+            order_type="普通工单", production_dept_code="tefang",
+            status="已完工", plan_quantity=100,
+        )
+        MaterialIssue.objects.create(
+            period=self.period, task_no="TASK-L", work_order_no="LEDGER-1",
+            material_code="RM-L", material_name="示例原料",
+            issue_quantity=50, actual_issue_quantity=50, issue_uom="kg",
+        )
+        WorkReport.objects.create(
+            period=self.period, task_no="TASK-L", work_order_no="LEDGER-1",
+            material_code="FG-L", material_name="示例成品",
+            quantity=80, uom="kg",
+        )
+        self.client.force_login(self.user)
+        # 页面导航不含三个台账链接
+        for page_url_name in ("period_detail", "work_order_costs"):
+            html = self.client.get(
+                reverse(page_url_name, args=[self.period.id])
+            ).content.decode("utf-8")
+            for name in ("工单台账", "投料台账", "报工台账"):
+                self.assertNotIn(name, html)
+        # 导出中心含三项
+        html = self.client.get(
+            reverse("export_center", args=[self.period.id])
+        ).content.decode("utf-8")
+        for name in ("工单台账（原样明细）", "投料台账（原样明细）", "报工台账（原样明细）"):
+            self.assertIn(name, html)
+        # 勾选导出 ZIP 含三个台账且数据完整
+        resp = self.client.post(
+            reverse("export_center", args=[self.period.id]),
+            data={"reports": [
+                "work_order_ledger", "material_issue_ledger", "work_report_ledger",
+            ]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/zip", resp["Content-Type"])
+        zf = ZipFile(BytesIO(resp.content))
+        names = zf.namelist()
+        for marker, col, code in (
+            ("工单台账", 0, "LEDGER-1"),
+            ("投料台账", 3, "RM-L"),
+            ("报工台账", 4, "FG-L"),
+        ):
+            fname = [n for n in names if marker in n][0]
+            ws = load_workbook(BytesIO(zf.read(fname))).active
+            rows = list(ws.iter_rows(values_only=True))
+            self.assertTrue(any(r and r[col] == code for r in rows), marker)
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"

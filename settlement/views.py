@@ -2318,6 +2318,9 @@ LISTING_EXPORTS = {
     "work_order": {"title": "生产工单"},
     "order_material": {"title": "工单投料"},
     "order_completion": {"title": "工单报工"},
+    "work_order_ledger": {"title": "工单台账"},
+    "material_issue_ledger": {"title": "投料台账"},
+    "work_report_ledger": {"title": "报工台账"},
     "reconciliation": {"title": "勾稽结果"},
     "workshop_settlement": {"title": "车间结转"},
     "opening_inventory": {"title": "期初存货"},
@@ -2810,6 +2813,174 @@ def _listing_rows(request, period, kind):
                 ["工单编号", "车间/部门", "产品编码", "计划数量",
                  "投料数量", "报工数量", "报工入库数量"],
                 match_rows,
+            )
+        )
+
+    elif kind == "work_order_ledger":
+        # 工单台账（ERP 原样明细，不参与成本计算）
+        orders = period.work_orders.all()
+        orders = _text_filters(
+            request,
+            orders,
+            {
+                "order_no": "order_no",
+                "workshop": "production_dept_code",
+                "status": "status",
+            },
+        )
+        sheets.append(
+            (
+                "工单台账",
+                ["工单编号", "工单类型", "标识码", "计划数量", "计划开始时间", "计划完工时间",
+                 "优先级", "产线设备", "班次", "生产部门", "生产主管", "计划部门", "计划员",
+                 "备注", "指定用料", "外部单据编号", "状态", "使用物料清单", "使用工艺路线",
+                 "工序计划类型", "启用SOP", "生产模式", "产线编号", "订单号", "物料颜色"],
+                (
+                    (
+                        item.order_no,
+                        item.order_type,
+                        item.identifier,
+                        item.plan_quantity,
+                        item.planned_start,
+                        item.planned_finish,
+                        item.priority,
+                        item.line_equipment,
+                        item.shift,
+                        WORKSHOP_LABELS.get(item.production_dept_code, item.production_dept_code),
+                        item.production_supervisor_code,
+                        item.planning_dept_code,
+                        item.planner_code,
+                        item.remark,
+                        item.specified_material,
+                        item.external_document_no,
+                        item.status,
+                        "是" if item.use_bom else "否",
+                        "是" if item.use_routing else "否",
+                        item.process_plan_type,
+                        "是" if item.enable_sop else "否",
+                        item.production_mode,
+                        item.line_code,
+                        item.source_order_no,
+                        item.material_color,
+                    )
+                    for item in orders.order_by("production_dept_code", "order_no")
+                ),
+            )
+        )
+
+    elif kind == "material_issue_ledger":
+        # 投料台账（ERP 原样明细，不参与成本计算）
+        issues = period.material_issues.all()
+        issues = _text_filters(
+            request,
+            issues,
+            {
+                "order_no": "work_order_no",
+                "material": "material_code",
+            },
+        )
+        sheets.append(
+            (
+                "投料台账",
+                ["生产任务编号", "工序编号", "工序名称", "物料编码", "物料名称", "物料分类",
+                 "物料属性", "物料规格", "投料数量", "已撤回数量", "实际投料数量", "投料单位",
+                 "辅助数量", "辅助单位", "标识码", "批次号", "质量状态", "投料仓位",
+                 "被替代物料编码", "被替代物料名称", "投料时间", "投料人员", "执行人员",
+                 "工单编号", "主产出物料编码", "主产出物料名称", "销售订单编号", "投料记录编号"],
+                (
+                    (
+                        item.task_no,
+                        item.operation_no,
+                        item.operation_name,
+                        item.material_code,
+                        item.material_name,
+                        item.material_category,
+                        item.material_attribute,
+                        item.material_spec,
+                        item.issue_quantity,
+                        item.returned_quantity,
+                        item.actual_issue_quantity,
+                        item.issue_uom,
+                        item.auxiliary_quantity,
+                        item.auxiliary_uom,
+                        item.identifier,
+                        item.batch_no,
+                        item.quality_status,
+                        item.issue_location,
+                        item.replaced_material_code,
+                        item.replaced_material_name,
+                        item.issue_time,
+                        item.issuer,
+                        item.executor,
+                        item.work_order_no,
+                        item.main_output_code,
+                        item.main_output_name,
+                        item.sales_order_no,
+                        item.record_no,
+                    )
+                    for item in issues.order_by("id")
+                ),
+            )
+        )
+
+    elif kind == "work_report_ledger":
+        # 报工台账（ERP 原样明细，不参与成本计算）
+        reports = period.work_reports.all()
+        reports = _text_filters(
+            request,
+            reports,
+            {
+                "order_no": "work_order_no",
+                "material": "material_code",
+                "quality_status": "quality_status",
+            },
+        )
+        sheets.append(
+            (
+                "报工台账",
+                ["报工时间", "生产任务编号", "工序编号", "工序名称", "报工物料编码", "报工物料名称",
+                 "生产人员", "质量状态", "不良原因", "报工数量", "报工单位", "辅助数量", "辅助单位",
+                 "批次号", "标识码", "流转卡编号", "工时", "工时单位", "备注", "部门", "设备",
+                 "工单编号", "工单物料编码", "工单物料名称", "订单号", "纸管颜色", "纺纱班别",
+                 "含水率", "批号流水", "织布序号", "织布机台", "产出仓位", "工单部门"],
+                (
+                    (
+                        item.report_time,
+                        item.task_no,
+                        item.operation_no,
+                        item.operation_name,
+                        item.material_code,
+                        item.material_name,
+                        item.operator,
+                        item.quality_status,
+                        item.defect_reason,
+                        item.quantity,
+                        item.uom,
+                        item.auxiliary_quantity,
+                        item.auxiliary_uom,
+                        item.batch_no,
+                        item.identifier,
+                        item.route_card_no,
+                        item.work_hours,
+                        item.work_hours_uom,
+                        item.remark,
+                        item.department,
+                        item.equipment,
+                        item.work_order_no,
+                        item.work_order_material_code,
+                        item.work_order_material_name,
+                        item.order_no,
+                        item.paper_tube_color,
+                        item.spinning_shift,
+                        item.moisture_content,
+                        item.dye_batch_flow,
+                        item.weaving_sequence,
+                        item.weaving_machine,
+                        item.output_location,
+                        item.work_order_department,
+                    )
+                    for item in reports.order_by("id")
+                ),
             )
         )
 
@@ -3387,6 +3558,12 @@ def export_center(request, period_id):
          "desc": "各生产工单按投料/报工核算的完工与在制成本明细"},
         {"kind": "work_order", "name": "生产工单",
          "desc": "生产工单主档台账（数量、状态、计划时间）"},
+        {"kind": "work_order_ledger", "name": "工单台账（原样明细）",
+         "desc": "ERP 工单主档原样台账：工单号、类型、车间、计划数量、状态、计划时间、订单号、物料颜色等全字段"},
+        {"kind": "material_issue_ledger", "name": "投料台账（原样明细）",
+         "desc": "ERP 投料记录原样台账：物料、投料/实际投料数量、批次、仓位、投料时间、人员、工单号等全字段"},
+        {"kind": "work_report_ledger", "name": "报工台账（原样明细）",
+         "desc": "ERP 报工记录原样台账：报工数量、质量状态、工时、部门、设备、工单号、颜色/批次等全字段"},
         {"kind": "order_material", "name": "工单投料",
          "desc": "按工单 × 物料汇总投料记录台账数量与金额"},
         {"kind": "order_completion", "name": "工单报工",
