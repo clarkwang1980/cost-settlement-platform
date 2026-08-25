@@ -20,6 +20,9 @@
     <h1>工单完工与在制成本</h1>
     <p>每个车间独立一张表：直接材料＝投料记录×月末加权价；制造费用按材料占比、工资按折合数量分配；完工数量＝报工数量。</p>
   </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_cost' %}?{% if request.GET.order_no %}order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.order_no and request.GET.product %}&amp;{% endif %}{% if request.GET.product %}product={{ request.GET.product|urlencode }}{% endif %}">导出Excel（全部车间）</a>
+  </div>
 </section>
 {% if sections %}
 <section class="ws-tabs" role="tablist">

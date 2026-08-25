@@ -1313,12 +1313,15 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         # 页签标注工单数
         self.assertIn("纺纱车间 <small>1 张工单</small>", html)
         self.assertIn("机织车间 <small>1 张工单</small>", html)
-        # 每个车间的导出链接带 workshop 参数
+        # 每车间的导出链接带 workshop 参数；顶部"导出Excel（全部车间）"按钮不带 workshop
         export_hrefs = re.findall(
             r'href="([^"]*work_order_cost[^"]*)"', html
         )
         self.assertTrue(export_hrefs)
-        self.assertTrue(all("workshop=" in h for h in export_hrefs))
+        self.assertTrue(any("workshop=" in h for h in export_hrefs))
+        self.assertIn("导出Excel（全部车间）", html)
+        top_href = re.search(r'href="([^"]*work_order_cost[^"]*)"', html).group(1)
+        self.assertNotIn("workshop=", top_href)
         # 默认激活第一个车间页签（纺纱）
         self.assertIn('id="ws-tab-0"', html)
         self.assertIn('name="ws-tab"', html)
