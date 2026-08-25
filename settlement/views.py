@@ -1803,6 +1803,14 @@ def work_order_costs(request, period_id):
         .values("work_order_no")
         .annotate(max_time=_MaxDetail("report_time"))
     }
+    # 类别兜底：产品物料分类（纱线/面料/染色纤维/原料/坯布等，从库存流水分类名）
+    category_by_code = {}
+    for code, cat in (
+        period.inventory_transactions.exclude(category_name="")
+        .order_by("material_code")
+        .values_list("material_code", "category_name")
+    ):
+        category_by_code.setdefault(code, cat)
 
     for item in results:
         order_no = item.work_order.order_no
@@ -1863,7 +1871,11 @@ def work_order_costs(request, period_id):
         if detail is not None and detail.category:
             item.wo_category = detail.category
         else:
-            item.wo_category = item.work_order.order_type or ""
+            item.wo_category = (
+                category_by_code.get(item.product_code)
+                or item.work_order.order_type
+                or ""
+            )
         if detail is not None and detail.planned_finish:
             item.wo_planned_finish = detail.planned_finish
         else:
@@ -3436,6 +3448,14 @@ def _listing_rows(request, period, kind):
             .values("work_order_no")
             .annotate(max_time=_MaxDetail2("report_time"))
         }
+        # 类别兜底：产品物料分类
+        category_by_code = {}
+        for code, cat in (
+            period.inventory_transactions.exclude(category_name="")
+            .order_by("material_code")
+            .values_list("material_code", "category_name")
+        ):
+            category_by_code.setdefault(code, cat)
         for item in results:
             order_no = item.work_order.order_no
             ws = item.work_order.production_dept_code
@@ -3489,7 +3509,11 @@ def _listing_rows(request, period, kind):
             if detail is not None and detail.category:
                 item.wo_category = detail.category
             else:
-                item.wo_category = item.work_order.order_type or ""
+                item.wo_category = (
+                    category_by_code.get(item.product_code)
+                    or item.work_order.order_type
+                    or ""
+                )
             if detail is not None and detail.planned_finish:
                 item.wo_planned_finish = detail.planned_finish
             else:
