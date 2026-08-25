@@ -51,8 +51,10 @@ from settlement.services.exports import (
     settlement_excel_response,
 )
 from settlement.services.imports import (
+    ALIASES,
     WORKSHOP_LABELS,
     create_import_batch,
+    normalize_header,
     process_batch,
 )
 from settlement.services.matching import (
@@ -2328,6 +2330,57 @@ LISTING_EXPORTS = {
 }
 
 
+
+def _uploaded_ledger_rows(period, kind, queryset):
+    """按用户上传文件的格式导出台账：
+    - 格式（表头列名/顺序）取该类型行数最多的上传文件（即主文件）；
+    - 数据取数据库该类型全部记录，按上传表头逐列映射字段输出。
+    无上传文件或读取失败时返回 (None, None, None)。
+    """
+    from pathlib import Path
+
+    from settlement.services.exports import read_uploaded_rows
+
+    # 找到行数最多的上传批次作为格式基准
+    best_header = None
+    best_count = -1
+    for batch in (
+        period.import_batches.filter(kind=kind)
+        .exclude(file="")
+        .order_by("-created_at")
+    ):
+        try:
+            if not Path(batch.file.path).is_file():
+                continue
+            header, rows = read_uploaded_rows(Path(batch.file.path))
+        except Exception:
+            continue
+        if header and len(rows) > best_count:
+            best_header = header
+            best_count = len(rows)
+    if not best_header:
+        return None, None, None
+
+    # 上传表头 -> 模型字段（用 ALIASES 反查，兼容列名差异）
+    alias_map = {}
+    for field, names in ALIASES[kind].items():
+        for name in names:
+            alias_map[normalize_header(name)] = field
+    fields = [alias_map.get(normalize_header(h)) for h in best_header]
+
+    rows_out = []
+    for obj in queryset:
+        row = []
+        for f in fields:
+            if f:
+                v = getattr(obj, f, None)
+                row.append(v)
+            else:
+                row.append("")
+        rows_out.append(tuple(row))
+    return best_header, rows_out, best_count
+
+
 def _listing_rows(request, period, kind):
     """按 kind 返回 (工作表名, 表头, 数据行) 列表，筛选逻辑与列表页一致。"""
     sheets = []
@@ -2817,7 +2870,13 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "work_order_ledger":
-        # 工单台账（ERP 原样明细，不参与成本计算）
+        # 工单台账：格式/字段按用户上传文件原样，数据=本期全部工单；无上传时回退数据库明细
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORK_ORDER, period.work_orders.all()
+        )
+        if header:
+            sheets.append(("工单台账", header, raw_rows))
+            return sheets
         orders = period.work_orders.all()
         orders = _text_filters(
             request,
@@ -2869,7 +2928,13 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "material_issue_ledger":
-        # 投料台账（ERP 原样明细，不参与成本计算）
+        # 投料台账：格式/字段按用户上传文件原样，数据=本期全部投料记录；无上传时回退数据库明细
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.MATERIAL_ISSUE, period.material_issues.all()
+        )
+        if header:
+            sheets.append(("投料台账", header, raw_rows))
+            return sheets
         issues = period.material_issues.all()
         issues = _text_filters(
             request,
@@ -2924,7 +2989,13 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "work_report_ledger":
-        # 报工台账（ERP 原样明细，不参与成本计算）
+        # 报工台账：格式/字段按用户上传文件原样，数据=本期全部报工记录；无上传时回退数据库明细
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORK_REPORT, period.work_reports.all()
+        )
+        if header:
+            sheets.append(("报工台账", header, raw_rows))
+            return sheets
         reports = period.work_reports.all()
         reports = _text_filters(
             request,

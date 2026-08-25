@@ -1638,6 +1638,60 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(tf.natural_gas, D("0.00"))  # 纺纱留空天然气
         self.assertEqual(tf.dye_auxiliary, D("0.00"))
 
+    def test_ledger_export_uses_uploaded_format(self):
+        """台账导出格式 = 用户上传文件的列（原样），数据 = 数据库全部记录。"""
+        from zipfile import ZipFile
+
+        from openpyxl import Workbook
+
+        from settlement.models import MaterialIssue
+
+        # 上传一个投料记录 xlsx（自定义表头 4 列 + 2 行数据）
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "投料"
+        ws.append(["工单编号", "物料编码", "投料数量", "备注"])
+        ws.append(["WO-U1", "RM-U1", "50", "A"])
+        ws.append(["WO-U2", "RM-U2", "80", "B"])
+        stream = BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+        self.client.force_login(self.user)
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.MATERIAL_ISSUE,
+                    uploaded_file=SimpleUploadedFile(
+                        "投料记录.xlsx", stream.read(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                    user=self.user,
+                )
+                process_batch(batch)
+                # 导出投料台账：表头 = 上传表头（4列），数据 = 2 行
+                resp = self.client.post(
+                    reverse("export_center", args=[self.period.id]),
+                    data={"reports": ["material_issue_ledger"]},
+                )
+                self.assertEqual(resp.status_code, 200)
+                zf = ZipFile(BytesIO(resp.content))
+                fname = [n for n in zf.namelist() if "投料台账" in n][0]
+                ws = load_workbook(BytesIO(zf.read(fname))).active
+                rows = list(ws.iter_rows(values_only=True))
+                header = [str(c) for c in rows[0]]
+                self.assertEqual(header, ["工单编号", "物料编码", "投料数量", "备注"])
+                self.assertEqual(len(rows) - 1, 2)
+                # 数据内容映射正确
+                data = {r[0]: r for r in rows[1:]}
+                self.assertIn("WO-U1", data)
+                self.assertEqual(float(data["WO-U1"][2]), 50.0)
+        # 上传的两条已入库（4列表头里：工单编号→order_no 等都在 ALIASES 中）
+        self.assertEqual(
+            MaterialIssue.objects.filter(period=self.period).count(), 2
+        )
+
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"
