@@ -1495,6 +1495,46 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 break
         self.assertTrue(found)
 
+    def test_export_center_includes_price_table(self):
+        """导出中心包含"单价表"，勾选后 ZIP 内可导出跨月单价表。"""
+        from decimal import Decimal as D
+        from zipfile import ZipFile
+
+        from settlement.models import HistoricalPrice
+
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="EXP-HP",
+            material_name="导出测试物料",
+            receipt_price=D("45.67000000"), issue_price=D("44.44000000"),
+        )
+        self.client.force_login(self.user)
+        # 导出中心页面含单价表选项
+        resp = self.client.get(reverse("export_center", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "单价表（历史单价·跨月对比）")
+        # 勾选导出 ZIP
+        resp = self.client.post(
+            reverse("export_center", args=[self.period.id]),
+            data={"reports": ["price_table"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/zip", resp["Content-Type"])
+        zf = ZipFile(BytesIO(resp.content))
+        names = zf.namelist()
+        self.assertTrue(any("单价表" in n for n in names))
+        wb = load_workbook(
+            BytesIO(zf.read([n for n in names if "单价表" in n][0]))
+        )
+        ws = wb.active
+        found = False
+        for row in ws.iter_rows(values_only=True):
+            if row and row[1] == "EXP-HP":
+                found = True
+                self.assertEqual(float(row[4]), 45.67)
+                self.assertEqual(float(row[5]), 44.44)
+                break
+        self.assertTrue(found)
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"

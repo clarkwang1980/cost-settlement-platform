@@ -1916,6 +1916,163 @@ def work_order_costs(request, period_id):
     )
 
 
+def prepare_price_table_data(period, n=6):
+    """准备单价表（跨月对比）数据：期间列表、物料行、类别筛选。
+
+    物料列表 = 各期间库存计价 ∪ 上传历史单价（未结算期间的上传价也显示）。
+    单价优先上传历史单价；未上传用系统计算价。含历史单价自动补全。
+    """
+    from settlement.models import AccountingPeriod, InventoryTransaction
+    from settlement.services.historical_prices import autofill_historical_prices
+
+    periods = list(
+        AccountingPeriod.objects.filter(month__lte=period.month)
+        .order_by("-month")[:n]
+    )
+    periods = list(reversed(periods))
+
+    # 历史单价自动补全：用户只需上传一次基准，期间内新增物料自动按系统计算单价补入
+    autofill_historical_prices(periods)
+
+    per_period = {
+        p.id: {v.material_code: v for v in p.inventory_valuations.all()}
+        for p in periods
+    }
+    # 用户上传的历史单价（优先展示；未上传的物料仍用系统计算单价）
+    historical = {
+        p.id: {hp.material_code: hp for hp in p.historical_prices.all()}
+        for p in periods
+    }
+    # 物料列表 = 库存计价 ∪ 历史单价：上传过单价的物料即使该期间未结算也显示
+    codes = set()
+    for d in per_period.values():
+        codes.update(d.keys())
+    for d in historical.values():
+        codes.update(d.keys())
+
+    cat_by_code = {}
+    uom_by_code = {}
+    for code, cat, uom in (
+        InventoryTransaction.objects.filter(period__in=periods)
+        .exclude(category_name="")
+        .order_by("material_code")
+        .values_list("material_code", "category_name", "uom")
+    ):
+        cat_by_code.setdefault(code, cat)
+        uom_by_code.setdefault(code, uom)
+
+    name_by_code = {}
+    for p in periods:
+        for v in p.inventory_valuations.all():
+            name_by_code.setdefault(v.material_code, v.material_name)
+    for p in periods:
+        for hp in p.historical_prices.all():
+            name_by_code.setdefault(hp.material_code, hp.material_name)
+
+    RAW = {"原料", "染色纤维", "纤维", "熟条", "浆粕"}
+    FIN = {"纱线", "面料", "坯布", "布", "成品"}
+
+    def big_cat(code):
+        cat = cat_by_code.get(code, "")
+        if cat in RAW:
+            return "原料"
+        if cat in FIN:
+            return "成品"
+        return "其它"
+
+    rows = []
+    for code in sorted(codes):
+        cat = big_cat(code)
+        cells = []
+        for p in periods:
+            v = per_period[p.id].get(code)
+            hp = historical.get(p.id, {}).get(code)
+            if v is None:
+                if hp is not None:
+                    rp = Decimal(hp.receipt_price) if hp.receipt_price is not None else Decimal("0")
+                    ip = Decimal(hp.issue_price) if hp.issue_price is not None else Decimal("0")
+                    cells.append((Decimal("0"), Decimal("0"), rp, Decimal("0"), Decimal("0"), ip))
+                else:
+                    cells.append((Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
+                continue
+            rq = Decimal(v.receipt_quantity or 0)
+            ra = Decimal(v.receipt_amount or 0)
+            iq = Decimal(v.issue_quantity or 0)
+            ia = Decimal(v.issue_amount or 0)
+            rp = (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0")
+            ip = (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0")
+            if hp is not None:
+                if hp.receipt_price is not None:
+                    rp = Decimal(hp.receipt_price)
+                if hp.issue_price is not None:
+                    ip = Decimal(hp.issue_price)
+            cells.append((rq, ra, rp, iq, ia, ip))
+        rows.append({
+            "category": cat,
+            "code": code,
+            "name": name_by_code.get(code, ""),
+            "uom": uom_by_code.get(code, ""),
+            "cells": cells,
+        })
+
+    rows.sort(key=lambda r: ({"原料": 0, "成品": 1, "其它": 2}.get(r["category"], 9), r["code"]))
+    return periods, rows
+
+
+def build_price_table_workbook(period, n=6):
+    """生成单价表（跨月对比）Excel 工作簿，返回 BytesIO。"""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    periods, rows = prepare_price_table_data(period, n)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "单价表-跨月对比"
+    ws.append([f"物料单价表（跨月对比）"])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 2 * len(periods))
+    ws.cell(1, 1).font = Font(bold=True, size=14)
+    headers = ["类别", "物料编码", "物料名称", "单位"]
+    for p in periods:
+        headers += [
+            f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库单价",
+        ]
+    ws.append(headers)
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    fill = PatternFill("solid", fgColor="1F4E79")
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(2, c)
+        cell.fill = fill
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    raw_fill = PatternFill("solid", fgColor="FCE4D6")
+    fin_fill = PatternFill("solid", fgColor="E2EFDA")
+    for row in rows:
+        line = [row["category"], row["code"], row["name"], row["uom"]]
+        for rq, ra, rp, iq, ia, ip in row["cells"]:
+            line += [rp, ip]
+        ws.append(line)
+        rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
+        for c in range(1, len(headers) + 1):
+            cell = ws.cell(ws.max_row, c)
+            cell.border = border
+            if c >= 5:
+                cell.alignment = Alignment(horizontal="right")
+                cell.number_format = "#,##0.0000"
+            if rf:
+                cell.fill = rf
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 16
+    ws.freeze_panes = "E3"
+    stream = BytesIO()
+    wb.save(stream)
+    return stream
+
+
 @login_required
 def price_table_view(request, period_id):
     """单价表（跨月对比）：每个物料一行，每月一组「入库单价、出库单价」。
@@ -2043,48 +2200,7 @@ def price_table_view(request, period_id):
         return (a / q).quantize(Decimal("0.0001")) if q else Decimal("0")
 
     if request.GET.get("export"):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "单价表-跨月对比"
-        ws.append([f"物料单价与出入库成本表（跨月对比）"])
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 2 * len(periods))
-        ws.cell(1, 1).font = Font(bold=True, size=14)
-        headers = ["类别", "物料编码", "物料名称", "单位"]
-        for p in periods:
-            headers += [
-                f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库单价",
-            ]
-        ws.append(headers)
-        thin = Side(style="thin", color="BFBFBF")
-        border = Border(left=thin, right=thin, top=thin, bottom=thin)
-        fill = PatternFill("solid", fgColor="1F4E79")
-        for c in range(1, len(headers) + 1):
-            cell = ws.cell(2, c)
-            cell.fill = fill
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = border
-        raw_fill = PatternFill("solid", fgColor="FCE4D6")
-        fin_fill = PatternFill("solid", fgColor="E2EFDA")
-        for row in rows:
-            line = [row["category"], row["code"], row["name"], row["uom"]]
-            for rq, ra, rp, iq, ia, ip in row["cells"]:
-                line += [rp, ip]
-            ws.append(line)
-            rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
-            for c in range(1, len(headers) + 1):
-                cell = ws.cell(ws.max_row, c)
-                cell.border = border
-                if c >= 5:
-                    cell.alignment = Alignment(horizontal="right")
-                    cell.number_format = "#,##0.0000"
-                if rf:
-                    cell.fill = rf
-        for i, h in enumerate(headers, 1):
-            ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 16
-        ws.freeze_panes = "E3"
-        stream = BytesIO()
-        wb.save(stream)
+        stream = build_price_table_workbook(period, n)
         response = HttpResponse(
             stream.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3281,6 +3397,8 @@ def export_center(request, period_id):
          "desc": "车间结转顺序、状态与成本结果"},
     ]
     SPECIAL_REPORTS = [
+        {"key": "price_table", "name": "单价表（历史单价·跨月对比）",
+         "desc": "各物料最近多期的入库/出库单价（上传的历史单价优先，未上传用系统计算价）；含新增物料自动补全"},
         {"key": "settlement_workbook", "name": "结算工作簿（完整）",
          "desc": "含 16 个工作表的完整结算底稿：库存计价、跨期结转、月末暂估、勾稽等"},
         {"key": "uploaded_files", "name": "上传的原始文件",
@@ -3300,6 +3418,10 @@ def export_center(request, period_id):
                     sheets = _listing_rows(request, period, kind)
                     wb_stream = build_listing_workbook(sheets)
                     filename = f"{LISTING_EXPORTS[kind]['title']}-{period.month:%Y%m}.xlsx"
+                    zf.writestr(filename, wb_stream.getvalue())
+                elif kind == "price_table":
+                    wb_stream = build_price_table_workbook(period)
+                    filename = f"单价表-{period.month:%Y%m}.xlsx"
                     zf.writestr(filename, wb_stream.getvalue())
                 elif kind == "settlement_workbook":
                     wb_stream = build_settlement_workbook(period)
