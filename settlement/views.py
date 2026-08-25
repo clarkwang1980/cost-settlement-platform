@@ -1821,6 +1821,21 @@ def work_order_costs(request, period_id):
         )
     # 产品编码/名称统一解析器（BOM → 标识码提取 → 工单号）
     resolve_product = build_product_resolver(period)
+    # 投料物料单价：月末加权价优先（成本口径），无则历史单价兜底
+    material_price = {}
+    for v in period.inventory_valuations.all():
+        material_price.setdefault(v.material_code, Decimal(v.weighted_average_price or 0))
+    for hp in period.historical_prices.all():
+        if hp.receipt_price is not None:
+            material_price.setdefault(hp.material_code, Decimal(hp.receipt_price))
+    # 工单投料数量聚合：(work_order_no, material_code) -> 实际投料数量
+    issue_qty_by_pair = defaultdict(Decimal)
+    for row in period.material_issues.exclude(work_order_no="").exclude(material_code="").values(
+        "work_order_no", "material_code", "actual_issue_quantity"
+    ):
+        issue_qty_by_pair[(row["work_order_no"], row["material_code"])] += Decimal(
+            row["actual_issue_quantity"] or 0
+        )
     # 物料名关键词推断类别（纱线/面料/染色纤维/坯布等）
     _CATEGORY_KEYWORDS = (
         ("面料", ("面料", "坯布", "织布", "摇粒绒", "螺纹", "绒布", "布", "绒")),
@@ -1865,6 +1880,22 @@ def work_order_costs(request, period_id):
         )
         # 本期投料（当月投料；投料无期初结转，本期=累计）
         item.current_issue = Decimal(item.accum_issue or 0)
+        # 投料物料单价：该工单投料物料的加权平均单价 = Σ(数量×月末加权价) ÷ Σ数量
+        _qty_total = Decimal("0")
+        _amt_total = Decimal("0")
+        for (wo_no, mat_code), qty in issue_qty_by_pair.items():
+            if wo_no != order_no:
+                continue
+            _price = material_price.get(mat_code, Decimal("0"))
+            if _price <= 0:
+                continue
+            _qty_total += qty
+            _amt_total += qty * _price
+        item.current_unit_price = (
+            (_amt_total / _qty_total).quantize(Decimal("0.0001"))
+            if _qty_total
+            else Decimal("0")
+        )
         # 本期完工（完工均为当月报工，本期=累计）
         item.current_finished = Decimal(item.accum_finished or 0)
         # 本期完工率 = 本期完工 ÷ (本期完工 + 在产品)
@@ -3510,6 +3541,20 @@ def _listing_rows(request, period, kind):
                 line.work_order_no, (line.material_code, line.material_name)
             )
         resolve_product = build_product_resolver(period)
+        # 投料物料单价（月末加权价优先，历史单价兜底）+ 工单投料数量聚合
+        material_price = {}
+        for v in period.inventory_valuations.all():
+            material_price.setdefault(v.material_code, Decimal(v.weighted_average_price or 0))
+        for hp in period.historical_prices.all():
+            if hp.receipt_price is not None:
+                material_price.setdefault(hp.material_code, Decimal(hp.receipt_price))
+        issue_qty_by_pair = defaultdict(Decimal)
+        for row in period.material_issues.exclude(work_order_no="").exclude(material_code="").values(
+            "work_order_no", "material_code", "actual_issue_quantity"
+        ):
+            issue_qty_by_pair[(row["work_order_no"], row["material_code"])] += Decimal(
+                row["actual_issue_quantity"] or 0
+            )
         _CATEGORY_KEYWORDS2 = (
             ("面料", ("面料", "坯布", "织布", "摇粒绒", "螺纹", "绒布", "布", "绒")),
             ("纱线", ("纱线", "纱")),
@@ -3551,6 +3596,22 @@ def _listing_rows(request, period, kind):
             )
             # 本期投料/完工/完工率（与页面一致）
             item.current_issue = Decimal(item.accum_issue or 0)
+            # 投料物料单价：该工单投料物料的加权平均单价
+            _qty_total = Decimal("0")
+            _amt_total = Decimal("0")
+            for (wo_no, mat_code), qty in issue_qty_by_pair.items():
+                if wo_no != order_no:
+                    continue
+                _price = material_price.get(mat_code, Decimal("0"))
+                if _price <= 0:
+                    continue
+                _qty_total += qty
+                _amt_total += qty * _price
+            item.current_unit_price = (
+                (_amt_total / _qty_total).quantize(Decimal("0.0001"))
+                if _qty_total
+                else Decimal("0")
+            )
             item.current_finished = Decimal(item.accum_finished or 0)
             item.current_finish_rate_pct = (
                 (item.current_finished / (item.current_finished + wip_qty) * Decimal("100"))
@@ -3629,7 +3690,7 @@ def _listing_rows(request, period, kind):
         headers = [
             "核算期间", "工单编号", "车间", "类别", "产品编码", "产品名称",
             "计划完工时间", "实际完工时间", "完成状态", "计划数量",
-            "本期投料", "累计投料", "投料状态",
+            "本期投料", "投料单价", "累计投料", "投料状态",
             "本期完工", "累计完工", "本期完工率", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
@@ -3706,6 +3767,7 @@ def _listing_rows(request, period, kind):
                     item.wo_completion_status,
                     item.plan_quantity,
                     item.current_issue,
+                    item.current_unit_price,
                     item.accum_issue,
                     item.issue_status,
                     item.current_finished,
@@ -3741,7 +3803,7 @@ def _listing_rows(request, period, kind):
 
             def _subtotal_row(ws, st):
                 row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
-                row += [""] * 18
+                row += [""] * 19
                 row += [
                     st["direct_material"],
                     st["water_power"], "",
