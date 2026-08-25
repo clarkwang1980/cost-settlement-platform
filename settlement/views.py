@@ -2325,6 +2325,7 @@ LISTING_EXPORTS = {
     "work_report_ledger": {"title": "报工台账"},
     "reconciliation": {"title": "勾稽结果"},
     "workshop_settlement": {"title": "车间结转"},
+    "workshop_cost": {"title": "车间费用"},
     "opening_inventory": {"title": "期初存货"},
     "ending_inventory": {"title": "期末存货"},
 }
@@ -3485,6 +3486,34 @@ def _listing_rows(request, period, kind):
             )
         )
 
+    elif kind == "workshop_cost":
+        # 车间费用：格式/字段按用户上传文件原样，数据=本期全部车间费用；无上传时回退数据库明细
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORKSHOP_COST, period.workshop_cost_pools.all()
+        )
+        if header:
+            sheets.append(("车间费用", header, raw_rows))
+            return sheets
+        sheets.append(
+            (
+                "车间费用",
+                ["车间", "水电", "蒸汽", "天然气", "折旧", "机物料", "染料助剂", "工资"],
+                (
+                    (
+                        WORKSHOP_LABELS.get(p.workshop, p.workshop),
+                        p.water_power,
+                        p.steam,
+                        p.natural_gas,
+                        p.depreciation,
+                        p.consumables,
+                        p.dye_auxiliary,
+                        p.wages,
+                    )
+                    for p in period.workshop_cost_pools.all().order_by("workshop")
+                ),
+            )
+        )
+
     elif kind == "workshop_settlement":
         sheets.append(
             (
@@ -3641,6 +3670,8 @@ def export_center(request, period_id):
          "desc": "工单完工汇报：报工数量、完工成本、报工入库数量与金额"},
         {"kind": "reconciliation", "name": "勾稽结果与异常清单",
          "desc": "全部勾稽项目（含异常清单），两个工作表"},
+        {"kind": "workshop_cost", "name": "车间费用",
+         "desc": "各车间本期费用（水电/蒸汽/天然气/折旧/机物料/染料助剂/工资），按上传原样格式导出"},
         {"kind": "workshop_settlement", "name": "车间结转",
          "desc": "车间结转顺序、状态与成本结果"},
     ]
