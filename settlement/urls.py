@@ -161,6 +161,11 @@ urlpatterns = [
         name="production_cost_summary",
     ),
     path(
+        "periods/<int:period_id>/price-table/",
+        views.price_table_view,
+        name="price_table",
+    ),
+    path(
         "periods/<int:period_id>/reconciliation/",
         views.reconciliation,
         name="reconciliation",

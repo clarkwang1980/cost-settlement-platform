@@ -1915,6 +1915,220 @@ def work_order_costs(request, period_id):
 
 
 @login_required
+def price_table_view(request, period_id):
+    """单价表（跨月对比）：每个物料一行，每月一组「入库数量/金额/单价、出库数量/金额/单价」。
+
+    数据来自各期间 InventoryValuation（结算后生成）；默认取最近 6 期（含当前），
+    支持 ?periods=N（1~12）与 ?category=all|raw|fin|other 筛选；?export=1 导出 Excel。
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    from settlement.models import AccountingPeriod, InventoryTransaction
+
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    try:
+        n = min(max(int(request.GET.get("periods", "6")), 1), 12)
+    except (TypeError, ValueError):
+        n = 6
+    periods = list(
+        AccountingPeriod.objects.filter(month__lte=period.month)
+        .order_by("-month")[:n]
+    )
+    periods = list(reversed(periods))
+
+    per_period = {
+        p.id: {v.material_code: v for v in p.inventory_valuations.all()}
+        for p in periods
+    }
+    codes = set()
+    for d in per_period.values():
+        codes.update(d.keys())
+
+    cat_by_code = {}
+    uom_by_code = {}
+    for code, cat, uom in (
+        InventoryTransaction.objects.filter(period__in=periods)
+        .exclude(category_name="")
+        .order_by("material_code")
+        .values_list("material_code", "category_name", "uom")
+    ):
+        cat_by_code.setdefault(code, cat)
+        uom_by_code.setdefault(code, uom)
+
+    name_by_code = {}
+    for p in periods:
+        for v in p.inventory_valuations.all():
+            name_by_code.setdefault(v.material_code, v.material_name)
+
+    RAW = {"原料", "染色纤维", "纤维", "熟条", "浆粕"}
+    FIN = {"纱线", "面料", "坯布", "布", "成品"}
+
+    def big_cat(code):
+        cat = cat_by_code.get(code, "")
+        if cat in RAW:
+            return "原料"
+        if cat in FIN:
+            return "成品"
+        return "其它"
+
+    category_filter = (request.GET.get("category") or "all").strip()
+    want_cat = {"raw": "原料", "fin": "成品", "other": "其它"}.get(category_filter)
+
+    rows = []
+    for code in sorted(codes):
+        cat = big_cat(code)
+        if want_cat and cat != want_cat:
+            continue
+        cells = []
+        for p in periods:
+            v = per_period[p.id].get(code)
+            if v is None:
+                cells.append((Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
+                continue
+            rq = Decimal(v.receipt_quantity or 0)
+            ra = Decimal(v.receipt_amount or 0)
+            iq = Decimal(v.issue_quantity or 0)
+            ia = Decimal(v.issue_amount or 0)
+            cells.append((
+                rq, ra, (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0"),
+                iq, ia, (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0"),
+            ))
+        rows.append({
+            "category": cat,
+            "code": code,
+            "name": name_by_code.get(code, ""),
+            "uom": uom_by_code.get(code, ""),
+            "cells": cells,
+        })
+
+    rows.sort(key=lambda r: ({"原料": 0, "成品": 1, "其它": 2}.get(r["category"], 9), r["code"]))
+
+    # 分类小计 / 总计（每期一组：入库数量/金额/单价、出库数量/金额/单价）
+    def _price(a, q):
+        q = Decimal(q or 0)
+        a = Decimal(a or 0)
+        return (a / q).quantize(Decimal("0.0001")) if q else Decimal("0")
+
+    subtotals = {}
+    grand = [{"rq": Decimal("0"), "ra": Decimal("0"), "rp": Decimal("0"), "iq": Decimal("0"), "ia": Decimal("0"), "ip": Decimal("0")} for _ in periods]
+    for row in rows:
+        st = subtotals.setdefault(row["category"], [
+            {"rq": Decimal("0"), "ra": Decimal("0"), "rp": Decimal("0"), "iq": Decimal("0"), "ia": Decimal("0"), "ip": Decimal("0")}
+            for _ in periods
+        ])
+        for i, cell in enumerate(row["cells"]):
+            st[i]["rq"] += cell[0]
+            st[i]["ra"] += cell[1]
+            st[i]["iq"] += cell[3]
+            st[i]["ia"] += cell[4]
+            grand[i]["rq"] += cell[0]
+            grand[i]["ra"] += cell[1]
+            grand[i]["iq"] += cell[3]
+            grand[i]["ia"] += cell[4]
+    for st in subtotals.values():
+        for i, item in enumerate(st):
+            item["rp"] = _price(item["ra"], item["rq"])
+            item["ip"] = _price(item["ia"], item["iq"])
+    for i, item in enumerate(grand):
+        item["rp"] = _price(item["ra"], item["rq"])
+        item["ip"] = _price(item["ia"], item["iq"])
+
+    if request.GET.get("export"):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "单价表-跨月对比"
+        ws.append([f"物料单价与出入库成本表（跨月对比）"])
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 6 * len(periods))
+        ws.cell(1, 1).font = Font(bold=True, size=14)
+        headers = ["类别", "物料编码", "物料名称", "单位"]
+        for p in periods:
+            headers += [
+                f"{p.month:%Y-%m} 入库数量", f"{p.month:%Y-%m} 入库金额",
+                f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库数量",
+                f"{p.month:%Y-%m} 出库金额", f"{p.month:%Y-%m} 出库单价",
+            ]
+        ws.append(headers)
+        thin = Side(style="thin", color="BFBFBF")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        fill = PatternFill("solid", fgColor="1F4E79")
+        for c in range(1, len(headers) + 1):
+            cell = ws.cell(2, c)
+            cell.fill = fill
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = border
+        raw_fill = PatternFill("solid", fgColor="FCE4D6")
+        fin_fill = PatternFill("solid", fgColor="E2EFDA")
+        sub_fill = PatternFill("solid", fgColor="D9E1F2")
+        total_fill = PatternFill("solid", fgColor="FFF2CC")
+        for row in rows:
+            line = [row["category"], row["code"], row["name"], row["uom"]]
+            for rq, ra, rp, iq, ia, ip in row["cells"]:
+                line += [rq, ra, rp, iq, ia, ip]
+            ws.append(line)
+            rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
+            for c in range(1, len(headers) + 1):
+                cell = ws.cell(ws.max_row, c)
+                cell.border = border
+                if c >= 5:
+                    cell.alignment = Alignment(horizontal="right")
+                    cell.number_format = "#,##0.00"
+                if rf:
+                    cell.fill = rf
+        for cat, st in subtotals.items():
+            line = [f"{cat}小计", "", "", ""]
+            for item in st:
+                line += [item["rq"], item["ra"], item["rp"], item["iq"], item["ia"], item["ip"]]
+            ws.append(line)
+            for c in range(1, len(headers) + 1):
+                cell = ws.cell(ws.max_row, c)
+                cell.fill = sub_fill
+                cell.font = Font(bold=True)
+                cell.border = border
+        line = ["总计", "", "", ""]
+        for item in grand:
+            line += [item["rq"], item["ra"], item["rp"], item["iq"], item["ia"], item["ip"]]
+        ws.append(line)
+        for c in range(1, len(headers) + 1):
+            cell = ws.cell(ws.max_row, c)
+            cell.fill = total_fill
+            cell.font = Font(bold=True)
+            cell.border = border
+        for i, h in enumerate(headers, 1):
+            ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 16
+        ws.freeze_panes = "E3"
+        stream = BytesIO()
+        wb.save(stream)
+        response = HttpResponse(
+            stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote('单价表-跨月对比-' + period.month.strftime('%Y%m') + '.xlsx')}"
+        )
+        return response
+
+    return render(
+        request,
+        "settlement/price_table.html",
+        {
+            "period": period,
+            "periods": periods,
+            "rows": rows,
+            "subtotals": subtotals,
+            "grand": grand,
+            "category_filter": category_filter or "all",
+            "n_periods": len(periods),
+            "periods_options": list(range(1, 13)),
+            "price": _price,
+        },
+    )
+
+
+@login_required
 def reconciliation(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     return render(

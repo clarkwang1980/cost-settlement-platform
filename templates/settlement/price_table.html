@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}单价表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PRICE TABLE</p>
+    <h1>物料单价与出入库成本表（跨月对比）</h1>
+    <p>每个物料一行，每月一组：入库数量/金额/单价、出库数量/金额/单价。入库单价＝入库金额÷入库数量；出库单价＝出库金额÷出库数量。数据来自各期间结算后的库存计价结果。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'price_table' period.id %}?{{ request.GET.urlencode }}&amp;export=1">导出Excel</a>
+  </div>
+</section>
+<section class="section-card filter-card">
+  <form method="get" class="production-cost-filter">
+    <label>期间数
+      <select name="periods">
+        {% for k in periods_options %}
+        <option value="{{ k }}" {% if n_periods == k %}selected{% endif %}>{{ k }} 期</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>类别
+      <select name="category">
+        <option value="all" {% if category_filter == "all" %}selected{% endif %}>全部</option>
+        <option value="raw" {% if category_filter == "raw" %}selected{% endif %}>原料</option>
+        <option value="fin" {% if category_filter == "fin" %}selected{% endif %}>成品</option>
+        <option value="other" {% if category_filter == "other" %}selected{% endif %}>其它</option>
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button primary" type="submit">查询</button>
+      <a class="button secondary" href="{% url 'price_table' period.id %}">重置</a>
+    </div>
+  </form>
+</section>
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">{{ periods.0.month|date:"Y-m" }} ~ {{ periods.last.month|date:"Y-m" }}</p>
+      <h2>共 {{ rows|length }} 个物料 · {{ periods|length }} 个期间</h2>
+    </div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead>
+      <tr>
+        <th rowspan="2">类别</th>
+        <th rowspan="2">物料编码</th>
+        <th rowspan="2">物料名称</th>
+        <th rowspan="2">单位</th>
+        {% for p in periods %}
+        <th colspan="6" class="period-head">{{ p.month|date:"Y-m" }}</th>
+        {% endfor %}
+      </tr>
+      <tr>
+        {% for p in periods %}
+        <th class="num">入库数量</th><th class="num">入库金额</th><th class="num">入库单价</th>
+        <th class="num">出库数量</th><th class="num">出库金额</th><th class="num">出库单价</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.category }}</td>
+      <td><strong>{{ row.code }}</strong></td>
+      <td>{{ row.name }}</td>
+      <td>{{ row.uom }}</td>
+      {% for rq, ra, rp, iq, ia, ip in row.cells %}
+      <td class="num">{{ rq|floatformat:4 }}</td>
+      <td class="num">{{ ra|floatformat:2 }}</td>
+      <td class="num">{{ rp|floatformat:4 }}</td>
+      <td class="num">{{ iq|floatformat:4 }}</td>
+      <td class="num">{{ ia|floatformat:2 }}</td>
+      <td class="num">{{ ip|floatformat:4 }}</td>
+      {% endfor %}
+    </tr>
+    {% empty %}
+    <tr><td colspan="4">暂无可比期间数据，请先执行车间结算生成库存计价。</td></tr>
+    {% endfor %}
+    {% for cat, st in subtotals.items %}
+    <tr style="background:#eef2f7;font-weight:600;">
+      <td>{{ cat }}小计</td><td></td><td></td><td></td>
+      {% for item in st %}
+      <td class="num">{{ item.rq|floatformat:4 }}</td>
+      <td class="num">{{ item.ra|floatformat:2 }}</td>
+      <td class="num">{{ item.rp|floatformat:4 }}</td>
+      <td class="num">{{ item.iq|floatformat:4 }}</td>
+      <td class="num">{{ item.ia|floatformat:2 }}</td>
+      <td class="num">{{ item.ip|floatformat:4 }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    <tr style="background:#fff2cc;font-weight:700;">
+      <td>总计</td><td></td><td></td><td></td>
+      {% for item in grand %}
+      <td class="num">{{ item.rq|floatformat:4 }}</td>
+      <td class="num">{{ item.ra|floatformat:2 }}</td>
+      <td class="num">{{ item.rp|floatformat:4 }}</td>
+      <td class="num">{{ item.iq|floatformat:4 }}</td>
+      <td class="num">{{ item.ia|floatformat:2 }}</td>
+      <td class="num">{{ item.ip|floatformat:4 }}</td>
+      {% endfor %}
+    </tr>
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}
