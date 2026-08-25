@@ -1918,10 +1918,12 @@ def work_order_costs(request, period_id):
 
 @login_required
 def price_table_view(request, period_id):
-    """单价表（跨月对比）：每个物料一行，每月一组「入库数量/金额/单价、出库数量/金额/单价」。
+    """单价表（跨月对比）：每个物料一行，每月一组「入库单价、出库单价」。
 
-    数据来自各期间 InventoryValuation（结算后生成）；默认取最近 6 期（含当前），
-    支持 ?periods=N（1~12）与 ?category=all|raw|fin|other 筛选；?export=1 导出 Excel。
+    物料列表 = 各期间库存计价 ∪ 上传的历史单价（上传过单价的物料即使该期间未结算也显示）；
+    单价优先用上传的历史单价，未上传的用系统计算价（入库金额÷数量、出库金额÷数量）。
+    默认取最近 6 期（含当前），支持 ?periods=N（1~12）与 ?category=all|raw|fin|other 筛选；
+    ?export=1 导出 Excel。
     """
     from io import BytesIO
 
@@ -1950,8 +1952,16 @@ def price_table_view(request, period_id):
         p.id: {v.material_code: v for v in p.inventory_valuations.all()}
         for p in periods
     }
+    # 用户上传的历史单价（优先展示；未上传的物料仍用系统计算单价）
+    historical = {
+        p.id: {hp.material_code: hp for hp in p.historical_prices.all()}
+        for p in periods
+    }
+    # 物料列表 = 库存计价 ∪ 历史单价：上传过单价的物料即使该期间未结算也显示
     codes = set()
     for d in per_period.values():
+        codes.update(d.keys())
+    for d in historical.values():
         codes.update(d.keys())
 
     cat_by_code = {}
@@ -1969,12 +1979,9 @@ def price_table_view(request, period_id):
     for p in periods:
         for v in p.inventory_valuations.all():
             name_by_code.setdefault(v.material_code, v.material_name)
-
-    # 用户上传的历史单价（优先展示；未上传的物料仍用系统计算单价）
-    historical = {
-        p.id: {hp.material_code: hp for hp in p.historical_prices.all()}
-        for p in periods
-    }
+    for p in periods:
+        for hp in p.historical_prices.all():
+            name_by_code.setdefault(hp.material_code, hp.material_name)
 
     RAW = {"原料", "染色纤维", "纤维", "熟条", "浆粕"}
     FIN = {"纱线", "面料", "坯布", "布", "成品"}
@@ -1998,8 +2005,15 @@ def price_table_view(request, period_id):
         cells = []
         for p in periods:
             v = per_period[p.id].get(code)
+            hp = historical.get(p.id, {}).get(code)
             if v is None:
-                cells.append((Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
+                # 该期无结算计价：有上传历史单价则显示上传价，否则留空
+                if hp is not None:
+                    rp = Decimal(hp.receipt_price) if hp.receipt_price is not None else Decimal("0")
+                    ip = Decimal(hp.issue_price) if hp.issue_price is not None else Decimal("0")
+                    cells.append((Decimal("0"), Decimal("0"), rp, Decimal("0"), Decimal("0"), ip))
+                else:
+                    cells.append((Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
                 continue
             rq = Decimal(v.receipt_quantity or 0)
             ra = Decimal(v.receipt_amount or 0)
@@ -2007,7 +2021,6 @@ def price_table_view(request, period_id):
             ia = Decimal(v.issue_amount or 0)
             rp = (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0")
             ip = (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0")
-            hp = historical.get(p.id, {}).get(code)
             if hp is not None:
                 if hp.receipt_price is not None:
                     rp = Decimal(hp.receipt_price)

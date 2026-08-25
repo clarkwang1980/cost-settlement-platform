@@ -1460,6 +1460,41 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             HistoricalPrice.objects.filter(period=self.period).count(), 2
         )
 
+    def test_price_table_shows_uploaded_price_without_settlement(self):
+        """未结算期间（无库存计价）时，上传的历史单价也能在单价表显示。"""
+        from decimal import Decimal as D
+
+        from settlement.models import HistoricalPrice
+
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="ONLY-HP",
+            material_name="仅上传价物料",
+            receipt_price=D("12.34000000"), issue_price=D("11.11000000"),
+        )
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse("price_table", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode("utf-8")
+        # 即使该期间没有任何库存计价，上传的物料也显示（含单价）
+        self.assertIn("ONLY-HP", html)
+        self.assertIn("12.3400", html)
+        self.assertIn("11.1100", html)
+        # 导出同样包含
+        resp = self.client.get(
+            reverse("price_table", args=[self.period.id]) + "?export=1"
+        )
+        self.assertEqual(resp.status_code, 200)
+        wb = load_workbook(BytesIO(resp.content))
+        ws = wb.active
+        found = False
+        for row in ws.iter_rows(values_only=True):
+            if row and row[1] == "ONLY-HP":
+                found = True
+                self.assertEqual(float(row[4]), 12.34)
+                self.assertEqual(float(row[5]), 11.11)
+                break
+        self.assertTrue(found)
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"
