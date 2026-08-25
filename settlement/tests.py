@@ -1322,6 +1322,26 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         # 默认激活第一个车间页签（纺纱）
         self.assertIn('id="ws-tab-0"', html)
         self.assertIn('name="ws-tab"', html)
+        # 纺纱车间无天然气：天然气列只出现在非纺纱车间表（本测试仅机织有，故全页 1 处）
+        self.assertEqual(html.count("<th class=\"num\">天然气</th>"), 1)
+        self.assertEqual(html.count("<th class=\"num\">天然气分配率</th>"), 1)
+        # 单独导出纺纱：Excel 无天然气列；单独导出机织：有
+        resp = self.client.get(
+            reverse("export_listing", args=[self.period.id, "work_order_cost"])
+            + "?workshop=tefang"
+        )
+        self.assertEqual(resp.status_code, 200)
+        wb = load_workbook(BytesIO(resp.content))
+        header_row = [c.value for c in wb.active[1]]
+        self.assertNotIn("天然气", header_row)
+        resp = self.client.get(
+            reverse("export_listing", args=[self.period.id, "work_order_cost"])
+            + "?workshop=JiZhi"
+        )
+        self.assertEqual(resp.status_code, 200)
+        wb = load_workbook(BytesIO(resp.content))
+        header_row = [c.value for c in wb.active[1]]
+        self.assertIn("天然气", header_row)
 
     def test_csv_import_and_authenticated_pages(self):
         content = (

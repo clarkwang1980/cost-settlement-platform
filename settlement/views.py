@@ -2753,6 +2753,9 @@ def _listing_rows(request, period, kind):
                 item.uses_roving = "—"
 
         # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
+        # 纺纱车间无天然气费用：单独导出纺纱时去掉天然气两列（与页面一致）
+        workshop_param = (request.GET.get("workshop") or "").strip()
+        hide_gas = workshop_param == "tefang"
         headers = [
             "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态", "完成状态",
             "累计完工", "累计完工率", "是否用粗纱", "报工数量",
@@ -2761,6 +2764,8 @@ def _listing_rows(request, period, kind):
             "染料助剂", "染料助剂分配率%", "工资", "工资分配率%", "工单总成本",
             "完工成本", "完工单位成本", "在产品成本",
         ]
+        if hide_gas:
+            headers = [h for h in headers if h not in ("天然气", "天然气分配率%")]
         rows = []
         highlight = set()
         if results:
@@ -2817,7 +2822,7 @@ def _listing_rows(request, period, kind):
                 rate_text = (
                     f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
                 )
-                return (
+                row = [
                     f"{period.month:%Y-%m}",
                     item.work_order.order_no,
                     WORKSHOP_LABELS.get(ws, ws),
@@ -2837,8 +2842,10 @@ def _listing_rows(request, period, kind):
                     _rate("water_power", ws),
                     item.steam,
                     _rate("steam", ws),
-                    item.natural_gas,
-                    _rate("natural_gas", ws),
+                ]
+                if not hide_gas:
+                    row += [item.natural_gas, _rate("natural_gas", ws)]
+                row += [
                     item.depreciation,
                     _rate("depreciation", ws),
                     item.consumables,
@@ -2851,16 +2858,20 @@ def _listing_rows(request, period, kind):
                     item.finished_cost,
                     item.finished_unit_cost,
                     item.wip_cost,
-                )
+                ]
+                return tuple(row)
 
             def _subtotal_row(ws, st):
-                return (
-                    f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）",
-                    "", "", "", "", "", "", "", "", "", "", "", "", "",
+                row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
+                row += [""] * 13
+                row += [
                     st["direct_material"],
                     st["water_power"], "",
                     st["steam"], "",
-                    st["natural_gas"], "",
+                ]
+                if not hide_gas:
+                    row += [st["natural_gas"], ""]
+                row += [
                     st["depreciation"], "",
                     st["consumables"], "",
                     st["dye_auxiliary"], "",
@@ -2868,7 +2879,8 @@ def _listing_rows(request, period, kind):
                     st["total_cost"],
                     st["finished_cost"], "",
                     st["wip_cost"],
-                )
+                ]
+                return tuple(row)
 
             current_ws = None
             for item in results:

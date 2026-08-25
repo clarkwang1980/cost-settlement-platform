@@ -54,7 +54,7 @@
           <th class="num">报工数量</th><th class="num">在产品</th>
           <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
           <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
-          <th class="num">天然气</th><th class="num">天然气分配率</th>
+          {% if section.workshop != "tefang" %}<th class="num">天然气</th><th class="num">天然气分配率</th>{% endif %}
           <th class="num">折旧</th><th class="num">折旧分配率</th>
           <th class="num">机物料</th><th class="num">机物料分配率</th>
           <th class="num">染料助剂</th><th class="num">染料助剂分配率</th>
@@ -81,8 +81,8 @@
           <td class="num">{{ item.rate_water_power_pct|floatformat:2 }}%</td>
           <td class="num">{{ item.steam|floatformat:2 }}</td>
           <td class="num">{{ item.rate_steam_pct|floatformat:2 }}%</td>
-          <td class="num">{{ item.natural_gas|floatformat:2 }}</td>
-          <td class="num">{{ item.rate_natural_gas_pct|floatformat:2 }}%</td>
+          {% if section.workshop != "tefang" %}<td class="num">{{ item.natural_gas|floatformat:2 }}</td>
+          <td class="num">{{ item.rate_natural_gas_pct|floatformat:2 }}%</td>{% endif %}
           <td class="num">{{ item.depreciation|floatformat:2 }}</td>
           <td class="num">{{ item.rate_depreciation_pct|floatformat:2 }}%</td>
           <td class="num">{{ item.consumables|floatformat:2 }}</td>
@@ -107,7 +107,7 @@
           <td class="num">{{ section.subtotal.direct_material|floatformat:2 }}</td>
           <td class="num">{{ section.subtotal.water_power|floatformat:2 }}</td><td class="num"></td>
           <td class="num">{{ section.subtotal.steam|floatformat:2 }}</td><td class="num"></td>
-          <td class="num">{{ section.subtotal.natural_gas|floatformat:2 }}</td><td class="num"></td>
+          {% if section.workshop != "tefang" %}<td class="num">{{ section.subtotal.natural_gas|floatformat:2 }}</td><td class="num"></td>{% endif %}
           <td class="num">{{ section.subtotal.depreciation|floatformat:2 }}</td><td class="num"></td>
           <td class="num">{{ section.subtotal.consumables|floatformat:2 }}</td><td class="num"></td>
           <td class="num">{{ section.subtotal.dye_auxiliary|floatformat:2 }}</td><td class="num"></td>
