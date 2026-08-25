@@ -1820,9 +1820,12 @@ def work_order_costs(request, period_id):
         )
     # 物料名关键词推断类别（纱线/面料/染色纤维/坯布等）
     _CATEGORY_KEYWORDS = (
-        ("面料", ("面料", "坯布", "织布", "布")),
+        ("面料", ("面料", "坯布", "织布", "摇粒绒", "螺纹", "绒布", "布", "绒")),
         ("纱线", ("纱线", "纱")),
-        ("染色纤维", ("纤维", "长丝", "丝")),
+        ("染色纤维", (
+            "纤维", "长丝", "丝", "腈纶", "粘胶", "涤纶", "莱赛尔",
+            "芳纶", "氨纶", "短纤", "棉纱",
+        )),
         ("原料", ("原料", "棉", "麻")),
     )
 
@@ -1909,12 +1912,21 @@ def work_order_costs(request, period_id):
         # 类别：流水匹配优先（用户要求：类别从流水里匹配）
         # 流水该产品物料的分类名（纱线/面料/染色纤维/原料/坯布等）→ BOM主产出码/物料名推断 → 工单明细类别 → 工单类型
         _bom = bom_product.get(order_no)
+        _ws_category = {
+            "RanZheng": "染色纤维",
+            "tefang": "纱线",
+            "BaoFu": "纱线",
+            "ZhenZhi": "面料",
+            "JiZhi": "面料",
+            "浆粕车间": "浆粕",
+        }.get(ws, "")
         item.wo_category = (
             category_by_code.get(product_code)
             or category_by_code.get(item.product_code or "")
             or (category_by_code.get(_bom[0]) if _bom and _bom[0] else "")
             or _cat_from_name(_bom[1] if _bom else "")
             or (detail.category if detail is not None else "")
+            or _ws_category
             or item.work_order.order_type
             or ""
         )
@@ -3504,9 +3516,12 @@ def _listing_rows(request, period, kind):
                 line.work_order_no, (line.material_code, line.material_name)
             )
         _CATEGORY_KEYWORDS2 = (
-            ("面料", ("面料", "坯布", "织布", "布")),
+            ("面料", ("面料", "坯布", "织布", "摇粒绒", "螺纹", "绒布", "布", "绒")),
             ("纱线", ("纱线", "纱")),
-            ("染色纤维", ("纤维", "长丝", "丝")),
+            ("染色纤维", (
+                "纤维", "长丝", "丝", "腈纶", "粘胶", "涤纶", "莱赛尔",
+                "芳纶", "氨纶", "短纤", "棉纱",
+            )),
             ("原料", ("原料", "棉", "麻")),
         )
 
@@ -3592,6 +3607,14 @@ def _listing_rows(request, period, kind):
                 or (category_by_code.get(_bom[0]) if _bom and _bom[0] else "")
                 or _cat_from_name2(_bom[1] if _bom else "")
                 or (detail.category if detail is not None else "")
+                or {
+                    "RanZheng": "染色纤维",
+                    "tefang": "纱线",
+                    "BaoFu": "纱线",
+                    "ZhenZhi": "面料",
+                    "JiZhi": "面料",
+                    "浆粕车间": "浆粕",
+                }.get(ws, "")
                 or item.work_order.order_type
                 or ""
             )
