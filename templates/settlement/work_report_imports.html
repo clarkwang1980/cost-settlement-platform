@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}报工记录台账 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -37,9 +38,9 @@
           <td>{{ r.task_no|default:"—" }}</td>
           <td>{{ r.operation_no|default:"" }} {{ r.operation_name|default:"" }}</td>
           <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
-          <td class="num">{{ r.quantity|floatformat:3 }}</td>
+          <td class="num">{{ r.quantity|floatformat:3|thousands }}</td>
           <td>{{ r.uom|default:"—" }}</td>
-          <td class="num">{{ r.work_hours|floatformat:3|default:"—" }}</td>
+          <td class="num">{{ r.work_hours|floatformat:3|thousands|default:"—" }}</td>
           <td>{{ r.work_hours_uom|default:"—" }}</td>
           <td>{{ r.operator|default:"—" }}</td>
           <td>{{ r.quality_status|default:"—" }}</td>

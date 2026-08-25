@@ -40,10 +40,10 @@
 <section class="summary-strip six">
   <article><span>查看范围</span><strong class="small-value">{{ scope_label|workshop_label }}</strong></article>
   <article><span>生产工单</span><strong>{{ totals.order_count }}</strong></article>
-  <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2 }}</strong></article>
-  <article><span>本期材料</span><strong>¥{{ totals.current_material|floatformat:2 }}</strong></article>
-  <article><span>本期费用</span><strong>¥{{ totals.current_expenses|floatformat:2 }}</strong></article>
-  <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2 }}</strong></article>
+  <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2|thousands }}</strong></article>
+  <article><span>本期材料</span><strong>¥{{ totals.current_material|floatformat:2|thousands }}</strong></article>
+  <article><span>本期费用</span><strong>¥{{ totals.current_expenses|floatformat:2|thousands }}</strong></article>
+  <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2|thousands }}</strong></article>
 </section>
 
 <section class="section-card">
@@ -59,20 +59,20 @@
     {% endif %}
   </div>
   <div class="cost-equation">
-    <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2 }}</strong></article>
+    <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2|thousands }}</strong></article>
     <b>＋</b>
-    <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2 }}</strong></article>
+    <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2|thousands }}</strong></article>
     <b>＝</b>
-    <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2 }}</strong></article>
+    <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2|thousands }}</strong></article>
     <b>＋</b>
-    <article><span>期末在制</span><strong>¥{{ totals.ending_wip|floatformat:2 }}</strong></article>
+    <article><span>期末在制</span><strong>¥{{ totals.ending_wip|floatformat:2|thousands }}</strong></article>
   </div>
   <div class="cost-equation-result">
-    <span>左方待分配成本：<strong>¥{{ totals.cost_to_account|floatformat:2 }}</strong></span>
-    <span>右方已分配成本：<strong>¥{{ totals.accounted_output|floatformat:2 }}</strong></span>
+    <span>左方待分配成本：<strong>¥{{ totals.cost_to_account|floatformat:2|thousands }}</strong></span>
+    <span>右方已分配成本：<strong>¥{{ totals.accounted_output|floatformat:2|thousands }}</strong></span>
     <span>闭合差额：
       {% if totals.all_calculated %}
-        <strong class="{% if totals.difference %}difference-text{% endif %}">¥{{ totals.difference|floatformat:2 }}</strong>
+        <strong class="{% if totals.difference %}difference-text{% endif %}">¥{{ totals.difference|floatformat:2|thousands }}</strong>
       {% else %}
         <strong class="difference-text">待全部结转后确认</strong>
       {% endif %}
@@ -95,16 +95,16 @@
       <tbody>
         {% for row in rows %}
         <tr>
-          <td><a class="document-link" href="?workshop={{ row.workshop|urlencode }}"><strong>{{ row.workshop|workshop_label }}</strong></a><small>完工数量 {{ row.finished_quantity|floatformat:2 }} / 在制数量 {{ row.wip_quantity|floatformat:2 }}</small></td>
+          <td><a class="document-link" href="?workshop={{ row.workshop|urlencode }}"><strong>{{ row.workshop|workshop_label }}</strong></a><small>完工数量 {{ row.finished_quantity|floatformat:2|thousands }} / 在制数量 {{ row.wip_quantity|floatformat:2|thousands }}</small></td>
           <td>{% if row.is_calculated %}<span class="pill success">{{ row.status_label }}</span>{% else %}<span class="pill warning">{{ row.status_label }}</span>{% endif %}</td>
           <td class="num">{{ row.order_count }}</td>
-          <td class="num">{{ row.opening_wip|floatformat:2 }}</td>
-          <td class="num">{{ row.current_material|floatformat:2 }}</td>
-          <td class="num">{{ row.current_expenses|floatformat:2 }}</td>
-          <td class="num"><strong>{{ row.current_input|floatformat:2 }}</strong></td>
-          <td class="num">{% if row.is_calculated %}{{ row.finished_cost|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
-          <td class="num">{% if row.is_calculated %}{{ row.ending_wip|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
-          <td class="num">{% if row.is_calculated %}<strong class="{% if row.difference %}difference-text{% endif %}">{{ row.difference|floatformat:2 }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{{ row.opening_wip|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.current_material|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.current_expenses|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ row.current_input|floatformat:2|thousands }}</strong></td>
+          <td class="num">{% if row.is_calculated %}{{ row.finished_cost|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{% if row.is_calculated %}{{ row.ending_wip|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{% if row.is_calculated %}<strong class="{% if row.difference %}difference-text{% endif %}">{{ row.difference|floatformat:2|thousands }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
         {% empty %}<tr><td colspan="10" class="empty-cell">本期间尚无车间费用或生产工单。</td></tr>{% endfor %}
       </tbody>
@@ -115,11 +115,11 @@
 <section class="section-card">
   <div class="section-heading">
     <div><p class="eyebrow">EXPENSE BREAKDOWN</p><h2>{{ scope_label|workshop_label }}本期费用构成</h2></div>
-    <strong>合计 ¥{{ totals.current_expenses|floatformat:2 }}</strong>
+    <strong>合计 ¥{{ totals.current_expenses|floatformat:2|thousands }}</strong>
   </div>
   <div class="expense-breakdown">
     {% for item in totals.fee_breakdown %}
-    <article><span>{{ item.label }}</span><strong>¥{{ item.amount|floatformat:2 }}</strong></article>
+    <article><span>{{ item.label }}</span><strong>¥{{ item.amount|floatformat:2|thousands }}</strong></article>
     {% endfor %}
   </div>
 </section>
@@ -144,14 +144,14 @@
           <td><strong>{{ item.order.order_no }}</strong></td>
           <td><strong>{{ item.order.product_code }}</strong><small>{{ item.order.product_name }}</small></td>
           <td>{{ item.order.get_status_display }}</td>
-          <td class="num">{{ item.result.finished_quantity|floatformat:2 }}</td>
-          <td class="num">{{ item.result.wip_quantity|floatformat:2 }}</td>
-          <td class="num">{{ item.opening_wip|floatformat:2 }}</td>
-          <td class="num">{{ item.current_material|floatformat:2 }}</td>
-          <td class="num">{% if item.is_calculated %}{{ item.current_allocated_fees|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
-          <td class="num">{% if item.is_calculated %}<strong>{{ item.total_cost|floatformat:2 }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
-          <td class="num">{% if item.is_calculated %}{{ item.finished_cost|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
-          <td class="num">{% if item.is_calculated %}{{ item.ending_wip|floatformat:2 }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{{ item.result.finished_quantity|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.result.wip_quantity|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.opening_wip|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.current_material|floatformat:2|thousands }}</td>
+          <td class="num">{% if item.is_calculated %}{{ item.current_allocated_fees|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{% if item.is_calculated %}<strong>{{ item.total_cost|floatformat:2|thousands }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{% if item.is_calculated %}{{ item.finished_cost|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
+          <td class="num">{% if item.is_calculated %}{{ item.ending_wip|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
         {% empty %}<tr><td colspan="11" class="empty-cell">该车间尚无生产工单。</td></tr>{% endfor %}
       </tbody>

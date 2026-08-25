@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}库存流水匹配 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -60,7 +61,7 @@
           <td>{{ txn.get_direction_display }}</td>
           <td>{{ txn.warehouse|default:"—" }}</td>
           <td><strong>{{ txn.material_code }}</strong><small>{{ txn.material_name }}</small></td>
-          <td class="num">{{ txn.quantity|floatformat:3 }}</td>
+          <td class="num">{{ txn.quantity|floatformat:3|thousands }}</td>
           <td>{{ txn.supplier_name|default:txn.customer_name|default:txn.supplier_code|default:txn.customer_code|default:"—" }}</td>
           <td>{{ txn.order_no|default:"—" }}</td>
           <td>
@@ -69,7 +70,7 @@
                 {% if a.contract_line %}合同 {{ a.contract_line.contract_no }}
                 {% elif a.purchase_invoice_line %}采购发票 {{ a.purchase_invoice_line.invoice_no }}
                 {% elif a.sales_invoice_line %}销售发票 {{ a.sales_invoice_line.invoice_no }}
-                {% endif %} / {{ a.matched_quantity|floatformat:3 }}
+                {% endif %} / {{ a.matched_quantity|floatformat:3|thousands }}
               </span>
             {% empty %}—{% endfor %}
           </td>

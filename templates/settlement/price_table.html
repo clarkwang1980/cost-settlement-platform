@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}单价表 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -66,8 +67,8 @@
       <td>{{ row.name }}</td>
       <td>{{ row.uom }}</td>
       {% for rq, ra, rp, iq, ia, ip in row.cells %}
-      <td class="num">{{ rp|floatformat:4 }}</td>
-      <td class="num">{{ ip|floatformat:4 }}</td>
+      <td class="num">{{ rp|floatformat:4|thousands }}</td>
+      <td class="num">{{ ip|floatformat:4|thousands }}</td>
       {% endfor %}
     </tr>
     {% empty %}

@@ -12,12 +12,12 @@
 </section>
 
 <section class="summary-strip">
-  <article><span>报工数量</span><strong>{{ totals.report_quantity|floatformat:3 }}</strong></article>
-  <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2 }}</strong></article>
-  <article><span>在产品成本</span><strong>¥{{ totals.wip_cost|floatformat:2 }}</strong></article>
-  <article><span>总成本</span><strong>¥{{ totals.total_cost|floatformat:2 }}</strong></article>
-  <article><span>报工入库数量</span><strong>{{ totals.receipt_quantity|floatformat:3 }}</strong></article>
-  <article><span>报工入库金额</span><strong>¥{{ totals.receipt_amount|floatformat:2 }}</strong></article>
+  <article><span>报工数量</span><strong>{{ totals.report_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2|thousands }}</strong></article>
+  <article><span>在产品成本</span><strong>¥{{ totals.wip_cost|floatformat:2|thousands }}</strong></article>
+  <article><span>总成本</span><strong>¥{{ totals.total_cost|floatformat:2|thousands }}</strong></article>
+  <article><span>报工入库数量</span><strong>{{ totals.receipt_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>报工入库金额</span><strong>¥{{ totals.receipt_amount|floatformat:2|thousands }}</strong></article>
 </section>
 
 <section class="section-card filter-card">
@@ -47,15 +47,15 @@
           <td><strong>{{ item.order_no }}</strong></td>
           <td>{{ item.workshop|workshop_label|default:"—" }}</td>
           <td><strong>{{ item.product_code|default:"—" }}</strong><small>{{ item.product_name }}</small></td>
-          <td class="num">{{ item.plan_quantity|floatformat:3 }}</td>
-          <td class="num">{{ item.report_qty|floatformat:3 }}</td>
+          <td class="num">{{ item.plan_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ item.report_qty|floatformat:3|thousands }}</td>
           <td class="num">{{ item.report_count }}</td>
-          <td class="num">{% if item.result %}{{ item.result.finished_cost|floatformat:2 }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}{{ item.result.finished_unit_cost|floatformat:4 }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}{{ item.result.wip_cost|floatformat:2 }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}<strong>{{ item.result.total_cost|floatformat:2 }}</strong>{% else %}—{% endif %}</td>
-          <td class="num">{{ item.receipt_qty|floatformat:3 }}</td>
-          <td class="num">{{ item.receipt_amount|floatformat:2 }}</td>
+          <td class="num">{% if item.result %}{{ item.result.finished_cost|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}{{ item.result.finished_unit_cost|floatformat:4|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}{{ item.result.wip_cost|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.result %}<strong>{{ item.result.total_cost|floatformat:2|thousands }}</strong>{% else %}—{% endif %}</td>
+          <td class="num">{{ item.receipt_qty|floatformat:3|thousands }}</td>
+          <td class="num">{{ item.receipt_amount|floatformat:2|thousands }}</td>
           <td>{{ item.status|default:"—" }}</td>
         </tr>
       {% empty %}<tr><td colspan="13" class="empty-cell">没有符合条件的报工记录。</td></tr>{% endfor %}

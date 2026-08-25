@@ -36,13 +36,13 @@
           <td><strong>{{ row.order_no }}</strong>{% if row.status %}<small>{{ row.status }}</small>{% endif %}</td>
           <td>{{ row.workshop|workshop_label|default:"—" }}</td>
           <td><strong>{{ row.product_code|default:"—" }}</strong><small>{{ row.product_name }}</small></td>
-          <td class="num">{{ row.plan_quantity|floatformat:3 }}</td>
-          <td class="num">{{ row.issue_count }} 条 / {{ row.issue_qty|floatformat:3 }}</td>
-          <td class="num">{{ row.report_count }} 条 / {{ row.report_qty|floatformat:3 }}</td>
-          <td class="num">{{ row.receipt_count }} 条 / {{ row.receipt_qty|floatformat:3 }}{% if row.receipt_priced %}<small>已计价 {{ row.receipt_priced }} 条</small>{% endif %}</td>
+          <td class="num">{{ row.plan_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.issue_count }} 条 / {{ row.issue_qty|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.report_count }} 条 / {{ row.report_qty|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.receipt_count }} 条 / {{ row.receipt_qty|floatformat:3|thousands }}{% if row.receipt_priced %}<small>已计价 {{ row.receipt_priced }} 条</small>{% endif %}</td>
           <td>
             {% if row.qty_mismatch %}
-              <span class="pill warning">报工 {{ row.report_qty|floatformat:2 }} ≠ 入库 {{ row.receipt_qty|floatformat:2 }}</span>
+              <span class="pill warning">报工 {{ row.report_qty|floatformat:2|thousands }} ≠ 入库 {{ row.receipt_qty|floatformat:2|thousands }}</span>
             {% elif row.report_count and not row.receipt_count %}
               <span class="pill warning">有报工无入库流水</span>
             {% elif row.issue_count and row.report_count == 0 and row.receipt_count == 0 %}

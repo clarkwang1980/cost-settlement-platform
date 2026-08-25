@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}发票暂估回冲明细 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -12,10 +13,10 @@
 
 <section class="summary-strip">
   <article><span>回冲笔数</span><strong>{{ totals.count }}</strong></article>
-  <article><span>核销数量</span><strong>{{ totals.matched_quantity|floatformat:3 }}</strong></article>
-  <article><span>暂估金额</span><strong>¥{{ totals.provisional_amount|floatformat:2 }}</strong></article>
-  <article><span>发票金额</span><strong>¥{{ totals.invoice_amount|floatformat:2 }}</strong></article>
-  <article><span>价差合计</span><strong>¥{{ totals.difference_amount|floatformat:2 }}</strong></article>
+  <article><span>核销数量</span><strong>{{ totals.matched_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>暂估金额</span><strong>¥{{ totals.provisional_amount|floatformat:2|thousands }}</strong></article>
+  <article><span>发票金额</span><strong>¥{{ totals.invoice_amount|floatformat:2|thousands }}</strong></article>
+  <article><span>价差合计</span><strong>¥{{ totals.difference_amount|floatformat:2|thousands }}</strong></article>
   <article><span>跨期回冲</span><strong>{{ totals.cross_period_count }} 笔</strong></article>
 </section>
 
@@ -56,15 +57,15 @@
           <td>{{ r.document_date|date:"Y-m-d" }}</td>
           <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
           <td>{{ r.supplier_name|default:"—" }}</td>
-          <td class="num">{{ r.matched_quantity|floatformat:3 }}</td>
-          <td class="num">{% if r.provisional_unit_price %}{{ r.provisional_unit_price|floatformat:4 }}{% else %}—{% endif %}</td>
-          <td class="num">{% if r.provisional_amount is not None %}{{ r.provisional_amount|floatformat:2 }}{% else %}—{% endif %}</td>
-          <td class="num">{{ r.invoice_unit_price|floatformat:4 }}</td>
-          <td class="num">{{ r.invoice_amount|floatformat:2 }}</td>
-          <td class="num {% if r.difference_amount and r.difference_amount != 0 %}diff{% endif %}">{% if r.difference_amount is not None %}{{ r.difference_amount|floatformat:2 }}{% else %}—{% endif %}</td>
-          <td class="num">{{ r.receipt_quantity|floatformat:3 }}</td>
-          <td class="num">{{ r.cumulative_quantity|floatformat:3 }}</td>
-          <td class="num">{{ r.outstanding_quantity|floatformat:3 }}</td>
+          <td class="num">{{ r.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{% if r.provisional_unit_price %}{{ r.provisional_unit_price|floatformat:4|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if r.provisional_amount is not None %}{{ r.provisional_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{{ r.invoice_unit_price|floatformat:4|thousands }}</td>
+          <td class="num">{{ r.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num {% if r.difference_amount and r.difference_amount != 0 %}diff{% endif %}">{% if r.difference_amount is not None %}{{ r.difference_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{{ r.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.cumulative_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.outstanding_quantity|floatformat:3|thousands }}</td>
           <td>{% if r.cross_period %}<span class="pill warning">跨期</span>{% else %}本期{% endif %}</td>
           <td><span class="pill {% if r.status == '无差异' %}success{% elif r.status == '有差异' %}warning{% else %}danger{% endif %}">{{ r.status }}</span></td>
         </tr>

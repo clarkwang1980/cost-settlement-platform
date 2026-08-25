@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}月末采购暂估 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -16,8 +17,8 @@
 
 <section class="summary-strip">
   <article><span>暂估入库笔数</span><strong>{{ summary.receipt_count }}</strong></article>
-  <article><span>尚未到票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3 }}</strong></article>
-  <article><span>月末暂估金额</span><strong>{{ summary.provisional_amount|floatformat:2 }}</strong></article>
+  <article><span>尚未到票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>月末暂估金额</span><strong>{{ summary.provisional_amount|floatformat:2|thousands }}</strong></article>
   <article><span>以前月份入库</span><strong>{{ summary.prior_period_count }}</strong></article>
   <article><span>缺少暂估价格</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
 </section>
@@ -70,11 +71,11 @@
           <td>{{ row.contract_nos|default:"—" }}</td>
           <td>{{ row.supplier_name|default:row.supplier_code|default:"—" }}</td>
           <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
-          <td class="num">{{ row.receipt_quantity|floatformat:3 }}</td>
-          <td class="num">{{ row.invoiced_quantity|floatformat:3 }}</td>
-          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3 }}</strong></td>
-          <td class="num">{{ row.provisional_unit_price|floatformat:6|default:"—" }}</td>
-          <td class="num"><strong>{{ row.provisional_amount|floatformat:2|default:"—" }}</strong></td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num"><strong>{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</strong></td>
           <td>{{ row.latest_invoice_period|date:"Y-m"|default:"—" }}</td>
           <td>{{ row.price_source }}</td>
           <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>

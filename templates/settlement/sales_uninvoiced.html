@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}月末未开票 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -16,8 +17,8 @@
 
 <section class="summary-strip six">
   <article><span>未开票出库笔数</span><strong>{{ summary.issue_count }}</strong></article>
-  <article><span>未开票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3 }}</strong></article>
-  <article><span>期末发出商品</span><strong>{{ summary.outstanding_cost|floatformat:2 }}</strong></article>
+  <article><span>未开票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>期末发出商品</span><strong>{{ summary.outstanding_cost|floatformat:2|thousands }}</strong></article>
   <article><span>部分开票</span><strong>{{ summary.partial_count }}</strong></article>
   <article><span>以前月份出库</span><strong>{{ summary.prior_period_count }}</strong></article>
   <article><span>缺少出库成本</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
@@ -29,13 +30,13 @@
       <p class="eyebrow">GOODS ISSUED ROLLFORWARD</p>
       <h2>发出商品跨月滚动勾稽</h2>
     </div>
-    <span class="pill {% if rollforward.difference %}danger{% else %}success{% endif %}">差额 {{ rollforward.difference|floatformat:2 }}</span>
+    <span class="pill {% if rollforward.difference %}danger{% else %}success{% endif %}">差额 {{ rollforward.difference|floatformat:2|thousands }}</span>
   </div>
   <div class="summary-strip compact">
-    <article><span>期初发出商品</span><strong>{{ rollforward.opening_amount|floatformat:2 }}</strong></article>
-    <article><span>本月销售出库成本</span><strong>{{ rollforward.current_issue_amount|floatformat:2 }}</strong></article>
-    <article><span>本月开票结转成本</span><strong>{{ rollforward.invoice_cleared_amount|floatformat:2 }}</strong></article>
-    <article><span>期末发出商品</span><strong>{{ rollforward.ending_amount|floatformat:2 }}</strong></article>
+    <article><span>期初发出商品</span><strong>{{ rollforward.opening_amount|floatformat:2|thousands }}</strong></article>
+    <article><span>本月销售出库成本</span><strong>{{ rollforward.current_issue_amount|floatformat:2|thousands }}</strong></article>
+    <article><span>本月开票结转成本</span><strong>{{ rollforward.invoice_cleared_amount|floatformat:2|thousands }}</strong></article>
+    <article><span>期末发出商品</span><strong>{{ rollforward.ending_amount|floatformat:2|thousands }}</strong></article>
   </div>
   <p class="help-text">期初发出商品＋本月销售出库成本－本月开票结转成本＝期末发出商品。样品出库和批准忽略的出库不进入本表。</p>
 </section>
@@ -96,12 +97,12 @@
           <td>{{ row.sales_order_no|default:"—" }}</td>
           <td>{{ row.customer_name|default:row.customer_code|default:"—" }}</td>
           <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
-          <td class="num">{{ row.issue_quantity|floatformat:3 }}</td>
-          <td class="num">{{ row.invoiced_quantity|floatformat:3 }}</td>
-          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3 }}</strong></td>
-          <td class="num">{{ row.issue_amount|floatformat:2|default:"—" }}</td>
-          <td class="num">{{ row.invoiced_cost|floatformat:2|default:"—" }}</td>
-          <td class="num"><strong>{{ row.outstanding_cost|floatformat:2|default:"—" }}</strong></td>
+          <td class="num">{{ row.issue_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num">{{ row.issue_amount|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num">{{ row.invoiced_cost|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num"><strong>{{ row.outstanding_cost|floatformat:2|thousands|default:"—" }}</strong></td>
           <td>{{ row.invoice_nos|default:"—" }}{% if row.latest_invoice_period %}<small>最近 {{ row.latest_invoice_period|date:"Y-m" }}</small>{% endif %}</td>
           <td>{{ row.outstanding_days }}天</td>
           <td><span class="pill {% if row.status == '缺少出库成本' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>

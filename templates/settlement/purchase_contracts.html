@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}采购合同 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -53,9 +54,9 @@
           <td>{{ contract.contract_date|default:"—" }}</td>
           <td>{{ contract.supplier_name|default:contract.supplier_code|default:"—" }}</td>
           <td><strong>{{ contract.material_code }}</strong><small>{{ contract.material_name }}</small></td>
-          <td class="num">{{ contract.quantity|floatformat:3 }}</td>
-          <td class="num">{{ contract.remaining_quantity|floatformat:3 }}</td>
-          <td class="num">{{ contract.unit_price_excl_tax|floatformat:2 }}</td>
+          <td class="num">{{ contract.quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ contract.remaining_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ contract.unit_price_excl_tax|floatformat:2|thousands }}</td>
           <td>{% if contract.is_system_generated %}<span class="pill">自动承接</span>{% else %}<span class="pill success">导入</span>{% endif %}</td>
           <td>
             <span class="pill {% if contract.match_mode == 'ignored' %}warning{% elif contract.match_mode == 'manual' %}success{% endif %}">{{ contract.get_match_mode_display }}</span>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}勾稽异常 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -10,20 +11,20 @@
     <article class="check-card check-{{ item.status }}">
       <div><span>{{ item.check_code }}</span><strong>{{ item.get_status_display }}</strong></div>
       <h2>{{ item.check_name }}</h2>
-      <dl><dt>左侧</dt><dd>{{ item.left_amount|floatformat:2 }}</dd><dt>右侧</dt><dd>{{ item.right_amount|floatformat:2 }}</dd><dt>差额</dt><dd>{{ item.difference|floatformat:2 }}</dd></dl>
+      <dl><dt>左侧</dt><dd>{{ item.left_amount|floatformat:2|thousands }}</dd><dt>右侧</dt><dd>{{ item.right_amount|floatformat:2|thousands }}</dd><dt>差额</dt><dd>{{ item.difference|floatformat:2|thousands }}</dd></dl>
       {% if item.check_code == "sales_cost" %}
         <dl class="check-details">
-          <dt>已开票成本</dt><dd>{{ item.details.invoiced_cost|default:"0"|floatformat:2 }}</dd>
-          <dt>未开票成本</dt><dd>{{ item.details.goods_issued|default:"0"|floatformat:2 }}</dd>
-          <dt>样品费用</dt><dd>{{ item.details.sample_cost|default:"0"|floatformat:2 }}</dd>
-          <dt>批准忽略</dt><dd>{{ item.details.ignored_cost|default:"0"|floatformat:2 }}</dd>
+          <dt>已开票成本</dt><dd>{{ item.details.invoiced_cost|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>未开票成本</dt><dd>{{ item.details.goods_issued|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>样品费用</dt><dd>{{ item.details.sample_cost|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>批准忽略</dt><dd>{{ item.details.ignored_cost|default:"0"|floatformat:2|thousands }}</dd>
         </dl>
       {% elif item.check_code == "goods_issued_rollforward" %}
         <dl class="check-details">
-          <dt>期初发出商品</dt><dd>{{ item.details.opening_amount|default:"0"|floatformat:2 }}</dd>
-          <dt>本月销售出库</dt><dd>{{ item.details.current_issue_amount|default:"0"|floatformat:2 }}</dd>
-          <dt>本月开票结转</dt><dd>{{ item.details.invoice_cleared_amount|default:"0"|floatformat:2 }}</dd>
-          <dt>期末发出商品</dt><dd>{{ item.details.ending_amount|default:"0"|floatformat:2 }}</dd>
+          <dt>期初发出商品</dt><dd>{{ item.details.opening_amount|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>本月销售出库</dt><dd>{{ item.details.current_issue_amount|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>本月开票结转</dt><dd>{{ item.details.invoice_cleared_amount|default:"0"|floatformat:2|thousands }}</dd>
+          <dt>期末发出商品</dt><dd>{{ item.details.ending_amount|default:"0"|floatformat:2|thousands }}</dd>
         </dl>
       {% endif %}
     </article>

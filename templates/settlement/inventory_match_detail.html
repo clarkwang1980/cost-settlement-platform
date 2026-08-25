@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}库存流水匹配 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -14,7 +15,7 @@
   <article><span>匹配类别</span><strong class="small-value">{{ txn.match_category }}</strong></article>
   <article><span>方向</span><strong class="small-value">{{ txn.get_direction_display }}</strong></article>
   <article><span>物料</span><strong class="small-value">{{ txn.material_code }}</strong></article>
-  <article><span>数量</span><strong>{{ txn.quantity|floatformat:3 }}</strong></article>
+  <article><span>数量</span><strong>{{ txn.quantity|floatformat:3|thousands }}</strong></article>
   <article><span>匹配状态</span><strong class="small-value">{{ txn.get_match_status_display }}</strong></article>
 </section>
 
@@ -45,7 +46,7 @@
       <dt>供应商</dt><dd>{{ txn.supplier_name|default:txn.supplier_code|default:"—" }}</dd>
       <dt>客户</dt><dd>{{ txn.customer_name|default:txn.customer_code|default:"—" }}</dd>
       <dt>订单号</dt><dd>{{ txn.order_no|default:"—" }}</dd>
-      <dt>单价/金额</dt><dd>{{ txn.unit_price|floatformat:6|default:"—" }} / {{ txn.amount|floatformat:2|default:"—" }}</dd>
+      <dt>单价/金额</dt><dd>{{ txn.unit_price|floatformat:6|thousands|default:"—" }} / {{ txn.amount|floatformat:2|thousands|default:"—" }}</dd>
     </dl>
   </section>
 </div>
@@ -61,11 +62,11 @@
           <option value="">请选择</option>
           {% for item in group.items %}
             {% if group.kind == "purchase_contract" %}
-              <option value="{{ item.id }}">{{ item.contract_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 剩余{{ item.remaining_quantity|floatformat:3 }}</option>
+              <option value="{{ item.id }}">{{ item.contract_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 剩余{{ item.remaining_quantity|floatformat:3|thousands }}</option>
             {% elif group.kind == "purchase_invoice" %}
-              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3 }}</option>
+              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.supplier_name|default:item.supplier_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3|thousands }}</option>
             {% elif group.kind == "sales_invoice" %}
-              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.customer_name|default:item.customer_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3 }}</option>
+              <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.customer_name|default:item.customer_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3|thousands }}</option>
             {% else %}
               <option value="{{ item.id }}">{{ item.order_no }} · {{ item.workshop }} · {{ item.product_code }}</option>
             {% endif %}
@@ -94,9 +95,9 @@
             {% elif a.sales_invoice_line %}<a class="document-link" href="{% url 'source_document_detail' a.sales_invoice_line.period.id 'sales_invoice' a.sales_invoice_line.id %}">{{ a.sales_invoice_line.invoice_no }}</a>
             {% endif %}
           </td>
-          <td class="num">{{ a.matched_quantity|floatformat:3 }}</td>
-          <td class="num">{{ a.unit_price|floatformat:6|default:"—" }}</td>
-          <td class="num">{{ a.amount|floatformat:2|default:"—" }}</td>
+          <td class="num">{{ a.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ a.unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num">{{ a.amount|floatformat:2|thousands|default:"—" }}</td>
           <td>{% if a.is_manual %}<span class="pill success">手工</span>{% else %}<span class="pill">自动</span>{% endif %}</td>
           <td>
             {% if period.status != "locked" %}

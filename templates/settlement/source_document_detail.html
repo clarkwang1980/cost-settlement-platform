@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}{{ source_title }}匹配 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -15,14 +16,14 @@
     <article><span>采购发票</span><strong class="small-value">{{ source.invoice_no }}</strong></article>
     <article><span>供应商</span><strong class="small-value">{{ source.supplier_name|default:source.supplier_code|default:"—" }}</strong></article>
     <article><span>物料</span><strong class="small-value">{{ source.material_code }}</strong></article>
-    <article><span>数量</span><strong>{{ source.quantity|floatformat:3 }}</strong></article>
-    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3 }}</strong></article>
+    <article><span>数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
   {% elif source_type == "sales_invoice" %}
     <article><span>销售发票</span><strong class="small-value">{{ source.invoice_no }}</strong></article>
     <article><span>客户</span><strong class="small-value">{{ source.customer_name|default:source.customer_code|default:"—" }}</strong></article>
     <article><span>产品</span><strong class="small-value">{{ source.material_code }}</strong></article>
-    <article><span>数量</span><strong>{{ source.quantity|floatformat:3 }}</strong></article>
-    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3 }}</strong></article>
+    <article><span>数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
   {% endif %}
 </section>
 
@@ -59,7 +60,7 @@
           <select name="transaction_id" required>
             <option value="">请选择</option>
             {% for txn in candidates %}
-              <option value="{{ txn.id }}">{% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}{{ txn.period.month|date:"Y-m" }} · {% endif %}{{ txn.txn_date }} · {{ txn.document_no|default:"无单号" }} · {{ txn.match_category }} · {{ txn.material_code }} · {% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}可核销{{ txn.available_match_quantity|floatformat:3 }}{% else %}数量{{ txn.quantity|floatformat:3 }}{% endif %}</option>
+              <option value="{{ txn.id }}">{% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}{{ txn.period.month|date:"Y-m" }} · {% endif %}{{ txn.txn_date }} · {{ txn.document_no|default:"无单号" }} · {{ txn.match_category }} · {{ txn.material_code }} · {% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}可核销{{ txn.available_match_quantity|floatformat:3|thousands }}{% else %}数量{{ txn.quantity|floatformat:3|thousands }}{% endif %}</option>
             {% endfor %}
           </select>
         </label>
@@ -76,7 +77,7 @@
               <select name="opening_id" required>
                 <option value="">请选择</option>
                 {% for item in opening_candidates %}
-                  <option value="{{ item.id }}">{{ item.original_period|date:"Y-m" }} · {{ item.document_no|default:"无单号" }} · {{ item.material_code }} · {% if source_type == "purchase_invoice" %}{{ item.supplier_name|default:item.supplier_code|default:"无供应商" }}{% else %}{{ item.sales_order_no|default:"无销售订单" }} · {{ item.customer_name|default:item.customer_code|default:"无客户" }}{% endif %} · 可核销{{ item.available_match_quantity|floatformat:3 }}</option>
+                  <option value="{{ item.id }}">{{ item.original_period|date:"Y-m" }} · {{ item.document_no|default:"无单号" }} · {{ item.material_code }} · {% if source_type == "purchase_invoice" %}{{ item.supplier_name|default:item.supplier_code|default:"无供应商" }}{% else %}{{ item.sales_order_no|default:"无销售订单" }} · {{ item.customer_name|default:item.customer_code|default:"无客户" }}{% endif %} · 可核销{{ item.available_match_quantity|floatformat:3|thousands }}</option>
                 {% endfor %}
               </select>
             </label>
@@ -115,8 +116,8 @@
             <td>期初发出商品台账</td>
             <td>{{ a.opening_goods_issued.material_code }}</td>
           {% endif %}
-          <td class="num">{{ a.matched_quantity|floatformat:3 }}</td>
-          <td class="num">{{ a.amount|floatformat:2|default:"—" }}</td>
+          <td class="num">{{ a.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ a.amount|floatformat:2|thousands|default:"—" }}</td>
           <td>{% if a.is_manual %}<span class="pill success">手工</span>{% else %}<span class="pill">自动</span>{% endif %}</td>
           <td>
             {% if period.status != "locked" %}

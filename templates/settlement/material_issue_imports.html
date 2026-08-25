@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}投料记录台账 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -37,9 +38,9 @@
           <td>{{ r.operation_no|default:"" }} {{ r.operation_name|default:"" }}</td>
           <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
           <td>{{ r.material_spec|default:"—" }}</td>
-          <td class="num">{{ r.issue_quantity|floatformat:3 }}</td>
-          <td class="num">{{ r.returned_quantity|floatformat:3 }}</td>
-          <td class="num"><strong>{{ r.actual_issue_quantity|floatformat:3 }}</strong></td>
+          <td class="num">{{ r.issue_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.returned_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ r.actual_issue_quantity|floatformat:3|thousands }}</strong></td>
           <td>{{ r.issue_uom|default:"—" }}</td>
           <td>{{ r.batch_no|default:"—" }}</td>
           <td>{{ r.quality_status|default:"—" }}</td>

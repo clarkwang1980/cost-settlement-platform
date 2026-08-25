@@ -67,8 +67,8 @@
                     <span class="pill">待结转</span>
                   {% endif %}
                 </td>
-                <td>{{ item.order_cost|floatformat:2 }}</td>
-                <td>{{ item.production_receipt_amount|floatformat:2 }}</td>
+                <td>{{ item.order_cost|floatformat:2|thousands }}</td>
+                <td>{{ item.production_receipt_amount|floatformat:2|thousands }}</td>
                 <td>{{ item.iterations }}</td>
                 <td>
                   {% if item.can_settle_now %}

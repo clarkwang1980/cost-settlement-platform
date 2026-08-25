@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load workshop_tags %}
 {% block title %}本月采购暂估差异 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
@@ -15,10 +16,10 @@
 </section>
 
 <section class="summary-strip">
-  <article><span>本月核销数量</span><strong>{{ totals.matched_quantity|floatformat:3 }}</strong></article>
-  <article><span>暂估金额</span><strong>{{ totals.provisional_amount|floatformat:2 }}</strong></article>
-  <article><span>发票金额</span><strong>{{ totals.invoice_amount|floatformat:2 }}</strong></article>
-  <article><span>暂估价差</span><strong class="{% if totals.difference_amount %}difference-text{% endif %}">{{ totals.difference_amount|floatformat:2 }}</strong></article>
+  <article><span>本月核销数量</span><strong>{{ totals.matched_quantity|floatformat:3|thousands }}</strong></article>
+  <article><span>暂估金额</span><strong>{{ totals.provisional_amount|floatformat:2|thousands }}</strong></article>
+  <article><span>发票金额</span><strong>{{ totals.invoice_amount|floatformat:2|thousands }}</strong></article>
+  <article><span>暂估价差</span><strong class="{% if totals.difference_amount %}difference-text{% endif %}">{{ totals.difference_amount|floatformat:2|thousands }}</strong></article>
   <article><span>跨期核销/待确认</span><strong>{{ totals.cross_period_count }} / {{ totals.pending_count }}</strong></article>
 </section>
 
@@ -59,10 +60,10 @@
         <tr>
           <td>{{ item.supplier|default:"—" }}</td>
           <td><strong>{{ item.material_code }}</strong><small>{{ item.material_name }}</small></td>
-          <td class="num">{{ item.matched_quantity|floatformat:3 }}</td>
-          <td class="num">{{ item.provisional_amount|floatformat:2 }}</td>
-          <td class="num">{{ item.invoice_amount|floatformat:2 }}</td>
-          <td class="num"><strong class="{% if item.difference_amount %}difference-text{% endif %}">{{ item.difference_amount|floatformat:2 }}</strong></td>
+          <td class="num">{{ item.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ item.provisional_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong class="{% if item.difference_amount %}difference-text{% endif %}">{{ item.difference_amount|floatformat:2|thousands }}</strong></td>
           <td>{% if item.pending_count %}<span class="pill danger">{{ item.pending_count }}笔</span>{% else %}—{% endif %}</td>
         </tr>
       {% empty %}<tr><td colspan="7" class="empty-cell">本月没有采购发票核销产生的暂估差异。</td></tr>{% endfor %}
@@ -89,12 +90,12 @@
           <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
           <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
           <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong><small>{% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"—" }}</a>{% else %}{{ row.document_no|default:"—" }} · 期初暂估{% endif %}</small></td>
-          <td class="num">{{ row.matched_quantity|floatformat:3 }}</td>
-          <td class="num">{{ row.provisional_unit_price|floatformat:6|default:"—" }}</td>
-          <td class="num">{{ row.provisional_amount|floatformat:2|default:"—" }}</td>
-          <td class="num">{{ row.invoice_unit_price|floatformat:6 }}</td>
-          <td class="num">{{ row.invoice_amount|floatformat:2 }}</td>
-          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|default:"—" }}</strong></td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num">{{ row.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands|default:"—" }}</strong></td>
           <td>{% if row.cross_period %}<span class="pill warning">跨期核销</span>{% else %}<span class="pill">本月入库</span>{% endif %}</td>
           <td><span class="pill {% if row.status == '有差异' %}warning{% elif row.status == '待确认暂估价格' %}danger{% else %}success{% endif %}">{{ row.status }}</span></td>
         </tr>

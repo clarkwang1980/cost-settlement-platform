@@ -37,7 +37,7 @@
           <td>{{ order.production_dept_code|workshop_label|default:"—" }}</td>
           <td>{{ order.order_type|default:"—" }}</td>
           <td>{{ order.status|default:"—" }}</td>
-          <td class="num">{{ order.plan_quantity|floatformat:3 }}</td>
+          <td class="num">{{ order.plan_quantity|floatformat:3|thousands }}</td>
           <td>{{ order.planned_start|date:"Y-m-d H:i"|default:"—" }}</td>
           <td>{{ order.planned_finish|date:"Y-m-d H:i"|default:"—" }}</td>
           <td>{{ order.line_equipment|default:"—" }}</td>
