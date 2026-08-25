@@ -17,6 +17,7 @@ from settlement.models import (
     AccountingPeriod,
     BomLine,
     EndingInventoryBalance,
+    HistoricalPrice,
     ImportBatch,
     InventoryTransaction,
     InventoryValuation,
@@ -365,12 +366,21 @@ ALIASES["issue_progress"] = {
     "issue_status": ["投料状态", "状态"],
 }
 
+ALIASES["historical_price"] = {
+    "period": ["期间", "月份", "核算期间", "核算月份", "所属期间", "所属月份", "月度"],
+    "material_code": ["物料编码", "物料编号", "物料代码", "产品编码", "存货编码", "编码"],
+    "material_name": ["物料名称", "品名", "产品名称", "存货名称"],
+    "receipt_price": ["入库单价", "入库价", "采购单价", "单价"],
+    "issue_price": ["出库单价", "出库价", "销售单价", "发出单价"],
+}
+
 
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_receipt": {"txn_date", "business_type", "material_code", "quantity"},
     "bom": {"work_order_no", "sub_item_code"},
     "issue_progress": {"work_order_no", "material_code"},
+    "historical_price": {"period", "material_code"},
     "purchase_contract": {
         "contract_no",
         "material_code",
@@ -817,7 +827,9 @@ def create_import_batch(*, period, kind, uploaded_file, user, replace_existing=F
 @transaction.atomic
 def process_batch(batch: ImportBatch):
     rows = read_rows(Path(batch.file.path), batch.kind)
-    clear_calculation_outputs(batch.period)
+    # 历史单价是参考数据，不参与结算计算，导入时不清算本期结算输出
+    if batch.kind != ImportBatch.Kind.HISTORICAL_PRICE:
+        clear_calculation_outputs(batch.period)
     importer = {
         ImportBatch.Kind.INVENTORY: _import_inventory,
         ImportBatch.Kind.PURCHASE_CONTRACT: _import_purchase_contract,
@@ -837,6 +849,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.PULP_RECEIPT: _import_inventory,
         ImportBatch.Kind.BOM: _import_bom,
         ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
+        ImportBatch.Kind.HISTORICAL_PRICE: _import_historical_price,
     }[batch.kind]
     errors = []
     count = 0
@@ -1228,6 +1241,43 @@ def _import_issue_progress(batch, row):
         actual_batch_mark=text(row.get("actual_batch_mark")),
         uom=text(row.get("uom")),
         issue_status=text(row.get("issue_status")),
+    )
+
+
+def _parse_period(value) -> AccountingPeriod:
+    """解析期间列（2026-07 / 2026年07月 / 2026-7 / 202607 等）并返回对应 AccountingPeriod。"""
+    raw = text(value)
+    if not raw:
+        raise ValueError("期间不能为空，格式如 2026-07。")
+    m = re.search(r"(20\d{2})\D*(\d{1,2})", raw)
+    if not m:
+        raise ValueError(f"无法解析期间：{raw}，格式如 2026-07。")
+    year, month = int(m.group(1)), int(m.group(2))
+    if not 1 <= month <= 12:
+        raise ValueError(f"月份无效：{month}。")
+    period, _ = AccountingPeriod.objects.get_or_create(
+        month=date(year, month, 1)
+    )
+    return period
+
+
+def _import_historical_price(batch, row):
+    material_code = text(row.get("material_code"))
+    if not material_code:
+        raise ValueError("物料编码不能为空。")
+    period = _parse_period(row.get("period"))
+    receipt_price = to_decimal(row.get("receipt_price")) or None
+    issue_price = to_decimal(row.get("issue_price")) or None
+    if receipt_price is None and issue_price is None:
+        raise ValueError("入库单价和出库单价至少填写一项。")
+    HistoricalPrice.objects.update_or_create(
+        period=period,
+        material_code=material_code,
+        defaults={
+            "material_name": text(row.get("material_name")),
+            "receipt_price": receipt_price,
+            "issue_price": issue_price,
+        },
     )
 
 

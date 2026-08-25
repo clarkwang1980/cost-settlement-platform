@@ -21,7 +21,7 @@
   </section>
   <aside class="section-card guidance">
     <p class="eyebrow">UPLOAD CHECKLIST</p>
-    <h2>下载十七类导入模板</h2>
+    <h2>下载十八类导入模板</h2>
     <div class="template-links">
       {% for kind, label in template_kinds %}
         <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
@@ -239,6 +239,17 @@
         <h3>按模板格式填写</h3>
         <p><span class="field-chip recommended">报工时间</span><span class="field-chip recommended">生产任务编号</span><span class="field-chip recommended">工序编号</span><span class="field-chip recommended">工序名称</span><span class="field-chip recommended">报工物料名称</span><span class="field-chip recommended">生产人员</span><span class="field-chip recommended">质量状态</span><span class="field-chip recommended">不良原因</span><span class="field-chip recommended">报工单位</span><span class="field-chip recommended">辅助数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">流转卡编号</span><span class="field-chip recommended">工时</span><span class="field-chip recommended">工时单位</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">部门</span><span class="field-chip recommended">设备</span><span class="field-chip recommended">工单物料编号</span><span class="field-chip recommended">工单物料名称</span><span class="field-chip recommended">订单编号</span><span class="field-chip recommended">特纺/包覆-纸管颜色</span><span class="field-chip recommended">纺纱-班别</span><span class="field-chip recommended">染色纤维-含水率</span><span class="field-chip recommended">染色纤维-批号流水</span><span class="field-chip recommended">织布-序号</span><span class="field-chip recommended">织布-机台</span><span class="field-chip recommended">产出仓位</span><span class="field-chip recommended">工单部门</span></p>
         <p class="guide-note">按 ERP 导出的报工记录原样导入，作为资料台账保存，不参与现有成本核算。报工数量必须大于0。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>历史单价</span><small>单价表使用：物料×期间 的入库/出库单价</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">期间</span><span class="field-chip required">物料编码</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">入库单价</span><span class="field-chip recommended">出库单价</span></p>
+        <p class="guide-note">期间格式如 2026-07（支持 2026年07月/2026-7/202607）。入库单价和出库单价至少填一项，可只填一项。上传后「单价表」页面优先显示上传的历史单价；未上传的物料仍显示系统计算的月末加权价。同一期间同一物料重复上传以后一次为准。可在一个文件里上传多个期间的历史单价。</p>
       </div>
     </details>
   </div>

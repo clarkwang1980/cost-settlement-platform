@@ -5,7 +5,7 @@
   <div>
     <p class="eyebrow">PRICE TABLE</p>
     <h1>物料单价与出入库成本表（跨月对比）</h1>
-    <p>每个物料一行，每月一组：入库单价、出库单价。入库单价＝入库金额÷入库数量；出库单价＝出库金额÷出库数量。数据来自各期间结算后的库存计价结果。</p>
+    <p>每个物料一行，每月一组：入库单价、出库单价。入库单价＝入库金额÷入库数量；出库单价＝出库金额÷出库数量。已上传「历史单价」的物料优先显示上传价。数据来自各期间结算后的库存计价结果。</p>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'price_table' period.id %}?{{ request.GET.urlencode }}&amp;export=1">导出Excel</a>

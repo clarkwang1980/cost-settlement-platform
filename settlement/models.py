@@ -92,6 +92,10 @@ class ImportBatch(models.Model):
             "issue_progress",
             "投料进度表",
         )
+        HISTORICAL_PRICE = (
+            "historical_price",
+            "历史单价",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -1094,6 +1098,41 @@ class InventoryValuation(models.Model):
                 fields=["period", "material_code"], name="unique_valuation_per_material"
             )
         ]
+
+
+class HistoricalPrice(models.Model):
+    """历史单价（用户上传）：期间+物料 的入库单价/出库单价，用于单价表优先展示。
+
+    上传后覆盖单价表中该期间该物料的系统计算单价；未上传的物料仍用系统月末加权价。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="historical_prices"
+    )
+    material_code = models.CharField(max_length=80, db_index=True)
+    material_name = models.CharField(max_length=255, blank=True)
+    receipt_price = models.DecimalField(
+        max_digits=20, decimal_places=8, null=True, blank=True,
+        verbose_name="入库单价",
+    )
+    issue_price = models.DecimalField(
+        max_digits=20, decimal_places=8, null=True, blank=True,
+        verbose_name="出库单价",
+    )
+
+    class Meta:
+        ordering = ["material_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "material_code"],
+                name="unique_historical_price_per_period_material",
+            )
+        ]
+        verbose_name = "历史单价"
+        verbose_name_plural = "历史单价"
+
+    def __str__(self):
+        return f"{self.period} {self.material_code}"
 
 
 class WorkOrderCostResult(models.Model):

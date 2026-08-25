@@ -1343,6 +1343,71 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         header_row = [c.value for c in wb.active[1]]
         self.assertIn("天然气", header_row)
 
+    def test_historical_price_import_and_price_table_override(self):
+        """历史单价：导入后写入 HistoricalPrice、单价表页面/导出优先显示上传价；
+        且导入历史单价不清理本期结算输出（库存计价）。"""
+        from decimal import Decimal as D
+
+        from settlement.models import HistoricalPrice, InventoryValuation
+
+        # 系统计价：11.01 入库 10 件/1000 元 -> 系统入库单价 100
+        InventoryValuation.objects.create(
+            period=self.period, material_code="11.01",
+            material_name="示例纱线", receipt_quantity=10, receipt_amount=1000,
+            issue_quantity=5, issue_amount=600,
+        )
+        self.client.force_login(self.user)
+        # 上传历史单价：覆盖 11.01 入库单价 88.88、出库单价 77.77
+        csv_content = (
+            "期间,物料编码,物料名称,入库单价,出库单价\n"
+            "2026-08,11.01,示例纱线,88.88,77.77\n"
+            "2026-08,H11.160,硝酸钠,5.55,\n"
+        ).encode("utf-8-sig")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.HISTORICAL_PRICE,
+                    uploaded_file=SimpleUploadedFile(
+                        "历史单价.csv", csv_content, "text/csv"
+                    ),
+                    user=self.user,
+                )
+                process_batch(batch)
+        self.assertEqual(batch.row_count, 2)
+        self.assertEqual(
+            HistoricalPrice.objects.filter(period=self.period).count(), 2
+        )
+        hp = HistoricalPrice.objects.get(period=self.period, material_code="11.01")
+        self.assertEqual(hp.receipt_price, D("88.88000000"))
+        self.assertEqual(hp.issue_price, D("77.77000000"))
+        # 导入历史单价不清理结算输出：库存计价仍在
+        self.assertTrue(
+            InventoryValuation.objects.filter(period=self.period).exists()
+        )
+        # 单价表页面显示上传价（覆盖系统 100/120）
+        resp = self.client.get(reverse("price_table", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode("utf-8")
+        self.assertIn("88.8800", html)
+        self.assertIn("77.7700", html)
+        self.assertNotIn("100.0000", html)
+        # 导出含上传价
+        resp = self.client.get(
+            reverse("price_table", args=[self.period.id]) + "?export=1"
+        )
+        self.assertEqual(resp.status_code, 200)
+        wb = load_workbook(BytesIO(resp.content))
+        ws = wb.active
+        found = False
+        for row in ws.iter_rows(values_only=True):
+            if row and row[1] == "11.01":
+                found = True
+                self.assertEqual(float(row[4]), 88.88)
+                self.assertEqual(float(row[5]), 77.77)
+                break
+        self.assertTrue(found)
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"

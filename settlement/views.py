@@ -24,6 +24,7 @@ from settlement.forms import (
 from settlement.models import (
     AccountingPeriod,
     ExceptionItem,
+    HistoricalPrice,
     ImportBatch,
     InventoryTransaction,
     MatchAllocation,
@@ -106,6 +107,7 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.PULP_RECEIPT: "浆粕成品入库.xlsx",
     ImportBatch.Kind.BOM: "BOM表.xlsx",
     ImportBatch.Kind.ISSUE_PROGRESS: "投料进度表.xlsx",
+    ImportBatch.Kind.HISTORICAL_PRICE: "历史单价.csv",
 }
 
 
@@ -1963,6 +1965,12 @@ def price_table_view(request, period_id):
         for v in p.inventory_valuations.all():
             name_by_code.setdefault(v.material_code, v.material_name)
 
+    # 用户上传的历史单价（优先展示；未上传的物料仍用系统计算单价）
+    historical = {
+        p.id: {hp.material_code: hp for hp in p.historical_prices.all()}
+        for p in periods
+    }
+
     RAW = {"原料", "染色纤维", "纤维", "熟条", "浆粕"}
     FIN = {"纱线", "面料", "坯布", "布", "成品"}
 
@@ -1992,10 +2000,15 @@ def price_table_view(request, period_id):
             ra = Decimal(v.receipt_amount or 0)
             iq = Decimal(v.issue_quantity or 0)
             ia = Decimal(v.issue_amount or 0)
-            cells.append((
-                rq, ra, (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0"),
-                iq, ia, (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0"),
-            ))
+            rp = (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0")
+            ip = (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0")
+            hp = historical.get(p.id, {}).get(code)
+            if hp is not None:
+                if hp.receipt_price is not None:
+                    rp = Decimal(hp.receipt_price)
+                if hp.issue_price is not None:
+                    ip = Decimal(hp.issue_price)
+            cells.append((rq, ra, rp, iq, ia, ip))
         rows.append({
             "category": cat,
             "code": code,
