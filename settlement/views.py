@@ -1683,7 +1683,7 @@ def production_cost_summary(request, period_id):
 
 @login_required
 def work_order_costs(request, period_id):
-    """工单成本明细（生产工单+投料+报工核算结果）。
+    """工单成本明细（生产工单+投料+报工核算结果；每个车间独立一张表，页签切换）。
 
     分配率口径（与分摊逻辑一致）：
     - 制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）分配率
@@ -1847,32 +1847,69 @@ def work_order_costs(request, period_id):
         for f in SUM_FIELDS:
             st[f] += Decimal(getattr(item, f) or 0)
 
-    page = _page(request, results)
+    # 每个车间独立一张表：车间顺序优先取「车间结算」里用户自定义 sequence，
+    # 兜底按 WORKSHOP_LABELS 顺序；每车间含本车间行、合计行与本车间汇总条。
+    from settlement.services.imports import WORKSHOP_LABELS
 
-    # 按车间分组（合计行插在每组末尾）；全量显示以保证车间合计准确
-    groups = []
+    present = []
     for item in results:
         ws = item.work_order.production_dept_code
-        if not groups or groups[-1]["workshop"] != ws:
-            groups.append(
-                {"workshop": ws, "rows": [], "subtotal": subtotals.get(ws)}
-            )
-        groups[-1]["rows"].append(item)
+        if ws not in present:
+            present.append(ws)
+    ordered = list(
+        period.workshop_settlements.order_by("sequence").values_list(
+            "workshop", flat=True
+        )
+    )
+    if not ordered:
+        ordered = list(WORKSHOP_LABELS.keys())
+    present_sorted = [ws for ws in ordered if ws in present] + [
+        ws for ws in present if ws not in ordered
+    ]
 
-    totals = {
-        "material": sum((Decimal(r.direct_material or 0) for r in results), Decimal("0")),
-        "finished": sum((Decimal(r.finished_cost or 0) for r in results), Decimal("0")),
-        "wip": sum((Decimal(r.wip_cost or 0) for r in results), Decimal("0")),
-        "total": sum((Decimal(r.total_cost or 0) for r in results), Decimal("0")),
-    }
+    sections = []
+    for ws in present_sorted:
+        ws_rows = [
+            item for item in results if item.work_order.production_dept_code == ws
+        ]
+        sections.append(
+            {
+                "workshop": ws,
+                "label": WORKSHOP_LABELS.get(ws, ws),
+                "rows": ws_rows,
+                "subtotal": subtotals.get(ws),
+                "totals": {
+                    "material": sum(
+                        (Decimal(r.direct_material or 0) for r in ws_rows),
+                        Decimal("0"),
+                    ),
+                    "finished": sum(
+                        (Decimal(r.finished_cost or 0) for r in ws_rows),
+                        Decimal("0"),
+                    ),
+                    "wip": sum(
+                        (Decimal(r.wip_cost or 0) for r in ws_rows),
+                        Decimal("0"),
+                    ),
+                    "total": sum(
+                        (Decimal(r.total_cost or 0) for r in ws_rows),
+                        Decimal("0"),
+                    ),
+                },
+            }
+        )
+
+    active_ws = (request.GET.get("workshop") or "").strip()
+    if active_ws not in present_sorted:
+        active_ws = present_sorted[0] if present_sorted else ""
+
     return render(
         request,
         "settlement/work_order_costs.html",
         {
             "period": period,
-            "page": page,
-            "groups": groups,
-            "totals": totals,
+            "sections": sections,
+            "active_ws": active_ws,
         },
     )
 

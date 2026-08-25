@@ -1,3 +1,5 @@
+import re
+
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -1270,6 +1272,56 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             username="web-user", password="test-password"
         )
         self.period = AccountingPeriod.objects.create(month=date(2026, 8, 1))
+
+    def test_work_order_costs_page_split_by_workshop(self):
+        """工单成本页：每个车间独立一张表（页签切换），不再全车间合并。"""
+        wo_tefang = WorkOrder.objects.create(
+            period=self.period, order_no="CS-A",
+            production_dept_code="tefang", plan_quantity=100,
+        )
+        wo_jizhi = WorkOrder.objects.create(
+            period=self.period, order_no="JZ-001",
+            production_dept_code="JiZhi", plan_quantity=50,
+        )
+        WorkOrderCostResult.objects.create(
+            period=self.period, work_order=wo_tefang,
+            product_code="P1", product_name="粗纱", plan_quantity=100,
+            finished_quantity=80, wip_quantity=20,
+            direct_material=1000, water_power=10, wages=20,
+            finished_cost=900, wip_cost=130, total_cost=1030,
+        )
+        WorkOrderCostResult.objects.create(
+            period=self.period, work_order=wo_jizhi,
+            product_code="P2", product_name="坯布", plan_quantity=50,
+            finished_quantity=50, wip_quantity=0,
+            direct_material=500, steam=5, wages=10,
+            finished_cost=520, wip_cost=0, total_cost=520,
+        )
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse("work_order_costs", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode("utf-8")
+        # 两张独立的表（每车间一张），而不是一张混合表
+        self.assertEqual(html.count("<table>"), 2)
+        # 表头不再有独立的「车间」列
+        self.assertNotIn("<th>车间</th>", html)
+        # 「是否用粗纱」列只出现在纺纱车间表头（全表仅 1 处）
+        self.assertEqual(html.count("<th>是否用粗纱</th>"), 1)
+        # 每车间有合计行
+        self.assertIn("纺纱车间合计（1 张工单）", html)
+        self.assertIn("机织车间合计（1 张工单）", html)
+        # 页签标注工单数
+        self.assertIn("纺纱车间 <small>1 张工单</small>", html)
+        self.assertIn("机织车间 <small>1 张工单</small>", html)
+        # 每个车间的导出链接带 workshop 参数
+        export_hrefs = re.findall(
+            r'href="([^"]*work_order_cost[^"]*)"', html
+        )
+        self.assertTrue(export_hrefs)
+        self.assertTrue(all("workshop=" in h for h in export_hrefs))
+        # 默认激活第一个车间页签（纺纱）
+        self.assertIn('id="ws-tab-0"', html)
+        self.assertIn('name="ws-tab"', html)
 
     def test_csv_import_and_authenticated_pages(self):
         content = (
