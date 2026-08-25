@@ -1408,6 +1408,58 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 break
         self.assertTrue(found)
 
+    def test_autofill_historical_prices_for_new_materials(self):
+        """历史单价自动补全：期间内新增物料（无上传价）访问单价表时自动按系统计算价补入；
+        已上传/已补全的物料不被覆盖。"""
+        from decimal import Decimal as D
+
+        from settlement.models import HistoricalPrice, InventoryValuation
+
+        # 物料A：有系统计价（入库 10/1000、出库 5/600），无上传历史单价 -> 应自动补
+        InventoryValuation.objects.create(
+            period=self.period, material_code="NEW-A",
+            material_name="新原料A", receipt_quantity=10, receipt_amount=1000,
+            issue_quantity=5, issue_amount=600, weighted_average_price=100,
+        )
+        # 物料B：金额数量全 0，无价格依据 -> 不补
+        InventoryValuation.objects.create(
+            period=self.period, material_code="NEW-B",
+            material_name="无价物料B",
+        )
+        # 物料C：用户已上传 -> 不被覆盖
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="NEW-C",
+            material_name="已上传C", receipt_price=D("9.99000000"),
+            issue_price=D("8.88000000"),
+        )
+        InventoryValuation.objects.create(
+            period=self.period, material_code="NEW-C",
+            material_name="已上传C", receipt_quantity=10, receipt_amount=5000,
+            issue_quantity=5, issue_amount=3000, weighted_average_price=500,
+        )
+
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse("price_table", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+
+        # 自动补全 NEW-A：入库价 1000/10=100、出库价 600/5=120
+        hp_a = HistoricalPrice.objects.get(period=self.period, material_code="NEW-A")
+        self.assertEqual(hp_a.receipt_price, D("100.0000"))
+        self.assertEqual(hp_a.issue_price, D("120.0000"))
+        # NEW-B 无价格依据不补
+        self.assertFalse(
+            HistoricalPrice.objects.filter(period=self.period, material_code="NEW-B").exists()
+        )
+        # NEW-C 已上传不被覆盖
+        hp_c = HistoricalPrice.objects.get(period=self.period, material_code="NEW-C")
+        self.assertEqual(hp_c.receipt_price, D("9.99000000"))
+        self.assertEqual(hp_c.issue_price, D("8.88000000"))
+        # 幂等：再次访问不新增
+        self.client.get(reverse("price_table", args=[self.period.id]))
+        self.assertEqual(
+            HistoricalPrice.objects.filter(period=self.period).count(), 2
+        )
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"

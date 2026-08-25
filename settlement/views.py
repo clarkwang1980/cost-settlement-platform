@@ -1941,6 +1941,11 @@ def price_table_view(request, period_id):
     )
     periods = list(reversed(periods))
 
+    # 历史单价自动补全：用户只需上传一次基准，期间内新增物料自动按系统计算单价补入
+    from settlement.services.historical_prices import autofill_historical_prices
+
+    autofill_historical_prices(periods)
+
     per_period = {
         p.id: {v.material_code: v for v in p.inventory_valuations.all()}
         for p in periods
