@@ -1350,6 +1350,7 @@ def _import_work_order_detail(batch, row):
             "plan_quantity": to_decimal(row.get("plan_quantity"), Decimal("0")),
             "issue_quantity": to_decimal(row.get("issue_quantity"), Decimal("0")),
             "receipt_quantity": to_decimal(row.get("receipt_quantity"), Decimal("0")),
+            "row_no": int(row.get("_row_number") or 0),
         },
     )
 

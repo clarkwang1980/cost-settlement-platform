@@ -1160,9 +1160,10 @@ class WorkOrderDetail(models.Model):
     plan_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
     issue_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
     receipt_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    row_no = models.PositiveIntegerField(default=0, verbose_name="上传行号")
 
     class Meta:
-        ordering = ["order_no"]
+        ordering = ["row_no", "id"]
         constraints = [
             models.UniqueConstraint(
                 fields=["period", "order_no"], name="unique_work_order_detail_per_period"

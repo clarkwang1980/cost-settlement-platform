@@ -1717,6 +1717,54 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 self.assertEqual(found[0][1], "纺纱车间")
                 self.assertEqual(float(found[0][6]), 200.0)
 
+    def test_work_order_detail_export_keeps_upload_order(self):
+        """工单明细导出按上传顺序（非字母序）。"""
+        from zipfile import ZipFile
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "工单明细"
+        ws.append(["工单明细"])
+        ws.append(["说明"])
+        ws.append(["创建时间", "生产车间", "工单编号", "计划完工时间", "实际完工时间",
+                   "完成状态", "计划数量", "投料数量", "入库数量"])
+        for r in [
+            ["2026-07-02 08:00", "纺纱车间", "Z-001", "", "", "已完成", "200", "210", "198"],
+            ["2026-07-02 08:05", "染色车间", "A-002", "", "", "部分完成", "300", "280", "150"],
+            ["2026-07-02 08:10", "机织车间", "M-003", "", "", "未开工", "100", "0", "0"],
+        ]:
+            ws.append(r)
+        stream = BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+        self.client.force_login(self.user)
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.WORK_ORDER_DETAIL,
+                    uploaded_file=SimpleUploadedFile(
+                        "工单明细.xlsx", stream.read(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                    user=self.user,
+                )
+                process_batch(batch)
+                self.assertEqual(batch.row_count, 3)
+                resp = self.client.post(
+                    reverse("export_center", args=[self.period.id]),
+                    data={"reports": ["work_order_detail"]},
+                )
+                self.assertEqual(resp.status_code, 200)
+                zf = ZipFile(BytesIO(resp.content))
+                fname = [n for n in zf.namelist() if "工单明细" in n][0]
+                wsx = load_workbook(BytesIO(zf.read(fname))).active
+                rows = list(wsx.iter_rows(values_only=True))
+                orders = [r[2] for r in rows[1:] if r and r[2]]
+                self.assertEqual(orders, ["Z-001", "A-002", "M-003"])
+
     def test_opening_wip_multisheet_template_import(self):
         """期初在产品模板改为多工作表（每车间一个 sheet），导入时合并全部 sheet。"""
         from decimal import Decimal as D
