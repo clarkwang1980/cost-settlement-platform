@@ -185,6 +185,25 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
     return {order_no: money(value) for order_no, value in amounts.items()}
 
 
+def _roving_output_code(period: AccountingPeriod, order_no: str) -> str:
+    """粗纱工单的产出物料：优先取BOM成品物料编号，其次从工单号前缀提取。"""
+    code = (
+        BomLine.objects.filter(period=period, work_order_no=order_no)
+        .exclude(material_code="")
+        .values_list("material_code", flat=True)
+        .first()
+    )
+    if code:
+        return code
+    prefix = order_no
+    for sep in ("-20", "-19"):
+        idx = prefix.find(sep)
+        if idx > 0:
+            prefix = prefix[:idx]
+            break
+    return prefix
+
+
 def build_roving_plan(period: AccountingPeriod, prices=None):
     """粗纱链计算层计划（仅计算，不写任何库存流水/投料记录）：
 
