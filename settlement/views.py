@@ -1812,6 +1812,27 @@ def work_order_costs(request, period_id):
         .values_list("material_code", "category_name")
     ):
         category_by_code.setdefault(code, cat)
+    # BOM 主产出物料（产品编码/名称兜底）：工单 -> (物料编码, 物料名称)
+    bom_product = {}
+    for line in period.bom_lines.exclude(material_code="").order_by("id"):
+        bom_product.setdefault(
+            line.work_order_no, (line.material_code, line.material_name)
+        )
+    # 物料名关键词推断类别（纱线/面料/染色纤维/坯布等）
+    _CATEGORY_KEYWORDS = (
+        ("面料", ("面料", "坯布", "织布", "布")),
+        ("纱线", ("纱线", "纱")),
+        ("染色纤维", ("纤维", "长丝", "丝")),
+        ("原料", ("原料", "棉", "麻")),
+    )
+
+    def _cat_from_name(name):
+        if not name:
+            return ""
+        for cat, kws in _CATEGORY_KEYWORDS:
+            if any(k in name for k in kws):
+                return cat
+        return ""
 
     for item in results:
         order_no = item.work_order.order_no
@@ -1869,18 +1890,30 @@ def work_order_costs(request, period_id):
             item.uses_roving = "—"
         # 类别/计划完工时间/实际完工时间/完成状态：优先取工单明细（用户上传），无则系统回退
         detail = work_order_details.get(order_no)
-        # 产品编码兜底：product_code 为空时从工单标识码提取（如 14.1661-BF20260413 -> 14.1661），并回填显示
-        product_code = item.product_code
+        # 产品编码/名称兜底：BOM 主产出物料优先（编码/名称最完整），其次工单标识码提取
+        product_code = item.product_code or ""
         if not product_code:
-            _ident = item.work_order.identifier or order_no
-            _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
-            product_code = _m.group(1) if _m else _ident
-            item.product_code = product_code
+            _bom = bom_product.get(order_no)
+            if _bom and _bom[0]:
+                product_code = _bom[0]
+                item.product_code = product_code
+            else:
+                _ident = item.work_order.identifier or order_no
+                _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
+                product_code = _m.group(1) if _m else _ident
+                item.product_code = product_code
+        if not item.product_name:
+            _bom = bom_product.get(order_no)
+            if _bom and _bom[1]:
+                item.product_name = _bom[1]
         # 类别：流水匹配优先（用户要求：类别从流水里匹配）
-        # 流水该产品物料的分类名（纱线/面料/染色纤维/原料/坯布等）→ 工单明细类别 → 工单类型
+        # 流水该产品物料的分类名（纱线/面料/染色纤维/原料/坯布等）→ BOM主产出码/物料名推断 → 工单明细类别 → 工单类型
+        _bom = bom_product.get(order_no)
         item.wo_category = (
             category_by_code.get(product_code)
             or category_by_code.get(item.product_code or "")
+            or (category_by_code.get(_bom[0]) if _bom and _bom[0] else "")
+            or _cat_from_name(_bom[1] if _bom else "")
             or (detail.category if detail is not None else "")
             or item.work_order.order_type
             or ""
@@ -3465,6 +3498,26 @@ def _listing_rows(request, period, kind):
             .values_list("material_code", "category_name")
         ):
             category_by_code.setdefault(code, cat)
+        bom_product = {}
+        for line in period.bom_lines.exclude(material_code="").order_by("id"):
+            bom_product.setdefault(
+                line.work_order_no, (line.material_code, line.material_name)
+            )
+        _CATEGORY_KEYWORDS2 = (
+            ("面料", ("面料", "坯布", "织布", "布")),
+            ("纱线", ("纱线", "纱")),
+            ("染色纤维", ("纤维", "长丝", "丝")),
+            ("原料", ("原料", "棉", "麻")),
+        )
+
+        def _cat_from_name2(name):
+            if not name:
+                return ""
+            for cat, kws in _CATEGORY_KEYWORDS2:
+                if any(k in name for k in kws):
+                    return cat
+            return ""
+
         for item in results:
             order_no = item.work_order.order_no
             ws = item.work_order.production_dept_code
@@ -3515,16 +3568,29 @@ def _listing_rows(request, period, kind):
                 item.uses_roving = "—"
             # 类别/计划完工/实际完工/完成状态（优先工单明细）
             detail = work_order_details.get(order_no)
-            # 类别：流水匹配优先（用户要求：类别从流水里匹配）
-            product_code = item.product_code
+            # 产品编码/名称兜底：BOM 主产出优先，其次标识码提取
+            product_code = item.product_code or ""
             if not product_code:
-                _ident = item.work_order.identifier or order_no
-                _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
-                product_code = _m.group(1) if _m else _ident
-                item.product_code = product_code
+                _bom = bom_product.get(order_no)
+                if _bom and _bom[0]:
+                    product_code = _bom[0]
+                    item.product_code = product_code
+                else:
+                    _ident = item.work_order.identifier or order_no
+                    _m = re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", _ident)
+                    product_code = _m.group(1) if _m else _ident
+                    item.product_code = product_code
+            if not item.product_name:
+                _bom = bom_product.get(order_no)
+                if _bom and _bom[1]:
+                    item.product_name = _bom[1]
+            # 类别：流水匹配优先 → BOM主产出码/物料名推断 → 明细类别 → 工单类型
+            _bom = bom_product.get(order_no)
             item.wo_category = (
                 category_by_code.get(product_code)
                 or category_by_code.get(item.product_code or "")
+                or (category_by_code.get(_bom[0]) if _bom and _bom[0] else "")
+                or _cat_from_name2(_bom[1] if _bom else "")
                 or (detail.category if detail is not None else "")
                 or item.work_order.order_type
                 or ""
