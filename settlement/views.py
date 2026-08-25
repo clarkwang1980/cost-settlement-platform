@@ -1789,6 +1789,20 @@ def work_order_costs(request, period_id):
         .exclude(work_order_no="")
         .values_list("work_order_no", flat=True)
     )
+    # 工单明细（用户上传）：类别/计划完工时间/实际完工时间/完成状态 按工单编号关联
+    work_order_details = {
+        d.order_no: d
+        for d in period.work_order_details.all()
+    }
+    # 各工单实际完工时间兜底：报工记录最大报工时间
+    from django.db.models import Max as _MaxDetail
+
+    report_time_agg = {
+        row["work_order_no"]: row["max_time"]
+        for row in period.work_reports.exclude(work_order_no="")
+        .values("work_order_no")
+        .annotate(max_time=_MaxDetail("report_time"))
+    }
 
     for item in results:
         order_no = item.work_order.order_no
@@ -1844,6 +1858,29 @@ def work_order_costs(request, period_id):
             item.uses_roving = "是" if uses_roving else "否"
         else:
             item.uses_roving = "—"
+        # 类别/计划完工时间/实际完工时间/完成状态：优先取工单明细（用户上传），无则系统回退
+        detail = work_order_details.get(order_no)
+        if detail is not None and detail.category:
+            item.wo_category = detail.category
+        else:
+            item.wo_category = item.work_order.order_type or ""
+        if detail is not None and detail.planned_finish:
+            item.wo_planned_finish = detail.planned_finish
+        else:
+            item.wo_planned_finish = (
+                item.work_order.planned_finish.strftime("%Y-%m-%d %H:%M")
+                if item.work_order.planned_finish
+                else ""
+            )
+        if detail is not None and detail.actual_finish:
+            item.wo_actual_finish = detail.actual_finish
+        else:
+            _t = report_time_agg.get(order_no)
+            item.wo_actual_finish = _t.strftime("%Y-%m-%d %H:%M") if _t else ""
+        if detail is not None and detail.completion_status:
+            item.wo_completion_status = detail.completion_status
+        else:
+            item.wo_completion_status = item.completion_status
 
     # 车间合计（全量，金额列汇总）
     SUM_FIELDS = (
@@ -3386,6 +3423,19 @@ def _listing_rows(request, period, kind):
             .exclude(work_order_no="")
             .values_list("work_order_no", flat=True)
         )
+        # 工单明细（用户上传）：类别/计划完工/实际完工/完成状态
+        work_order_details = {
+            d.order_no: d
+            for d in period.work_order_details.all()
+        }
+        from django.db.models import Max as _MaxDetail2
+
+        report_time_agg = {
+            row["work_order_no"]: row["max_time"]
+            for row in period.work_reports.exclude(work_order_no="")
+            .values("work_order_no")
+            .annotate(max_time=_MaxDetail2("report_time"))
+        }
         for item in results:
             order_no = item.work_order.order_no
             ws = item.work_order.production_dept_code
@@ -3434,14 +3484,38 @@ def _listing_rows(request, period, kind):
                 item.uses_roving = "是" if uses_roving else "否"
             else:
                 item.uses_roving = "—"
+            # 类别/计划完工/实际完工/完成状态（优先工单明细）
+            detail = work_order_details.get(order_no)
+            if detail is not None and detail.category:
+                item.wo_category = detail.category
+            else:
+                item.wo_category = item.work_order.order_type or ""
+            if detail is not None and detail.planned_finish:
+                item.wo_planned_finish = detail.planned_finish
+            else:
+                item.wo_planned_finish = (
+                    item.work_order.planned_finish.strftime("%Y-%m-%d %H:%M")
+                    if item.work_order.planned_finish
+                    else ""
+                )
+            if detail is not None and detail.actual_finish:
+                item.wo_actual_finish = detail.actual_finish
+            else:
+                _t = report_time_agg.get(order_no)
+                item.wo_actual_finish = _t.strftime("%Y-%m-%d %H:%M") if _t else ""
+            if detail is not None and detail.completion_status:
+                item.wo_completion_status = detail.completion_status
+            else:
+                item.wo_completion_status = item.completion_status
 
         # 与页面/结算工作簿一致：每个制造费用列后加分配率列，每车间末尾加合计行
         # 纺纱车间无天然气费用：单独导出纺纱时去掉天然气两列（与页面一致）
         workshop_param = (request.GET.get("workshop") or "").strip()
         hide_gas = workshop_param == "tefang"
         headers = [
-            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量",
-            "本期投料", "累计投料", "投料状态", "完成状态",
+            "核算期间", "工单编号", "车间", "类别", "产品编码", "产品名称",
+            "计划完工时间", "实际完工时间", "完成状态", "计划数量",
+            "本期投料", "累计投料", "投料状态", "完成状态(核算)",
             "本期完工", "累计完工", "本期完工率", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
@@ -3510,8 +3584,12 @@ def _listing_rows(request, period, kind):
                     f"{period.month:%Y-%m}",
                     item.work_order.order_no,
                     WORKSHOP_LABELS.get(ws, ws),
+                    item.wo_category,
                     item.product_code,
                     item.product_name,
+                    item.wo_planned_finish,
+                    item.wo_actual_finish,
+                    item.wo_completion_status,
                     item.plan_quantity,
                     item.current_issue,
                     item.accum_issue,
@@ -3550,7 +3628,7 @@ def _listing_rows(request, period, kind):
 
             def _subtotal_row(ws, st):
                 row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
-                row += [""] * 16
+                row += [""] * 19
                 row += [
                     st["direct_material"],
                     st["water_power"], "",

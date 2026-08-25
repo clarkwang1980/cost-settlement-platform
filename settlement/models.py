@@ -1154,6 +1154,7 @@ class WorkOrderDetail(models.Model):
     created_at = models.CharField(max_length=100, blank=True, verbose_name="创建时间")
     workshop = models.CharField(max_length=100, blank=True, verbose_name="生产车间")
     order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    category = models.CharField(max_length=100, blank=True, verbose_name="类别")
     planned_finish = models.CharField(max_length=100, blank=True, verbose_name="计划完工时间")
     actual_finish = models.CharField(max_length=100, blank=True, verbose_name="实际完工时间")
     completion_status = models.CharField(max_length=100, blank=True, verbose_name="完成状态")

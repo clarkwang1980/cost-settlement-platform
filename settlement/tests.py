@@ -1313,6 +1313,11 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         # 页签标注工单数
         self.assertIn("纺纱车间 <small>1 张工单</small>", html)
         self.assertIn("机织车间 <small>1 张工单</small>", html)
+        # 类别/计划完工/实际完工/完成状态 四列存在
+        self.assertIn("<th>类别</th>", html)
+        self.assertIn("<th>计划完工时间</th>", html)
+        self.assertIn("<th>实际完工时间</th>", html)
+        self.assertIn("<th>完成状态</th>", html)
         # 每车间的导出链接带 workshop 参数；顶部"导出Excel（全部车间）"按钮不带 workshop
         export_hrefs = re.findall(
             r'href="([^"]*work_order_cost[^"]*)"', html

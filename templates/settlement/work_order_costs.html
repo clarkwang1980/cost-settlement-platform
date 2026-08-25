@@ -50,9 +50,10 @@
       <p class="help-text">累计投料/投料状态来自「投料进度表」（数据导入→投料进度表上传）；累计完工=报工数量合计；累计完工率=累计完工÷(累计完工+在产品)；是否用粗纱：纺纱车间工单按BOM/投料/投料进度中是否含 BC- 粗纱判断。分配率口径：制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）分配率＝车间该费用总额÷车间材料成本总额；工资分配率＝该工单折合数量（完工+0.5×在产品）÷车间折合数量合计。</p>
       <div class="table-wrap"><table>
         <thead><tr>
-          <th>期间</th><th>工单</th><th>产品</th>
+          <th>期间</th><th>工单</th><th>类别</th><th>产品</th>
+          <th>计划完工时间</th><th>实际完工时间</th><th>完成状态</th>
           <th class="num">计划数量</th>
-          <th class="num">本期投料</th><th class="num">累计投料</th><th>投料状态</th><th>完成状态</th>
+          <th class="num">本期投料</th><th class="num">累计投料</th><th>投料状态</th><th>完成状态(核算)</th>
           <th class="num">本期完工</th><th class="num">累计完工</th>
           <th class="num">本期完工率</th><th class="num">累计完工率</th>
           {% if section.workshop == "tefang" %}<th>是否用粗纱</th>{% endif %}
@@ -71,7 +72,11 @@
         <tr>
           <td>{{ period.month|date:"Y-m" }}</td>
           <td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small></td>
+          <td>{{ item.wo_category }}</td>
           <td><strong>{{ item.product_code }}</strong><small>{{ item.product_name }}</small></td>
+          <td>{{ item.wo_planned_finish }}</td>
+          <td>{{ item.wo_actual_finish }}</td>
+          <td>{{ item.wo_completion_status }}</td>
           <td class="num">{{ item.plan_quantity|floatformat:2|thousands }}</td>
           <td class="num">{{ item.current_issue|floatformat:2|thousands }}</td>
           <td class="num">{{ item.accum_issue|floatformat:2|thousands }}</td>
@@ -108,6 +113,7 @@
         {% if section.subtotal %}
         <tr style="background:#eef2f7;font-weight:600;">
           <td colspan="3"><strong>{{ section.label }}合计（{{ section.subtotal.count }} 张工单）</strong></td>
+          <td></td><td></td><td></td><td></td>
           <td class="num"></td>
           <td class="num"></td><td class="num"></td><td></td><td></td>
           <td class="num"></td><td class="num"></td>
