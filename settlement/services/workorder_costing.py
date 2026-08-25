@@ -106,6 +106,44 @@ def _order_product(period, order_no: str):
     return "", ""
 
 
+def build_product_resolver(period: AccountingPeriod):
+    """构建"工单 -> 产品编码/名称"解析器（含 BOM 主产出索引，显示层兜底用）。
+
+    返回 callable: resolve(work_order_obj, product_code, product_name) -> (code, name)
+    匹配顺序：
+      1) 传入的 product_code/product_name（结算时来自报工记录，优先保留）
+      2) BOM 主产出物料编码/名称（该工单 BOM 第一条主产出，编码/名称最完整）
+      3) 工单标识码 identifier 前缀提取（如 14.1661-BF20260413 -> 14.1661）
+      4) 工单编号本身（最后兜底，仅编码）
+    """
+    bom_product = {}
+    for line in period.bom_lines.exclude(material_code="").order_by("id"):
+        bom_product.setdefault(
+            line.work_order_no, (line.material_code, line.material_name)
+        )
+
+    import re as _re
+
+    def resolve(work_order, product_code="", product_name=""):
+        order_no = work_order.order_no
+        code = product_code or ""
+        name = product_name or ""
+        bom = bom_product.get(order_no)
+        if not code:
+            if bom and bom[0]:
+                code = bom[0]
+            else:
+                ident = work_order.identifier or order_no
+                m = _re.match(r"^([A-Za-z0-9]+(?:\.[0-9]+)?)", ident)
+                code = m.group(1) if m else ident
+        if not name:
+            if bom and bom[1]:
+                name = bom[1]
+        return code, name
+
+    return resolve
+
+
 def _collect_work_orders(period: AccountingPeriod):
     """返回需要核算的工单列表，主档缺失的自动补建。
 
