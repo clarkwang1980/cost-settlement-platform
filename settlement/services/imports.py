@@ -370,8 +370,14 @@ ALIASES["historical_price"] = {
     "period": ["期间", "月份", "核算期间", "核算月份", "所属期间", "所属月份", "月度"],
     "material_code": ["物料编码", "物料编号", "物料代码", "产品编码", "存货编码", "编码"],
     "material_name": ["物料名称", "品名", "产品名称", "存货名称"],
-    "receipt_price": ["入库单价", "入库价", "采购单价", "单价"],
-    "issue_price": ["出库单价", "出库价", "销售单价", "发出单价"],
+    "receipt_price": [
+        "入库单价", "入库价", "采购单价", "单价",
+        "入库单价元", "入库价元", "采购单价元", "单价元",
+    ],
+    "issue_price": [
+        "出库单价", "出库价", "销售单价", "发出单价",
+        "出库单价元", "出库价元", "销售单价元", "发出单价元",
+    ],
 }
 
 
@@ -445,7 +451,9 @@ def to_decimal(value, default=None) -> Decimal | None:
         return value
     if isinstance(value, bool):
         return Decimal(int(value))
-    text = str(value).strip().replace(",", "").replace("￥", "").replace("¥", "")
+    text = str(value).strip().replace(",", "").replace("，", "").replace("￥", "").replace("¥", "")
+    # 剥离常见中文单位后缀，如 88.88元/kg、3.36元/千克、5.5元
+    text = re.sub(r"(元|円|美元|rmb)(/|／)?(kg|千克|公斤|吨|t|个|件|米|m|克|g)?$", "", text, flags=re.IGNORECASE).strip()
     if not text or text in {"-", "—", "－", "/", "\\", "None", "null", "n/a"}:
         return default
     is_percent = text.endswith("%")
@@ -1245,7 +1253,11 @@ def _import_issue_progress(batch, row):
 
 
 def _parse_period(value) -> AccountingPeriod:
-    """解析期间列（2026-07 / 2026年07月 / 2026-7 / 202607 等）并返回对应 AccountingPeriod。"""
+    """解析期间列（2026-07 / 2026年07月 / 2026-7 / 202607 / 日期对象等）并返回对应 AccountingPeriod。"""
+    if isinstance(value, (datetime, date)):
+        return AccountingPeriod.objects.get_or_create(
+            month=date(value.year, value.month, 1)
+        )[0]
     raw = text(value)
     if not raw:
         raise ValueError("期间不能为空，格式如 2026-07。")
