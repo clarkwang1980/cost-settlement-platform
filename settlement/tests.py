@@ -1591,6 +1591,53 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             rows = list(ws.iter_rows(values_only=True))
             self.assertTrue(any(r and r[col] == code for r in rows), marker)
 
+    def test_opening_wip_multisheet_template_import(self):
+        """期初在产品模板改为多工作表（每车间一个 sheet），导入时合并全部 sheet。"""
+        from decimal import Decimal as D
+
+        from openpyxl import Workbook
+
+        from settlement.models import OpeningWip
+
+        wb = Workbook()
+        ws1 = wb.active
+        ws1.title = "染色车间"
+        ws1.append(["期初在产品 · 染色车间"])
+        ws1.append(["说明"])
+        ws1.append(["工单号", "材料成本", "水电", "蒸汽", "天然气", "折旧", "机物料", "染料助剂", "工资"])
+        ws1.append(["WIP-RZ-1", "1000", "50", "30", "20", "40", "10", "60", "80"])
+        ws2 = wb.create_sheet("纺纱车间")
+        ws2.append(["期初在产品 · 纺纱车间"])
+        ws2.append(["说明"])
+        ws2.append(["工单号", "材料成本", "水电", "蒸汽", "天然气", "折旧", "机物料", "染料助剂", "工资"])
+        ws2.append(["WIP-TF-1", "2000", "80", "60", "", "50", "20", "", "120"])
+        stream = BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+
+        self.client.force_login(self.user)
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.OPENING_WIP,
+                    uploaded_file=SimpleUploadedFile(
+                        "期初在产品.xlsx", stream.read(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                    user=self.user,
+                )
+                process_batch(batch)
+        self.assertEqual(batch.row_count, 2)
+        self.assertEqual(batch.error_count, 0)
+        rz = OpeningWip.objects.get(period=self.period, order_no="WIP-RZ-1")
+        self.assertEqual(rz.material, D("1000.00"))
+        self.assertEqual(rz.natural_gas, D("20.00"))
+        tf = OpeningWip.objects.get(period=self.period, order_no="WIP-TF-1")
+        self.assertEqual(tf.material, D("2000.00"))
+        self.assertEqual(tf.natural_gas, D("0.00"))  # 纺纱留空天然气
+        self.assertEqual(tf.dye_auxiliary, D("0.00"))
+
     def test_csv_import_and_authenticated_pages(self):
         content = (
             "业务日期,单据号,业务类型,方向,物料编码,物料名称,数量,单位\n"

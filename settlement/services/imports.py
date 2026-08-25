@@ -578,18 +578,27 @@ def _read_csv(path: Path):
     return list(csv.reader(io.StringIO(decoded)))
 
 
-def _read_xlsx(path: Path):
+def _read_xlsx(path: Path, kind: str = None):
+    """读取 xlsx：kind 为 opening_wip 时返回所有有内容的 sheet 行列表（每车间一个 sheet）；
+    其他类型返回最佳（内容最多）sheet 的行列表。"""
     workbook = load_workbook(path, read_only=True, data_only=True)
     best_rows = None
     best_score = -1
+    sheet_rows_list = []
     for worksheet in workbook.worksheets:
         rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
         score = sum(1 for row in rows[:10] for value in row if value not in (None, ""))
         if score > best_score:
             best_score = score
             best_rows = rows
+        if kind == "opening_wip" and any(
+            value not in (None, "") for row in rows for value in row
+        ):
+            sheet_rows_list.append(rows)
     workbook.close()
-    return best_rows or []
+    if kind == "opening_wip":
+        return sheet_rows_list or ([best_rows] if best_rows else [])
+    return [best_rows] if best_rows else []
 
 
 def _locate_header(rows, kind: str):
@@ -623,22 +632,29 @@ def _locate_header(rows, kind: str):
 def read_rows(path: Path, kind: str):
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        rows = _read_csv(path)
+        rows_list = [_read_csv(path)]
     elif suffix in {".xlsx", ".xlsm"}:
-        rows = _read_xlsx(path)
+        rows_list = _read_xlsx(path, kind)
     else:
         raise ValueError("只支持CSV、XLSX和XLSM文件。")
-    if not rows:
-        raise ValueError("文件没有可读取的数据。")
-    header_index, mapping = _locate_header(rows, kind)
     result = []
-    for source_row_number, row in enumerate(rows[header_index + 1 :], header_index + 2):
-        if not any(value not in (None, "") for value in row):
+    for rows in rows_list:
+        if not rows:
             continue
-        item = {"_row_number": source_row_number}
-        for field, col_index in mapping.items():
-            item[field] = row[col_index] if col_index < len(row) else None
-        result.append(item)
+        if not any(value not in (None, "") for row in rows for value in row):
+            continue
+        header_index, mapping = _locate_header(rows, kind)
+        for source_row_number, row in enumerate(
+            rows[header_index + 1 :], header_index + 2
+        ):
+            if not any(value not in (None, "") for value in row):
+                continue
+            item = {"_row_number": source_row_number}
+            for field, col_index in mapping.items():
+                item[field] = row[col_index] if col_index < len(row) else None
+            result.append(item)
+    if not result:
+        raise ValueError("文件没有可读取的数据。")
     return result
 
 

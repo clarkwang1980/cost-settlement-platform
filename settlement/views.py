@@ -96,7 +96,7 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.PURCHASE_INVOICE: "采购发票.csv",
     ImportBatch.Kind.SALES_INVOICE: "销售发票.csv",
     ImportBatch.Kind.WORKSHOP_COST: "车间费用.csv",
-    ImportBatch.Kind.OPENING_WIP: "期初在产品.csv",
+    ImportBatch.Kind.OPENING_WIP: "期初在产品.xlsx",
     ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: "期初采购暂估明细.csv",
     ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细.csv",
     ImportBatch.Kind.OPENING_INVENTORY: "期初存货.csv",
