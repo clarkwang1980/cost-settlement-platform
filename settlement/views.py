@@ -2006,48 +2006,22 @@ def price_table_view(request, period_id):
 
     rows.sort(key=lambda r: ({"原料": 0, "成品": 1, "其它": 2}.get(r["category"], 9), r["code"]))
 
-    # 分类小计 / 总计（每期一组：入库数量/金额/单价、出库数量/金额/单价）
     def _price(a, q):
         q = Decimal(q or 0)
         a = Decimal(a or 0)
         return (a / q).quantize(Decimal("0.0001")) if q else Decimal("0")
-
-    subtotals = {}
-    grand = [{"rq": Decimal("0"), "ra": Decimal("0"), "rp": Decimal("0"), "iq": Decimal("0"), "ia": Decimal("0"), "ip": Decimal("0")} for _ in periods]
-    for row in rows:
-        st = subtotals.setdefault(row["category"], [
-            {"rq": Decimal("0"), "ra": Decimal("0"), "rp": Decimal("0"), "iq": Decimal("0"), "ia": Decimal("0"), "ip": Decimal("0")}
-            for _ in periods
-        ])
-        for i, cell in enumerate(row["cells"]):
-            st[i]["rq"] += cell[0]
-            st[i]["ra"] += cell[1]
-            st[i]["iq"] += cell[3]
-            st[i]["ia"] += cell[4]
-            grand[i]["rq"] += cell[0]
-            grand[i]["ra"] += cell[1]
-            grand[i]["iq"] += cell[3]
-            grand[i]["ia"] += cell[4]
-    for st in subtotals.values():
-        for i, item in enumerate(st):
-            item["rp"] = _price(item["ra"], item["rq"])
-            item["ip"] = _price(item["ia"], item["iq"])
-    for i, item in enumerate(grand):
-        item["rp"] = _price(item["ra"], item["rq"])
-        item["ip"] = _price(item["ia"], item["iq"])
 
     if request.GET.get("export"):
         wb = Workbook()
         ws = wb.active
         ws.title = "单价表-跨月对比"
         ws.append([f"物料单价与出入库成本表（跨月对比）"])
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 4 * len(periods))
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 2 * len(periods))
         ws.cell(1, 1).font = Font(bold=True, size=14)
         headers = ["类别", "物料编码", "物料名称", "单位"]
         for p in periods:
             headers += [
-                f"{p.month:%Y-%m} 入库金额", f"{p.month:%Y-%m} 入库单价",
-                f"{p.month:%Y-%m} 出库金额", f"{p.month:%Y-%m} 出库单价",
+                f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库单价",
             ]
         ws.append(headers)
         thin = Side(style="thin", color="BFBFBF")
@@ -2061,12 +2035,10 @@ def price_table_view(request, period_id):
             cell.border = border
         raw_fill = PatternFill("solid", fgColor="FCE4D6")
         fin_fill = PatternFill("solid", fgColor="E2EFDA")
-        sub_fill = PatternFill("solid", fgColor="D9E1F2")
-        total_fill = PatternFill("solid", fgColor="FFF2CC")
         for row in rows:
             line = [row["category"], row["code"], row["name"], row["uom"]]
             for rq, ra, rp, iq, ia, ip in row["cells"]:
-                line += [ra, rp, ia, ip]
+                line += [rp, ip]
             ws.append(line)
             rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
             for c in range(1, len(headers) + 1):
@@ -2074,28 +2046,9 @@ def price_table_view(request, period_id):
                 cell.border = border
                 if c >= 5:
                     cell.alignment = Alignment(horizontal="right")
-                    cell.number_format = "#,##0.00"
+                    cell.number_format = "#,##0.0000"
                 if rf:
                     cell.fill = rf
-        for cat, st in subtotals.items():
-            line = [f"{cat}小计", "", "", ""]
-            for item in st:
-                line += [item["ra"], item["rp"], item["ia"], item["ip"]]
-            ws.append(line)
-            for c in range(1, len(headers) + 1):
-                cell = ws.cell(ws.max_row, c)
-                cell.fill = sub_fill
-                cell.font = Font(bold=True)
-                cell.border = border
-        line = ["总计", "", "", ""]
-        for item in grand:
-            line += [item["ra"], item["rp"], item["ia"], item["ip"]]
-        ws.append(line)
-        for c in range(1, len(headers) + 1):
-            cell = ws.cell(ws.max_row, c)
-            cell.fill = total_fill
-            cell.font = Font(bold=True)
-            cell.border = border
         for i, h in enumerate(headers, 1):
             ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 16
         ws.freeze_panes = "E3"
@@ -2117,8 +2070,6 @@ def price_table_view(request, period_id):
             "period": period,
             "periods": periods,
             "rows": rows,
-            "subtotals": subtotals,
-            "grand": grand,
             "category_filter": category_filter or "all",
             "n_periods": len(periods),
             "periods_options": list(range(1, 13)),
