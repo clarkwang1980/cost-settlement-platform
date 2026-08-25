@@ -3538,7 +3538,7 @@ def _listing_rows(request, period, kind):
         headers = [
             "核算期间", "工单编号", "车间", "类别", "产品编码", "产品名称",
             "计划完工时间", "实际完工时间", "完成状态", "计划数量",
-            "本期投料", "累计投料", "投料状态", "完成状态(核算)",
+            "本期投料", "累计投料", "投料状态",
             "本期完工", "累计完工", "本期完工率", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
@@ -3617,7 +3617,6 @@ def _listing_rows(request, period, kind):
                     item.current_issue,
                     item.accum_issue,
                     item.issue_status,
-                    item.completion_status,
                     item.current_finished,
                     item.accum_finished,
                     item.current_finish_rate_pct,
@@ -3651,7 +3650,7 @@ def _listing_rows(request, period, kind):
 
             def _subtotal_row(ws, st):
                 row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
-                row += [""] * 19
+                row += [""] * 18
                 row += [
                     st["direct_material"],
                     st["water_power"], "",
