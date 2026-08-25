@@ -1868,14 +1868,14 @@ def work_order_costs(request, period_id):
             item.uses_roving = "—"
         # 类别/计划完工时间/实际完工时间/完成状态：优先取工单明细（用户上传），无则系统回退
         detail = work_order_details.get(order_no)
-        if detail is not None and detail.category:
-            item.wo_category = detail.category
-        else:
-            item.wo_category = (
-                category_by_code.get(item.product_code)
-                or item.work_order.order_type
-                or ""
-            )
+        # 类别：流水匹配优先（用户要求：类别从流水里匹配）
+        # 流水该产品物料的分类名（纱线/面料/染色纤维/原料/坯布等）→ 工单明细类别 → 工单类型
+        item.wo_category = (
+            category_by_code.get(item.product_code)
+            or (detail.category if detail is not None else "")
+            or item.work_order.order_type
+            or ""
+        )
         if detail is not None and detail.planned_finish:
             item.wo_planned_finish = detail.planned_finish
         else:
@@ -3506,14 +3506,13 @@ def _listing_rows(request, period, kind):
                 item.uses_roving = "—"
             # 类别/计划完工/实际完工/完成状态（优先工单明细）
             detail = work_order_details.get(order_no)
-            if detail is not None and detail.category:
-                item.wo_category = detail.category
-            else:
-                item.wo_category = (
-                    category_by_code.get(item.product_code)
-                    or item.work_order.order_type
-                    or ""
-                )
+            # 类别：流水匹配优先（用户要求：类别从流水里匹配）
+            item.wo_category = (
+                category_by_code.get(item.product_code)
+                or (detail.category if detail is not None else "")
+                or item.work_order.order_type
+                or ""
+            )
             if detail is not None and detail.planned_finish:
                 item.wo_planned_finish = detail.planned_finish
             else:
