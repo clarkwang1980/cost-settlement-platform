@@ -879,13 +879,19 @@ def process_batch(batch: ImportBatch):
     count = 0
     for row in rows:
         try:
-            importer(batch, row)
-            count += 1
+            result = importer(batch, row)
+            if result != "skipped":
+                count += 1
         except Exception as exc:
             errors.append(f"第{row['_row_number']}行：{exc}")
     batch.row_count = count
     batch.error_count = len(errors)
     batch.message = "\n".join(errors[:100])
+    if count == 0 and not errors:
+        # 全部为模板示例行（跳过）或空数据：视为成功导入 0 行，不报错
+        batch.status = ImportBatch.Status.SUCCESS
+        batch.save(update_fields=["row_count", "error_count", "message", "status"])
+        return batch
     batch.status = (
         ImportBatch.Status.SUCCESS if count > 0 else ImportBatch.Status.FAILED
     )
@@ -1329,9 +1335,13 @@ def _import_workshop_cost(batch, row):
 
 
 def _import_opening_wip(batch, row):
+    order_no = text(row.get("order_no"))
+    # 模板中的示例行（工单号以"示例-"开头）自动跳过，不导入也不计数
+    if order_no.startswith("示例-"):
+        return "skipped"
     OpeningWip.objects.update_or_create(
         period=batch.period,
-        order_no=text(row.get("order_no")),
+        order_no=order_no,
         defaults={
             "batch": batch,
             "source_period": None,

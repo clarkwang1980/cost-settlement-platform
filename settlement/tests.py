@@ -1736,7 +1736,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             (ImportBatch.Kind.PURCHASE_INVOICE, "采购发票.csv"),
             (ImportBatch.Kind.SALES_INVOICE, "销售发票.csv"),
             (ImportBatch.Kind.WORKSHOP_COST, "车间费用.csv"),
-            (ImportBatch.Kind.OPENING_WIP, "期初在产品.csv"),
+            (ImportBatch.Kind.OPENING_WIP, "期初在产品.xlsx"),
             (ImportBatch.Kind.OPENING_INVENTORY, "期初存货.csv"),
             (ImportBatch.Kind.ENDING_INVENTORY, "期末存货.csv"),
             (
