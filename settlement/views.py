@@ -2333,6 +2333,7 @@ LISTING_EXPORTS = {
     "work_order_ledger": {"title": "工单台账"},
     "material_issue_ledger": {"title": "投料台账"},
     "work_report_ledger": {"title": "报工台账"},
+    "work_order_detail": {"title": "工单明细"},
     "reconciliation": {"title": "勾稽结果"},
     "workshop_settlement": {"title": "车间结转"},
     "workshop_cost": {"title": "车间费用"},
@@ -2877,6 +2878,74 @@ def _listing_rows(request, period, kind):
                 ["工单编号", "车间/部门", "产品编码", "计划数量",
                  "投料数量", "报工数量", "报工入库数量"],
                 match_rows,
+            )
+        )
+
+    elif kind == "work_order_detail":
+        # 工单明细：创建时间/车间/工单号/计划完工/实际完工/完成状态/计划数量/投料数量/入库数量
+        from django.db.models import Max as _Max
+
+        # 各工单投料数量（实际投料量合计）
+        issue_agg = {
+            row["work_order_no"]: row["total"]
+            for row in period.material_issues.exclude(work_order_no="")
+            .values("work_order_no")
+            .annotate(total=Sum("actual_issue_quantity"))
+        }
+        # 各工单报工入库数量（"报工"入库流水合计，按单据号=工单号关联）
+        receipt_agg = {
+            row["document_no"]: row["total"]
+            for row in period.inventory_transactions.filter(business_type="报工")
+            .exclude(document_no="")
+            .values("document_no")
+            .annotate(total=Sum("quantity"))
+        }
+        # 各工单实际完工时间（报工记录最大报工时间）
+        report_time_agg = {
+            row["work_order_no"]: row["max_time"]
+            for row in period.work_reports.exclude(work_order_no="")
+            .values("work_order_no")
+            .annotate(max_time=_Max("report_time"))
+        }
+        # 完成状态（与工单成本页一致：累计完工/在产品）
+        results = {
+            item.work_order.order_no: item
+            for item in period.work_order_cost_results.select_related("work_order").all()
+        }
+
+        def _completion(wo, finished_qty, wip_qty):
+            if finished_qty <= 0 and wip_qty <= 0:
+                return "未开工"
+            if wip_qty <= 0:
+                return "已完成"
+            return "部分完成"
+
+        rows = []
+        for wo in period.work_orders.all().order_by("production_dept_code", "order_no"):
+            finished_qty = Decimal(0)
+            wip_qty = Decimal(0)
+            if wo.order_no in results:
+                finished_qty = Decimal(results[wo.order_no].finished_quantity or 0)
+                wip_qty = Decimal(results[wo.order_no].wip_quantity or 0)
+            else:
+                finished_qty = Decimal(receipt_agg.get(wo.order_no, 0) or 0)
+            rows.append((
+                wo.created_at,
+                WORKSHOP_LABELS.get(wo.production_dept_code, wo.production_dept_code),
+                wo.order_no,
+                wo.planned_finish,
+                report_time_agg.get(wo.order_no),
+                _completion(wo, finished_qty, wip_qty),
+                Decimal(wo.plan_quantity or 0),
+                Decimal(issue_agg.get(wo.order_no, 0) or 0),
+                Decimal(receipt_agg.get(wo.order_no, 0) or 0),
+            ))
+        sheets.append(
+            (
+                "工单明细",
+                ["创建时间", "生产车间", "工单编号", "计划完工时间", "实际完工时间",
+                 "完成状态", "计划数量", "投料数量", "入库数量"],
+                rows,
             )
         )
 
@@ -3678,6 +3747,8 @@ def export_center(request, period_id):
          "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
         {"kind": "work_order_cost", "name": "工单成本",
          "desc": "各生产工单按投料/报工核算的完工与在制成本明细"},
+        {"kind": "work_order_detail", "name": "工单明细",
+         "desc": "各工单：创建时间、车间、计划/实际完工时间、完成状态、计划/投料/入库数量"},
         {"kind": "work_order", "name": "生产工单",
          "desc": "生产工单主档台账（数量、状态、计划时间）"},
         {"kind": "work_order_ledger", "name": "工单台账（原样明细）",

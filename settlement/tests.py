@@ -1607,6 +1607,55 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             rows = list(ws.iter_rows(values_only=True))
             self.assertTrue(any(r and r[col] == code for r in rows), marker)
 
+    def test_work_order_detail_report_export(self):
+        """导出中心新增"工单明细"报表：9列模板（创建时间/车间/工单号/计划完工/实际完工/完成状态/计划数量/投料数量/入库数量）。"""
+        from zipfile import ZipFile
+
+        from settlement.models import MaterialIssue, WorkReport
+
+        wo = WorkOrder.objects.create(
+            period=self.period, order_no="DETAIL-1",
+            production_dept_code="tefang", plan_quantity=100,
+            planned_finish=None, created_at=None,
+        )
+        MaterialIssue.objects.create(
+            period=self.period, work_order_no="DETAIL-1",
+            material_code="RM-D", material_name="料",
+            actual_issue_quantity=60, issue_uom="kg",
+        )
+        WorkReport.objects.create(
+            period=self.period, work_order_no="DETAIL-1",
+            material_code="FG-D", material_name="品",
+            quantity=40, uom="kg", report_time=None,
+        )
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("export_center", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("工单明细", html)
+        resp = self.client.post(
+            reverse("export_center", args=[self.period.id]),
+            data={"reports": ["work_order_detail"]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        zf = ZipFile(BytesIO(resp.content))
+        fname = [n for n in zf.namelist() if "工单明细" in n][0]
+        ws = load_workbook(BytesIO(zf.read(fname))).active
+        rows = list(ws.iter_rows(values_only=True))
+        header = [str(c) for c in rows[0]]
+        self.assertEqual(
+            header,
+            ["创建时间", "生产车间", "工单编号", "计划完工时间", "实际完工时间",
+             "完成状态", "计划数量", "投料数量", "入库数量"],
+        )
+        found = [r for r in rows[1:] if r and r[2] == "DETAIL-1"]
+        self.assertTrue(found)
+        r = found[0]
+        self.assertEqual(r[1], "纺纱车间")
+        self.assertEqual(float(r[6]), 100.0)   # 计划数量
+        self.assertEqual(float(r[7]), 60.0)    # 投料数量
+        self.assertEqual(float(r[8]), 0.0)     # 入库数量（无报工入库流水）
+
     def test_opening_wip_multisheet_template_import(self):
         """期初在产品模板改为多工作表（每车间一个 sheet），导入时合并全部 sheet。"""
         from decimal import Decimal as D
