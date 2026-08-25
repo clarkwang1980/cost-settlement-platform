@@ -110,6 +110,7 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.BOM: "BOM表.xlsx",
     ImportBatch.Kind.ISSUE_PROGRESS: "投料进度表.xlsx",
     ImportBatch.Kind.HISTORICAL_PRICE: "历史单价.csv",
+    ImportBatch.Kind.WORK_ORDER_DETAIL: "工单明细.xlsx",
 }
 
 
@@ -2346,15 +2347,40 @@ LISTING_EXPORTS = {
 def _uploaded_ledger_rows(period, kind, queryset):
     """按用户上传文件的格式导出台账：
     - 格式（表头列名/顺序）取该类型行数最多的上传文件（即主文件）；
+    - 表头通过 ALIASES 别名匹配自动定位（兼容模板含标题行/说明行的情况）；
     - 数据取数据库该类型全部记录，按上传表头逐列映射字段输出。
     无上传文件或读取失败时返回 (None, None, None)。
     """
+    import csv as _csv
+    import io as _io
     from pathlib import Path
 
-    from settlement.services.exports import read_uploaded_rows
+    def _raw_rows(path):
+        suffix = path.suffix.lower()
+        if suffix in (".xlsx", ".xlsm"):
+            from openpyxl import load_workbook
+
+            wb = load_workbook(path, read_only=True, data_only=True)
+            try:
+                return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+            finally:
+                wb.close()
+        if suffix == ".csv":
+            raw = path.read_bytes()
+            decoded = None
+            for enc in ("utf-8-sig", "gb18030", "utf-8"):
+                try:
+                    decoded = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if decoded is None:
+                return []
+            return [list(r) for r in _csv.reader(_io.StringIO(decoded))]
+        return []
 
     # 找到行数最多的上传批次作为格式基准
-    best_header = None
+    best_raw = None
     best_count = -1
     for batch in (
         period.import_batches.filter(kind=kind)
@@ -2364,21 +2390,29 @@ def _uploaded_ledger_rows(period, kind, queryset):
         try:
             if not Path(batch.file.path).is_file():
                 continue
-            header, rows = read_uploaded_rows(Path(batch.file.path))
+            raw = _raw_rows(Path(batch.file.path))
         except Exception:
             continue
-        if header and len(rows) > best_count:
-            best_header = header
-            best_count = len(rows)
-    if not best_header:
+        if raw and len(raw) > best_count:
+            best_raw = raw
+            best_count = len(raw)
+    if not best_raw:
         return None, None, None
 
-    # 上传表头 -> 模型字段（用 ALIASES 反查，兼容列名差异）
+    # 用 ALIASES 匹配定位真正的表头行（跳过标题行/说明行）
     alias_map = {}
     for field, names in ALIASES[kind].items():
         for name in names:
             alias_map[normalize_header(name)] = field
-    fields = [alias_map.get(normalize_header(h)) for h in best_header]
+    best = None
+    for idx, row in enumerate(best_raw[:15]):
+        hits = sum(1 for v in row if normalize_header(v) in alias_map)
+        if best is None or hits > best[0]:
+            best = (hits, idx)
+    if best is None or best[0] < 2:
+        return None, None, None
+    header = best_raw[best[1]]
+    fields = [alias_map.get(normalize_header(h)) for h in header]
 
     rows_out = []
     for obj in queryset:
@@ -2390,7 +2424,7 @@ def _uploaded_ledger_rows(period, kind, queryset):
             else:
                 row.append("")
         rows_out.append(tuple(row))
-    return best_header, rows_out, best_count
+    return header, rows_out, best_count
 
 
 def _listing_rows(request, period, kind):
@@ -2882,6 +2916,14 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "work_order_detail":
+        # 工单明细：优先输出用户上传的工单明细（格式=上传文件原样，数据=上传的 WorkOrderDetail 记录）；
+        # 无上传时回退系统计算导出
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORK_ORDER_DETAIL, period.work_order_details.all()
+        )
+        if header:
+            sheets.append(("工单明细", header, raw_rows))
+            return sheets
         # 工单明细：创建时间/车间/工单号/计划完工/实际完工/完成状态/计划数量/投料数量/入库数量
         from django.db.models import Max as _Max
 

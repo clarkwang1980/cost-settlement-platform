@@ -37,6 +37,7 @@ from settlement.models import (
     SettlementRun,
     WorkOrder,
     WorkOrderCostResult,
+    WorkOrderDetail,
     WorkReport,
     WorkshopSettlement,
     WorkshopCostPool,
@@ -380,6 +381,18 @@ ALIASES["historical_price"] = {
     ],
 }
 
+ALIASES["work_order_detail"] = {
+    "created_at": ["创建时间", "创建日期", "日期"],
+    "workshop": ["生产车间", "车间", "生产部门"],
+    "order_no": ["工单编号", "工单号", "生产工单号"],
+    "planned_finish": ["计划完工时间", "计划完工", "计划完成时间"],
+    "actual_finish": ["实际完工时间", "实际完工", "实际完成时间"],
+    "completion_status": ["完成状态", "状态"],
+    "plan_quantity": ["计划数量", "计划产量", "计划数"],
+    "issue_quantity": ["投料数量", "投料量", "投料数"],
+    "receipt_quantity": ["入库数量", "入库量", "完工入库数量", "报工数量"],
+}
+
 
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
@@ -387,6 +400,7 @@ REQUIRED_FIELDS = {
     "bom": {"work_order_no", "sub_item_code"},
     "issue_progress": {"work_order_no", "material_code"},
     "historical_price": {"period", "material_code"},
+    "work_order_detail": {"order_no"},
     "purchase_contract": {
         "contract_no",
         "material_code",
@@ -874,6 +888,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.BOM: _import_bom,
         ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
         ImportBatch.Kind.HISTORICAL_PRICE: _import_historical_price,
+        ImportBatch.Kind.WORK_ORDER_DETAIL: _import_work_order_detail,
     }[batch.kind]
     errors = []
     count = 0
@@ -1311,6 +1326,30 @@ def _import_historical_price(batch, row):
             "material_name": text(row.get("material_name")),
             "receipt_price": receipt_price,
             "issue_price": issue_price,
+        },
+    )
+
+
+def _import_work_order_detail(batch, row):
+    order_no = text(row.get("order_no"))
+    # 模板示例行（工单编号以"示例-"开头）自动跳过，不导入也不计数
+    if order_no.startswith("示例-"):
+        return "skipped"
+    if not order_no:
+        raise ValueError("工单编号不能为空。")
+    WorkOrderDetail.objects.update_or_create(
+        period=batch.period,
+        order_no=order_no,
+        defaults={
+            "batch": batch,
+            "created_at": text(row.get("created_at")),
+            "workshop": text(row.get("workshop")),
+            "planned_finish": text(row.get("planned_finish")),
+            "actual_finish": text(row.get("actual_finish")),
+            "completion_status": text(row.get("completion_status")),
+            "plan_quantity": to_decimal(row.get("plan_quantity"), Decimal("0")),
+            "issue_quantity": to_decimal(row.get("issue_quantity"), Decimal("0")),
+            "receipt_quantity": to_decimal(row.get("receipt_quantity"), Decimal("0")),
         },
     )
 

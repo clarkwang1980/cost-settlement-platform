@@ -1656,6 +1656,67 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(float(r[7]), 60.0)    # 投料数量
         self.assertEqual(float(r[8]), 0.0)     # 入库数量（无报工入库流水）
 
+    def test_work_order_detail_upload_and_original_export(self):
+        """工单明细作为上传模板（第19类）：上传后入库，导出中心按上传原样导出。"""
+        from decimal import Decimal as D
+        from zipfile import ZipFile
+
+        from openpyxl import Workbook
+
+        from settlement.models import WorkOrderDetail
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "工单明细"
+        ws.append(["工单明细"])
+        ws.append(["说明"])
+        ws.append(["创建时间", "生产车间", "工单编号", "计划完工时间", "实际完工时间",
+                   "完成状态", "计划数量", "投料数量", "入库数量"])
+        ws.append(["2026-07-02 08:00", "纺纱车间", "UP-D1", "2026-07-06 18:00",
+                   "2026-07-06 17:00", "已完成", "200", "210", "198"])
+        stream = BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+        self.client.force_login(self.user)
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.WORK_ORDER_DETAIL,
+                    uploaded_file=SimpleUploadedFile(
+                        "工单明细.xlsx", stream.read(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                    user=self.user,
+                )
+                process_batch(batch)
+                self.assertEqual(batch.row_count, 1)
+                d = WorkOrderDetail.objects.get(period=self.period, order_no="UP-D1")
+                self.assertEqual(d.workshop, "纺纱车间")
+                self.assertEqual(d.plan_quantity, D("200"))
+                self.assertEqual(d.issue_quantity, D("210"))
+                self.assertEqual(d.receipt_quantity, D("198"))
+                # 导出中心"工单明细"按上传原样
+                resp = self.client.post(
+                    reverse("export_center", args=[self.period.id]),
+                    data={"reports": ["work_order_detail"]},
+                )
+                self.assertEqual(resp.status_code, 200)
+                zf = ZipFile(BytesIO(resp.content))
+                fname = [n for n in zf.namelist() if "工单明细" in n][0]
+                wsx = load_workbook(BytesIO(zf.read(fname))).active
+                rows = list(wsx.iter_rows(values_only=True))
+                header = [str(c) for c in rows[0]]
+                self.assertEqual(
+                    header,
+                    ["创建时间", "生产车间", "工单编号", "计划完工时间", "实际完工时间",
+                     "完成状态", "计划数量", "投料数量", "入库数量"],
+                )
+                found = [r for r in rows[1:] if r and r[2] == "UP-D1"]
+                self.assertTrue(found)
+                self.assertEqual(found[0][1], "纺纱车间")
+                self.assertEqual(float(found[0][6]), 200.0)
+
     def test_opening_wip_multisheet_template_import(self):
         """期初在产品模板改为多工作表（每车间一个 sheet），导入时合并全部 sheet。"""
         from decimal import Decimal as D

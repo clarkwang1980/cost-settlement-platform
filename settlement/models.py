@@ -96,6 +96,10 @@ class ImportBatch(models.Model):
             "historical_price",
             "历史单价",
         )
+        WORK_ORDER_DETAIL = (
+            "work_order_detail",
+            "工单明细",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -1133,6 +1137,42 @@ class HistoricalPrice(models.Model):
 
     def __str__(self):
         return f"{self.period} {self.material_code}"
+
+
+class WorkOrderDetail(models.Model):
+    """工单明细（用户上传）：创建时间/车间/工单号/计划完工/实际完工/完成状态/计划/投料/入库数量。
+
+    按工单编号保存用户上传的明细，导出中心"工单明细"报表按上传原样导出。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="work_order_details"
+    )
+    batch = models.ForeignKey(
+        ImportBatch, on_delete=models.CASCADE, related_name="work_order_details"
+    )
+    created_at = models.CharField(max_length=100, blank=True, verbose_name="创建时间")
+    workshop = models.CharField(max_length=100, blank=True, verbose_name="生产车间")
+    order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    planned_finish = models.CharField(max_length=100, blank=True, verbose_name="计划完工时间")
+    actual_finish = models.CharField(max_length=100, blank=True, verbose_name="实际完工时间")
+    completion_status = models.CharField(max_length=100, blank=True, verbose_name="完成状态")
+    plan_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    issue_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+    receipt_quantity = models.DecimalField(max_digits=20, decimal_places=6, default=ZERO)
+
+    class Meta:
+        ordering = ["order_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "order_no"], name="unique_work_order_detail_per_period"
+            )
+        ]
+        verbose_name = "工单明细"
+        verbose_name_plural = "工单明细"
+
+    def __str__(self):
+        return f"{self.period} {self.order_no}"
 
 
 class WorkOrderCostResult(models.Model):
