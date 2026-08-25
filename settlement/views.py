@@ -2041,13 +2041,12 @@ def price_table_view(request, period_id):
         ws = wb.active
         ws.title = "单价表-跨月对比"
         ws.append([f"物料单价与出入库成本表（跨月对比）"])
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 6 * len(periods))
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 4 * len(periods))
         ws.cell(1, 1).font = Font(bold=True, size=14)
         headers = ["类别", "物料编码", "物料名称", "单位"]
         for p in periods:
             headers += [
-                f"{p.month:%Y-%m} 入库数量", f"{p.month:%Y-%m} 入库金额",
-                f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库数量",
+                f"{p.month:%Y-%m} 入库金额", f"{p.month:%Y-%m} 入库单价",
                 f"{p.month:%Y-%m} 出库金额", f"{p.month:%Y-%m} 出库单价",
             ]
         ws.append(headers)
@@ -2067,7 +2066,7 @@ def price_table_view(request, period_id):
         for row in rows:
             line = [row["category"], row["code"], row["name"], row["uom"]]
             for rq, ra, rp, iq, ia, ip in row["cells"]:
-                line += [rq, ra, rp, iq, ia, ip]
+                line += [ra, rp, ia, ip]
             ws.append(line)
             rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
             for c in range(1, len(headers) + 1):
@@ -2081,7 +2080,7 @@ def price_table_view(request, period_id):
         for cat, st in subtotals.items():
             line = [f"{cat}小计", "", "", ""]
             for item in st:
-                line += [item["rq"], item["ra"], item["rp"], item["iq"], item["ia"], item["ip"]]
+                line += [item["ra"], item["rp"], item["ia"], item["ip"]]
             ws.append(line)
             for c in range(1, len(headers) + 1):
                 cell = ws.cell(ws.max_row, c)
@@ -2090,7 +2089,7 @@ def price_table_view(request, period_id):
                 cell.border = border
         line = ["总计", "", "", ""]
         for item in grand:
-            line += [item["rq"], item["ra"], item["rp"], item["iq"], item["ia"], item["ip"]]
+            line += [item["ra"], item["rp"], item["ia"], item["ip"]]
         ws.append(line)
         for c in range(1, len(headers) + 1):
             cell = ws.cell(ws.max_row, c)
