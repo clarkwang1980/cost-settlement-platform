@@ -51,8 +51,10 @@
       <div class="table-wrap"><table>
         <thead><tr>
           <th>期间</th><th>工单</th><th>产品</th>
-          <th class="num">计划数量</th><th class="num">累计投料</th><th>投料状态</th><th>完成状态</th>
-          <th class="num">累计完工</th><th class="num">累计完工率</th>
+          <th class="num">计划数量</th>
+          <th class="num">本期投料</th><th class="num">累计投料</th><th>投料状态</th><th>完成状态</th>
+          <th class="num">本期完工</th><th class="num">累计完工</th>
+          <th class="num">本期完工率</th><th class="num">累计完工率</th>
           {% if section.workshop == "tefang" %}<th>是否用粗纱</th>{% endif %}
           <th class="num">报工数量</th><th class="num">在产品</th>
           <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
@@ -71,10 +73,13 @@
           <td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small></td>
           <td><strong>{{ item.product_code }}</strong><small>{{ item.product_name }}</small></td>
           <td class="num">{{ item.plan_quantity|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.current_issue|floatformat:2|thousands }}</td>
           <td class="num">{{ item.accum_issue|floatformat:2|thousands }}</td>
           <td>{{ item.issue_status }}</td>
           <td>{{ item.completion_status }}</td>
+          <td class="num">{{ item.current_finished|floatformat:2|thousands }}</td>
           <td class="num">{{ item.accum_finished|floatformat:2|thousands }}</td>
+          <td class="num">{% if item.current_finish_rate_pct is not None %}{{ item.current_finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num">{% if item.finish_rate_pct is not None %}{{ item.finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           {% if section.workshop == "tefang" %}<td>{{ item.uses_roving }}</td>{% endif %}
           <td class="num">{{ item.finished_quantity|floatformat:2|thousands }}</td>
@@ -103,7 +108,9 @@
         {% if section.subtotal %}
         <tr style="background:#eef2f7;font-weight:600;">
           <td colspan="3"><strong>{{ section.label }}合计（{{ section.subtotal.count }} 张工单）</strong></td>
+          <td class="num"></td>
           <td class="num"></td><td class="num"></td><td></td><td></td>
+          <td class="num"></td><td class="num"></td>
           <td class="num"></td><td class="num"></td>
           {% if section.workshop == "tefang" %}<td></td>{% endif %}
           <td class="num"></td><td class="num"></td>

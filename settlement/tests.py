@@ -1345,6 +1345,19 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         wb = load_workbook(BytesIO(resp.content))
         header_row = [c.value for c in wb.active[1]]
         self.assertIn("天然气", header_row)
+        # 本期投料/本期完工/本期完工率 在 累计投料/累计完工/累计完工率 之前
+        self.assertIn("本期投料", header_row)
+        self.assertIn("本期完工", header_row)
+        self.assertIn("本期完工率", header_row)
+        self.assertLess(
+            header_row.index("本期投料"), header_row.index("累计投料")
+        )
+        self.assertLess(
+            header_row.index("本期完工"), header_row.index("累计完工")
+        )
+        self.assertLess(
+            header_row.index("本期完工率"), header_row.index("累计完工率")
+        )
 
     def test_historical_price_import_and_price_table_override(self):
         """历史单价：导入后写入 HistoricalPrice、单价表页面/导出优先显示上传价；

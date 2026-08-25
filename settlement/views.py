@@ -1812,6 +1812,16 @@ def work_order_costs(request, period_id):
             if (item.accum_finished + wip_qty)
             else None
         )
+        # 本期投料（当月投料；投料无期初结转，本期=累计）
+        item.current_issue = Decimal(item.accum_issue or 0)
+        # 本期完工（完工均为当月报工，本期=累计）
+        item.current_finished = Decimal(item.accum_finished or 0)
+        # 本期完工率 = 本期完工 ÷ (本期完工 + 在产品)
+        item.current_finish_rate_pct = (
+            (item.current_finished / (item.current_finished + wip_qty) * Decimal("100"))
+            if (item.current_finished + wip_qty)
+            else None
+        )
         # 完成状态：未开工 / 部分完成 / 已完成
         if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
             item.completion_status = "未开工"
@@ -3286,6 +3296,14 @@ def _listing_rows(request, period, kind):
                 if (item.accum_finished + wip_qty)
                 else None
             )
+            # 本期投料/完工/完工率（与页面一致）
+            item.current_issue = Decimal(item.accum_issue or 0)
+            item.current_finished = Decimal(item.accum_finished or 0)
+            item.current_finish_rate_pct = (
+                (item.current_finished / (item.current_finished + wip_qty) * Decimal("100"))
+                if (item.current_finished + wip_qty)
+                else None
+            )
             if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
                 item.completion_status = "未开工"
             elif wip_qty <= Decimal("0"):
@@ -3311,8 +3329,9 @@ def _listing_rows(request, period, kind):
         workshop_param = (request.GET.get("workshop") or "").strip()
         hide_gas = workshop_param == "tefang"
         headers = [
-            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量", "累计投料", "投料状态", "完成状态",
-            "累计完工", "累计完工率", "是否用粗纱", "报工数量",
+            "核算期间", "工单编号", "车间", "产品编码", "产品名称", "计划数量",
+            "本期投料", "累计投料", "投料状态", "完成状态",
+            "本期完工", "累计完工", "本期完工率", "累计完工率", "是否用粗纱", "报工数量",
             "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
             "染料助剂", "染料助剂分配率%", "工资", "工资分配率%", "工单总成本",
@@ -3383,10 +3402,13 @@ def _listing_rows(request, period, kind):
                     item.product_code,
                     item.product_name,
                     item.plan_quantity,
+                    item.current_issue,
                     item.accum_issue,
                     item.issue_status,
                     item.completion_status,
+                    item.current_finished,
                     item.accum_finished,
+                    item.current_finish_rate_pct,
                     rate_text,
                     item.uses_roving,
                     item.finished_quantity,
@@ -3417,7 +3439,7 @@ def _listing_rows(request, period, kind):
 
             def _subtotal_row(ws, st):
                 row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
-                row += [""] * 13
+                row += [""] * 16
                 row += [
                     st["direct_material"],
                     st["water_power"], "",
