@@ -671,7 +671,7 @@ def infer_direction(value, business_type: str, quantity=None) -> str:
 
 
 # 车间/部门名称归一化：ERP 中文部门名 -> 部门编码
-# （生产工单.生产部门编号 使用编码，如 tefang/JiZhi/RanZhengXianWei）
+# （生产工单.生产部门编号 使用编码，如 tefang/JiZhi/RanZheng）
 WORKSHOP_ALIASES = {
     "特纺": "tefang",
     "纺纱": "tefang",
@@ -689,6 +689,9 @@ WORKSHOP_ALIASES = {
     "染整（纱线）": "RanZheng",
     "染整(纱线)": "RanZheng",
     "染整纱线": "RanZheng",
+    # 旧编码（染色纱线/染色纤维车间已并入染色车间）也归一化到 RanZheng
+    "RanZhengShaXian": "RanZheng",
+    "RanZhengXianWei": "RanZheng",
     "纺纱车间": "tefang",
     "包覆车间": "BaoFu",
     "针织车间": "ZhenZhi",
@@ -711,8 +714,6 @@ WORKSHOP_ORDER = [
 # 车间编码 -> 中文显示名
 WORKSHOP_LABELS = {
     "RanZheng": "染色车间",
-    "RanZhengXianWei": "染色纤维车间（已合并）",
-    "RanZhengShaXian": "染色纱线车间（已合并）",
     "tefang": "纺纱车间",
     "BaoFu": "包覆车间",
     "ZhenZhi": "针织车间",
