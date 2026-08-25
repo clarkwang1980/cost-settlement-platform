@@ -867,7 +867,10 @@ def create_import_batch(*, period, kind, uploaded_file, user, replace_existing=F
 def process_batch(batch: ImportBatch):
     rows = read_rows(Path(batch.file.path), batch.kind)
     # 历史单价是参考数据，不参与结算计算，导入时不清算本期结算输出
-    if batch.kind != ImportBatch.Kind.HISTORICAL_PRICE:
+    if batch.kind not in {
+        ImportBatch.Kind.HISTORICAL_PRICE,
+        ImportBatch.Kind.WORK_ORDER_DETAIL,
+    }:
         clear_calculation_outputs(batch.period)
     importer = {
         ImportBatch.Kind.INVENTORY: _import_inventory,
