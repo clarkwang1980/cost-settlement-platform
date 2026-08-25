@@ -36,8 +36,6 @@ ZERO = Decimal("0")
 CENT = Decimal("0.01")
 PRICE_PRECISION = Decimal("0.00000001")
 
-ROVING_BATCH_SHA = "__roving_auto__"
-
 FEE_FIELDS = (
     ("water_power", "水电"),
     ("steam", "蒸汽"),
@@ -163,8 +161,9 @@ def _collect_work_orders(period: AccountingPeriod):
     return orders
 
 
-def _material_by_order(period: AccountingPeriod, prices: dict):
-    """按 工单 × 物料 汇总实际投料数量，乘以物料月末加权价。"""
+def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None):
+    """按 工单 × 物料 汇总实际投料数量，乘以物料月末加权价；
+    叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）。"""
     amounts = defaultdict(lambda: ZERO)
     issues = (
         period.material_issues.exclude(work_order_no="")
@@ -175,195 +174,75 @@ def _material_by_order(period: AccountingPeriod, prices: dict):
         material_price = Decimal(prices.get(item["material_code"], ZERO) or ZERO)
         amount = Decimal(item["actual_issue_quantity"] or ZERO) * material_price
         amounts[item["work_order_no"]] += amount
+    if roving_plan:
+        roving_prices = roving_plan.get("roving_prices", {})
+        for order_no, auto_list in roving_plan.get("auto_issues", {}).items():
+            for material_code, _name, qty, _uom in auto_list:
+                material_price = Decimal(prices.get(material_code, ZERO) or ZERO)
+                if not material_price:
+                    material_price = Decimal(roving_prices.get(material_code, ZERO) or ZERO)
+                amounts[order_no] += Decimal(qty) * material_price
     return {order_no: money(value) for order_no, value in amounts.items()}
 
 
-def _roving_batch(period: AccountingPeriod) -> ImportBatch:
-    """系统自动（粗纱流转）专用批次：按 sha256 唯一，幂等。"""
-    batch, _ = ImportBatch.objects.get_or_create(
-        period=period,
-        kind=ImportBatch.Kind.INVENTORY,
-        sha256=ROVING_BATCH_SHA,
-        defaults={
-            "original_name": "[系统自动]粗纱流转（勿删，可重复结转重建）",
-            "status": ImportBatch.Status.SUCCESS,
-            "row_count": 0,
-            "error_count": 0,
-            "uploaded_by": None,
-        },
-    )
-    return batch
+def build_roving_plan(period: AccountingPeriod, prices=None):
+    """粗纱链计算层计划（仅计算，不写任何库存流水/投料记录）：
 
+    1) BC-开头粗纱工单：无报工记录且无"报工"入库流水的，
+       计算层视为完工（完工数量=计划数量），并按BOM自动补原料投料；
+    2) 有BOM粗纱子项、未实际投该粗纱且已有报工数量的下游工单：
+       计算层补粗纱投料（数量=BOM单耗×报工数量）。
+    3) 粗纱计算单价 = 粗纱工单BOM原料成本÷计划数量（供下游补投粗纱计价）。
 
-def _roving_output_code(period: AccountingPeriod, order_no: str) -> str:
-    """粗纱工单的产出物料：优先取BOM成品物料编号，其次从工单号前缀提取。"""
-    code = (
-        BomLine.objects.filter(period=period, work_order_no=order_no)
-        .exclude(material_code="")
-        .values_list("material_code", flat=True)
-        .first()
-    )
-    if code:
-        return code
-    prefix = order_no
-    for sep in ("-20", "-19"):
-        idx = prefix.find(sep)
-        if idx > 0:
-            prefix = prefix[:idx]
-            break
-    return prefix
-
-
-def _auto_issue(
-    period: AccountingPeriod,
-    *,
-    order_no: str,
-    material_code: str,
-    material_name: str,
-    qty,
-    uom: str,
-    batch: ImportBatch,
-    remark: str = "系统自动-粗纱流转",
-):
-    """自动生成一条投料（MaterialIssue + "投料"出库流水），幂等。
-
-    同工单同物料已有用户真实投料记录时不重复补（避免与真实数据混淆）；
-    已有自动投料记录时更新数量。
-    """
-    qty = Decimal(qty)
-    if qty <= ZERO:
-        return
-    existing = (
-        MaterialIssue.objects.filter(
-            period=period, work_order_no=order_no, material_code=material_code
-        )
-        .order_by("id")
-        .first()
-    )
-    if existing is not None and existing.operation_name != remark:
-        return  # 用户真实投料已存在，不重复补
-    if existing is None:
-        MaterialIssue.objects.create(
-            period=period,
-            work_order_no=order_no,
-            material_code=material_code,
-            material_name=material_name,
-            issue_quantity=qty,
-            returned_quantity=ZERO,
-            actual_issue_quantity=qty,
-            issue_uom=uom or "kg",
-            operation_name=remark,
-        )
-    else:
-        existing.issue_quantity = qty
-        existing.actual_issue_quantity = qty
-        existing.material_name = material_name or existing.material_name
-        existing.issue_uom = uom or existing.issue_uom
-        existing.save(
-            update_fields=["issue_quantity", "actual_issue_quantity", "material_name", "issue_uom"]
-        )
-    txn = (
-        InventoryTransaction.objects.filter(
-            period=period,
-            business_type="投料",
-            document_no=order_no,
-            material_code=material_code,
-        )
-        .order_by("id")
-        .first()
-    )
-    if txn is None:
-        InventoryTransaction.objects.create(
-            period=period,
-            batch=batch,
-            txn_date=period.month,
-            line_no="1",
-            document_no=order_no,
-            business_type="投料",
-            direction=InventoryTransaction.Direction.OUT,
-            material_code=material_code,
-            material_name=material_name,
-            quantity=qty,
-            uom=uom or "kg",
-            order_no=order_no,
-            match_mode=MatchingMode.AUTO,
-            match_status=InventoryTransaction.MatchStatus.UNMATCHED,
-            remark=remark,
-        )
-    elif txn.quantity != qty:
-        txn.quantity = qty
-        txn.save(update_fields=["quantity"])
-
-
-def prepare_roving_chain(period: AccountingPeriod):
-    """粗纱链自动流转（方案二，幂等，结算前调用）：
-
-    1) BC-开头粗纱工单：无报工记录的，自动生成"报工"入库流水（数量=计划数量），
-       粗纱按工单完工成本计价进入存货并获得月末加权价；
-       同时按BOM自动补该粗纱工单的原料投料（数量=BOM单耗×计划数量），
-       保证粗纱本身有材料成本。
-    2) 有BOM粗纱子项、但未投该粗纱且已有报工数量的下游工单：自动生成粗纱投料
-       （MaterialIssue + "投料"出库流水），数量 = BOM单耗 × 报工数量。
+    返回 {"finished": {工单号: 数量}, "auto_issues": {工单号: [(物料, 名称, 数量, 单位)...]},
+           "roving_prices": {粗纱物料编码: 单价}}。
     """
     from decimal import Decimal as _D
 
-    bc_orders = list(period.work_orders.filter(order_no__startswith="BC-"))
-    if bc_orders:
-        reported = set(
-            period.work_reports.exclude(work_order_no="")
-            .values_list("work_order_no", flat=True)
-        )
-        batch = _roving_batch(period)
-        bom_subs = defaultdict(list)
-        for line in period.bom_lines.filter(
-            work_order_no__in=[w.order_no for w in bc_orders]
-        ):
-            bom_subs[line.work_order_no].append(line)
-        for wo in bc_orders:
-            if wo.order_no in reported:
-                continue
-            plan = _D(wo.plan_quantity or ZERO)
-            if plan <= ZERO:
-                continue
-            material_code = _roving_output_code(period, wo.order_no)
-            if not material_code:
-                continue
-            txn, created = InventoryTransaction.objects.get_or_create(
-                period=period,
-                business_type="报工",
-                document_no=wo.order_no,
-                material_code=material_code,
-                defaults=dict(
-                    batch=batch,
-                    txn_date=period.month,
-                    line_no="1",
-                    direction=InventoryTransaction.Direction.IN,
-                    material_name=wo.order_no,
-                    quantity=plan,
-                    uom="kg",
-                    match_mode=MatchingMode.AUTO,
-                    match_status=InventoryTransaction.MatchStatus.UNMATCHED,
-                    remark="系统自动-粗纱完工入库",
-                ),
-            )
-            if not created:
-                txn.quantity = plan
-                txn.save(update_fields=["quantity"])
-            # 粗纱工单原料投料（BOM子项，按计划数量）
-            for line in bom_subs.get(wo.order_no, []):
-                _auto_issue(
-                    period,
-                    order_no=wo.order_no,
-                    material_code=line.sub_item_code,
-                    material_name=line.sub_item_name,
-                    qty=line.qty * plan,
-                    uom=line.uom,
-                    batch=batch,
-                )
+    prices = prices or {}
+    plan = {"finished": {}, "auto_issues": defaultdict(list), "roving_prices": {}}
 
-    # 2) 下游工单自动补粗纱投料
-    roving_lines = period.bom_lines.filter(sub_item_code__startswith="BC-")
-    for line in roving_lines:
+    reported = set(
+        period.work_reports.exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    receipt_orders = set(
+        period.inventory_transactions.filter(business_type="报工")
+        .exclude(document_no="")
+        .values_list("document_no", flat=True)
+    )
+    bc_orders = list(period.work_orders.filter(order_no__startswith="BC-"))
+    bom_subs = defaultdict(list)
+    for line in period.bom_lines.filter(
+        work_order_no__in=[w.order_no for w in bc_orders]
+    ):
+        bom_subs[line.work_order_no].append(line)
+
+    for wo in bc_orders:
+        if wo.order_no in reported or wo.order_no in receipt_orders:
+            continue  # 已有真实报工/报工入库，以真实数据为准
+        plan_qty = _D(wo.plan_quantity or ZERO)
+        if plan_qty <= ZERO:
+            continue
+        material_code = _roving_output_code(period, wo.order_no)
+        if not material_code:
+            continue
+        plan["finished"][wo.order_no] = plan_qty
+        material_cost = ZERO
+        for line in bom_subs.get(wo.order_no, []):
+            qty = _D(line.qty) * plan_qty
+            if qty <= ZERO:
+                continue
+            plan["auto_issues"][wo.order_no].append(
+                (line.sub_item_code, line.sub_item_name, qty, line.uom or "kg")
+            )
+            material_cost += qty * _D(prices.get(line.sub_item_code, ZERO) or ZERO)
+        plan["roving_prices"][material_code] = (
+            material_cost / plan_qty
+        ).quantize(Decimal("0.0001"))
+
+    # 下游工单计算层补粗纱投料
+    for line in period.bom_lines.filter(sub_item_code__startswith="BC-"):
         order_no = line.work_order_no
         roving_code = line.sub_item_code
         if not WorkOrder.objects.filter(period=period, order_no=order_no).exists():
@@ -371,7 +250,7 @@ def prepare_roving_chain(period: AccountingPeriod):
         if MaterialIssue.objects.filter(
             period=period, work_order_no=order_no, material_code=roving_code
         ).exists():
-            continue
+            continue  # 已有真实投料，不补
         finished = (
             period.work_reports.filter(work_order_no=order_no)
             .aggregate(total=Sum("quantity"))["total"]
@@ -379,20 +258,13 @@ def prepare_roving_chain(period: AccountingPeriod):
         )
         if not finished:
             continue
-        batch = _roving_batch(period)
-        _auto_issue(
-            period,
-            order_no=order_no,
-            material_code=roving_code,
-            material_name=line.sub_item_name,
-            qty=line.qty * _D(finished),
-            uom=line.uom,
-            batch=batch,
-            remark="系统自动-粗纱投料",
+        plan["auto_issues"][order_no].append(
+            (roving_code, line.sub_item_name, _D(line.qty) * _D(finished), line.uom or "kg")
         )
+    return plan
 
 
-def _finished_by_order(period: AccountingPeriod):
+def _finished_by_order(period: AccountingPeriod, roving_plan=None):
     """按工单汇总报工数量（完工数量）。
 
     浆粕车间无报工记录：完工数量以库存流水"报工"入库数量为准
@@ -424,6 +296,11 @@ def _finished_by_order(period: AccountingPeriod):
         received = Decimal(row["total"] or ZERO)
         if received:
             finished[order_no] = received
+    # 计算层粗纱自动完工（无报工、无入库流水的 BC 工单，按计划数量）
+    if roving_plan:
+        for order_no, qty in roving_plan.get("finished", {}).items():
+            if order_no not in finished and qty:
+                finished[order_no] = qty
     return finished
 
 
@@ -431,8 +308,10 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
     """计算并持久化工单成本结果，返回结果列表。"""
     prices = prices or {}
     opening_map = {item.order_no: item for item in period.opening_wip.all()}
-    material_by_order = _material_by_order(period, prices)
-    finished_by_order = _finished_by_order(period)
+    # 粗纱链计算层计划（仅计算不落库：自动完工/补投/粗纱计算单价）
+    roving_plan = build_roving_plan(period, prices)
+    material_by_order = _material_by_order(period, prices, roving_plan)
+    finished_by_order = _finished_by_order(period, roving_plan)
 
     orders = _collect_work_orders(period)
     if workshops is not None:
