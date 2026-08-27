@@ -4052,6 +4052,14 @@ def _listing_rows(request, period, kind):
             .values_list("work_order_no", flat=True)
         )
         _detail_df = {d.order_no: d for d in period.work_order_details.all()}
+        # 报工记录最大报工时间兜底（与核算 v1.5.25 视同完工口径一致）
+        from django.db.models import Max as _MaxDF
+        _report_time_df = {
+            row["work_order_no"]: row["max_time"]
+            for row in period.work_reports.exclude(work_order_no="")
+            .values("work_order_no")
+            .annotate(max_time=_MaxDF("report_time"))
+        }
 
         _df_rows = []
         for _r in period.work_order_cost_results.select_related("work_order").filter(
@@ -4065,9 +4073,15 @@ def _listing_rows(request, period, kind):
             _ono = _r.work_order.order_no
             # ① 工单明细确认已完工（实际完工时间 或 完成状态为已完工）
             _d = _detail_df.get(_ono)
-            _detail_finished = _d is not None and (
-                bool(_d.actual_finish)
-                or (_d.completion_status in FINISHED_WORKORDER_STATUSES)
+            _detail_finished = (
+                _report_time_df.get(_ono) is not None
+                or (
+                    _d is not None
+                    and (
+                        bool(_d.actual_finish)
+                        or (_d.completion_status in FINISHED_WORKORDER_STATUSES)
+                    )
+                )
             )
             if not _detail_finished:
                 continue
@@ -4092,7 +4106,14 @@ def _listing_rows(request, period, kind):
                     (_fin / _plan * Decimal("100")).quantize(Decimal("0.1")),
                     _wip_before,
                     Decimal(_r.wip_quantity or 0),
-                    _d.actual_finish or _d.completion_status or "",
+                    (
+                        (_d.actual_finish if _d and _d.actual_finish else "")
+                        or (
+                            _report_time_df[_ono].strftime("%Y-%m-%d %H:%M")
+                            if _report_time_df.get(_ono) else ""
+                        )
+                        or (_d.completion_status if _d and _d.completion_status else "")
+                    ),
                     _r.direct_material,
                     _r.finished_cost,
                     _r.finished_unit_cost,
@@ -4106,7 +4127,7 @@ def _listing_rows(request, period, kind):
                     "期间", "车间", "工单号", "产品名称",
                     "计划数量", "完工数量", "完工率%",
                     "原在产品数量", "处理后在产品数量",
-                    "明细实际完工时间/状态",
+                    "实际完工时间/状态（明细→报工时间兜底）",
                     "直接材料", "完工成本", "完工单位成本", "处理说明",
                 ],
                 _df_rows,
