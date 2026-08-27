@@ -1492,6 +1492,7 @@ def order_material_report(request, period_id):
     active_ws = (request.GET.get("workshop") or "").strip()
     if active_ws not in present:
         active_ws = present[0] if present else ""
+    show_all = request.GET.get("full") == "1"
     return render(
         request,
         "settlement/order_material_report.html",
@@ -1501,6 +1502,7 @@ def order_material_report(request, period_id):
             "totals": totals,
             "sections": sections,
             "active_ws": active_ws,
+            "show_all": show_all,
         },
     )
 
