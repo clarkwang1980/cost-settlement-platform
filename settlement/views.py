@@ -1425,7 +1425,7 @@ def build_material_issue_rows(period, order_no="", workshop="", material=""):
 
 @login_required
 def order_material_report(request, period_id):
-    """工单投料报表：按工单 × 物料汇总投料记录台账（实际投料数量、金额）。"""
+    """工单投料报表：按工单 × 物料汇总投料记录台账；按车间分页签展示（每车间独立一张表+合计行）。"""
     period = get_object_or_404(AccountingPeriod, id=period_id)
     rows, totals = build_material_issue_rows(
         period,
@@ -1433,6 +1433,36 @@ def order_material_report(request, period_id):
         workshop=request.GET.get("workshop", "").strip(),
         material=request.GET.get("material", "").strip(),
     )
+    from collections import defaultdict as _dd_om
+    by_ws = _dd_om(list)
+    for _r in rows:
+        by_ws[_r["workshop"] or ""].append(_r)
+    ordered = list(
+        period.workshop_settlements.order_by("sequence").values_list(
+            "workshop", flat=True
+        )
+    )
+    if not ordered:
+        ordered = list(WORKSHOP_LABELS.keys())
+    present = [ws for ws in ordered if ws in by_ws] + [
+        ws for ws in by_ws if ws not in ordered
+    ]
+    sections = []
+    for ws in present:
+        ws_rows = by_ws[ws]
+        qty = sum((r["issue_quantity"] for r in ws_rows), Decimal("0"))
+        amt = sum((r["amount"] for r in ws_rows), Decimal("0"))
+        sections.append(
+            {
+                "workshop": ws,
+                "label": WORKSHOP_LABELS.get(ws, ws or "未归属"),
+                "rows": ws_rows,
+                "subtotal": {"issue_quantity": qty, "amount": amt},
+            }
+        )
+    active_ws = (request.GET.get("workshop") or "").strip()
+    if active_ws not in present:
+        active_ws = present[0] if present else ""
     return render(
         request,
         "settlement/order_material_report.html",
@@ -1440,6 +1470,8 @@ def order_material_report(request, period_id):
             "period": period,
             "rows": rows,
             "totals": totals,
+            "sections": sections,
+            "active_ws": active_ws,
         },
     )
 
@@ -2573,7 +2605,7 @@ def _listing_rows(request, period, kind):
     sheets = []
 
     # ===== 台账公共生成器：投料台账（上传原样+单价）/ 报工台账（上传原样）=====
-    def _mi_ledger_sheet():
+    def _mi_ledger_sheet(include_amount=False):
         """投料台账：上传原样列 + 单价列（月末加权价→历史单价兜底）；无上传回退数据库明细+单价。"""
         header, raw_rows, _ = _uploaded_ledger_rows(
             period, ImportBatch.Kind.MATERIAL_ISSUE, period.material_issues.all()
@@ -2599,15 +2631,31 @@ def _listing_rows(request, period, kind):
                 if _alias.get(normalize_header(_h)) == "material_code":
                     _mat_idx = _i
                     break
-            _header2 = list(header) + ["单价"]
-            _rows2 = [
-                tuple(_row) + (
-                    _mi_unit_price(
-                        str(_row[_mat_idx]) if _mat_idx is not None and _row[_mat_idx] else ""
-                    ),
+            _qty_idx = None
+            for _i, _h in enumerate(header):
+                if _alias.get(normalize_header(_h)) == "actual_issue_quantity":
+                    _qty_idx = _i
+                    break
+            _extra = ["单价"] + (["金额"] if include_amount else [])
+            _header2 = list(header) + _extra
+            _rows2 = []
+            for _row in raw_rows:
+                _price = _mi_unit_price(
+                    str(_row[_mat_idx]) if _mat_idx is not None and _row[_mat_idx] else ""
                 )
-                for _row in raw_rows
-            ]
+                _qty = (
+                    Decimal(str(_row[_qty_idx]).replace(",", ""))
+                    if _qty_idx is not None and _row[_qty_idx] not in (None, "")
+                    else Decimal("0")
+                )
+                _amount = (
+                    (_price * _qty).quantize(Decimal("0.01"))
+                    if _price and _qty else None
+                )
+                _row2 = tuple(_row) + (_price,)
+                if include_amount:
+                    _row2 = _row2 + (_amount,)
+                _rows2.append(_row2)
             return _header2, _rows2
         issues = period.material_issues.all()
         issues = _text_filters(
@@ -3341,8 +3389,8 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "order_material":
-        # 工单投料：字段与上传模板一致（原样）+ 单价列（与投料台账相同口径）
-        _h, _r = _mi_ledger_sheet()
+        # 工单投料：字段与上传模板一致（原样）+ 单价列 + 金额列（金额=实际投料数量×单价）
+        _h, _r = _mi_ledger_sheet(include_amount=True)
         sheets.append(("工单投料", _h, _r))
     elif kind == "order_completion":
         # 工单报工：字段与上传模板一致（原样）+ 追加完工成本列（按工单关联结算结果）
