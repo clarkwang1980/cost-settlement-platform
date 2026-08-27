@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Sum
+from django.db.models import Max, Sum
 
 from settlement.models import (
     AccountingPeriod,
@@ -56,8 +56,10 @@ MANUFACTURING_FIELDS = (
 )
 WIP_CONVERSION_RATE = Decimal("0.5")
 
-# 视同完工：工单明细确认已完工（有实际完工时间或完成状态为已完工）且完工率达标的工单，
-# 尾料按损耗处理，在产品清零、成本并入完工（避免"已结束工单在产品永远挂账结转"）
+# 视同完工：工单有完工时间且完工率达标的工单，尾料按损耗处理，在产品清零、成本并入完工
+# （避免"已结束工单在产品永远挂账结转"）
+# 完工时间口径与工单成本页「实际完工时间」列一致：工单明细实际完工时间 → 报工记录最大报工时间兜底；
+# 或完成状态为已完工（超时完成/按时完成/已完成）
 # （染色/纺纱/包覆/针织适用；机织、浆粕不适用）
 MIN_FINISH_RATE_PCT = Decimal("70")     # 完工率阈值（%）：完工÷计划×100
 FINISHED_WORKORDER_STATUSES = ("超时完成", "按时完成", "已完成")  # 工单明细中视为已完工的完成状态
@@ -374,6 +376,13 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
     work_order_detail_map = {
         d.order_no: d for d in period.work_order_details.all()
     }
+    # 各工单实际完工时间兜底：报工记录最大报工时间（与工单成本页「实际完工时间」列口径一致）
+    report_time_agg = {
+        row["work_order_no"]: row["max_time"]
+        for row in period.work_reports.exclude(work_order_no="")
+        .values("work_order_no")
+        .annotate(max_time=Max("report_time"))
+    }
     # 粗纱链计算层计划（仅计算不落库：自动完工/补投/粗纱计算单价）
     roving_plan = build_roving_plan(period, prices)
     material_by_order = _material_by_order(period, prices, roving_plan)
@@ -441,13 +450,19 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         plan_qty = Decimal(wo.plan_quantity or ZERO)
         ws = wo.production_dept_code
         wip_qty = _wip_qty(wo, finished_qty, plan_qty)
-        # 视同完工：① 工单明细确认已完工（有实际完工时间 或 完成状态为已完工）
-        #           ② 完工率达标 → 尾料按损耗处理，在产品清零、成本并入完工
-        # （避免"已结束工单在产品永远挂账结转"）
+        # 视同完工：① 工单有完工时间（工单明细实际完工时间，或报工记录最大报工时间兜底，与页面口径一致）
+        #          ② 完成状态为已完工（超时完成/按时完成/已完成）；完工率达标 → 尾料按损耗处理，
+        #             在产品清零、成本并入完工（避免"已结束工单在产品永远挂账结转"）
         _detail = work_order_detail_map.get(wo.order_no)
-        _detail_finished = _detail is not None and (
-            bool(_detail.actual_finish)
-            or (_detail.completion_status in FINISHED_WORKORDER_STATUSES)
+        _detail_finished = (
+            report_time_agg.get(wo.order_no) is not None
+            or (
+                _detail is not None
+                and (
+                    bool(_detail.actual_finish)
+                    or (_detail.completion_status in FINISHED_WORKORDER_STATUSES)
+                )
+            )
         )
         if (
             ws in SMALL_ORDER_WORKSHOPS
