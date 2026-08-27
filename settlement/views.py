@@ -4092,6 +4092,78 @@ def _listing_rows(request, period, kind):
             )
         )
 
+        # ===== Sheet2：BOM反推补投对比（与核算层 _backfill_material_by_bom 同口径）=====
+        # 有报工+无投料+无期初+非粗纱链 的染色/纺纱/包覆/针织工单，
+        # 核算材料成本 = Σ(BOM单耗×报工数量×月末加权价，历史单价兜底)，
+        # 即"总成本报表本期材料 − 投料记录金额"的差异来源。
+        from settlement.models import (
+            InventoryValuation as _InvValMC,
+            HistoricalPrice as _HistPriceMC,
+        )
+        _mc_prices = {
+            _v.material_code: Decimal(_v.weighted_average_price or 0)
+            for _v in _InvValMC.objects.filter(period=period)
+        }
+        for _hp in _HistPriceMC.objects.filter(period=period):
+            if _hp.receipt_price is not None:
+                _mc_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
+
+        _backfill_rows = []
+        for _t in _targets:
+            _fin = _t["fin"]
+            if _fin <= 0:
+                continue
+            _mat_cost = Decimal("0")
+            _no_price_parts = []
+            for _line in _t["bom"]:
+                _sub = _line.sub_item_code
+                _sub_qty = Decimal(_line.qty or 0) * _fin
+                if _sub_qty <= 0:
+                    continue
+                _pr = _mc_prices.get(_sub)
+                if not _pr:
+                    _no_price_parts.append(_sub)
+                    continue
+                _mat_cost += _sub_qty * _pr
+            _mat_cost = _mat_cost.quantize(Decimal("0.01"))
+            _backfill_rows.append(
+                (
+                    f"{period.month:%Y-%m}",
+                    WORKSHOP_LABELS.get(_t["ws"], _t["ws"]),
+                    _t["order_no"],
+                    _t["product"],
+                    _fin,
+                    _mat_cost,
+                    Decimal("0.00"),
+                    _mat_cost,
+                    "、".join(_no_price_parts) or "—",
+                )
+            )
+        if _backfill_rows:
+            _backfill_rows.append(
+                (
+                    "",
+                    "合计",
+                    f"{len(_backfill_rows)} 张工单",
+                    "",
+                    sum((r[4] for r in _backfill_rows), Decimal("0")),
+                    sum((r[5] for r in _backfill_rows), Decimal("0")),
+                    sum((r[6] for r in _backfill_rows), Decimal("0")),
+                    sum((r[7] for r in _backfill_rows), Decimal("0")),
+                    "",
+                )
+            )
+        sheets.append(
+            (
+                "BOM反推补投对比",
+                [
+                    "期间", "车间", "工单号", "产品名称", "报工数量",
+                    "BOM反推材料成本(核算)", "投料记录金额", "差异(反推-投料)", "无单价子项",
+                ],
+                _backfill_rows,
+            )
+        )
+
     elif kind == "deemed_finished":
         # ===== 视同完工清单：工单明细确认已完工 + 完工率达标 → 在产品清零，成本并入完工 =====
         # 与核算逻辑一致：机织/浆粕不适用；判定 = ①明细实际完工时间非空或完成状态为已完工 ②完工率≥70%
