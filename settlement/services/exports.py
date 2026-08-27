@@ -65,10 +65,10 @@ def _append_table(workbook, title, headers, rows, highlight_rows=frozenset()):
         cell.alignment = Alignment(horizontal="center", vertical="center")
     for row_index, row in enumerate(rows, start=2):
         worksheet.append(_clean_row(row))
-        if row_index in highlight_rows:
+        if (row_index - 1) in highlight_rows:
             for cell in worksheet[row_index]:
                 cell.fill = SUBTOTAL_FILL
-                cell.font = Font(bold=True)
+                cell.font = Font(bold=True, color="1F4E78")
     # 数据区数字单元格设置千分位+两位小数格式
     for row in worksheet.iter_rows(min_row=2):
         for cell in row:
@@ -837,18 +837,18 @@ def build_settlement_workbook(period):
         def _rate(fee_field, ws):
             denominator = mat_total.get(ws, Decimal("0"))
             if not denominator:
-                return Decimal("0")
-            return (fee_total[fee_field].get(ws, Decimal("0")) / denominator) * Decimal("100")
-
+                return "—"
+            v = (fee_total[fee_field].get(ws, Decimal("0")) / denominator) * Decimal("100")
+            return "—" if not v else f"{v:.2f}%"
         def _wage_rate(item, ws):
             denominator = equiv_total.get(ws, Decimal("0"))
             if not denominator:
-                return Decimal("0")
+                return "—"
             equivalent = Decimal(item.finished_quantity or 0) + Decimal(
                 item.wip_quantity or 0
             ) * Decimal("0.5")
-            return (equivalent / denominator) * Decimal("100")
-
+            v = (equivalent / denominator) * Decimal("100")
+            return "—" if not v else f"{v:.2f}%"
         SUM_FIELDS = (
             "direct_material", "water_power", "steam", "natural_gas", "depreciation",
             "consumables", "dye_auxiliary", "wages", "total_cost",

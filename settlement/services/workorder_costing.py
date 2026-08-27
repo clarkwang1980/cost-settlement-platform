@@ -208,7 +208,9 @@ def _collect_work_orders(period: AccountingPeriod):
 
 def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None):
     """按 工单 × 物料 汇总实际投料数量，乘以物料月末加权价；
-    叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）。"""
+    叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）；
+    再对有报工、无投料、无期初、非粗纱链的工单按 BOM 单耗×报工数量 反推补投材料成本（仅计算层）。
+    """
     amounts = defaultdict(lambda: ZERO)
     issues = (
         period.material_issues.exclude(work_order_no="")
@@ -227,7 +229,83 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
                 if not material_price:
                     material_price = Decimal(roving_prices.get(material_code, ZERO) or ZERO)
                 amounts[order_no] += Decimal(qty) * material_price
+    _backfill_material_by_bom(period, prices, amounts)
     return {order_no: money(value) for order_no, value in amounts.items()}
+
+
+# 有报工、无投料、无期初在产品、非粗纱链的工单（染色/纺纱/包覆/针织）：
+# 材料成本按 BOM 单耗 × 报工数量 × 物料价 反推补投（仅计算层，不落库存/投料台账）
+BOM_BACKFILL_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+
+
+def _backfill_material_by_bom(period, prices, amounts):
+    reported = set(
+        period.work_reports.exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    if not reported:
+        return
+    issued = set(
+        period.material_issues.exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    opening = set(
+        period.opening_wip.exclude(material=ZERO)
+        .values_list("order_no", flat=True)
+    )
+    roving = set(
+        period.bom_lines.filter(sub_item_code__startswith="BC-")
+        .values_list("work_order_no", flat=True)
+    )
+    roving |= set(
+        period.material_issues.filter(material_code__startswith="BC-")
+        .exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    roving |= set(
+        period.issue_progress.filter(material_code__startswith="BC-")
+        .exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    dept_map = {
+        o.order_no: o.production_dept_code
+        for o in period.work_orders.all()
+    }
+    missing = sorted(
+        n for n in (reported - issued - opening - roving)
+        if dept_map.get(n) in BOM_BACKFILL_WORKSHOPS
+    )
+    if not missing:
+        return
+    # 报工数量合计（与完工数量口径一致）
+    finish_qty = defaultdict(Decimal)
+    for row in period.work_reports.exclude(work_order_no="").values(
+        "work_order_no", "quantity"
+    ):
+        finish_qty[row["work_order_no"]] += Decimal(row["quantity"] or ZERO)
+    # BOM 行按工单分组
+    bom_by_order = defaultdict(list)
+    for line in period.bom_lines.filter(work_order_no__in=missing):
+        bom_by_order[line.work_order_no].append(line)
+    # 历史单价兜底（月末加权价缺失时）
+    hist_price = {}
+    for hp in period.historical_prices.all():
+        if hp.receipt_price is not None:
+            hist_price[hp.material_code] = Decimal(hp.receipt_price)
+    for order_no in missing:
+        qty = finish_qty.get(order_no, ZERO)
+        if qty <= ZERO:
+            continue
+        for line in bom_by_order.get(order_no, []):
+            sub_qty = Decimal(line.qty) * qty
+            if sub_qty <= ZERO:
+                continue
+            mat_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
+            if not mat_price:
+                mat_price = hist_price.get(line.sub_item_code, ZERO)
+            if not mat_price:
+                continue
+            amounts[order_no] += sub_qty * mat_price
 
 
 def _roving_output_code(period: AccountingPeriod, order_no: str) -> str:

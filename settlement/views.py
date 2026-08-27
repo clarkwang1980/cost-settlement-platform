@@ -3748,7 +3748,7 @@ def _listing_rows(request, period, kind):
 
             def _rate_text(fee_field, ws):
                 v = _rate(fee_field, ws)
-                return "—" if not v else v
+                return "—" if not v else f"{v:.2f}%"
 
             def _wage_rate(item, ws):
                 denom = equiv_total.get(ws, Decimal("0"))
@@ -3761,7 +3761,7 @@ def _listing_rows(request, period, kind):
 
             def _wage_rate_text(item, ws):
                 v = _wage_rate(item, ws)
-                return "—" if not v else v
+                return "—" if not v else f"{v:.2f}%"
 
             SUM_FIELDS = (
                 "direct_material", "water_power", "steam", "natural_gas",
