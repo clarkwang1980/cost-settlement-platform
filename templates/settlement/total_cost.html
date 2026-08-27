@@ -54,7 +54,7 @@
           <td class="subject-cell">{{ row.subject }}</td>
           {% for cell in row.cells %}
             <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
-              {% if cell.value is None %}--{% else %}¥{{ cell.value|floatformat:2|thousands }}{% endif %}
+              {% if cell.value is None %}--{% else %}{{ cell.value|floatformat:2|thousands }}{% endif %}
             </td>
           {% endfor %}
         </tr>
@@ -63,7 +63,7 @@
           <td class="subject-cell">合计</td>
           {% for cell in data.total_cells %}
             <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
-              {% if cell.value is None %}--{% else %}¥{{ cell.value|floatformat:2|thousands }}{% endif %}
+              {% if cell.value is None %}--{% else %}{{ cell.value|floatformat:2|thousands }}{% endif %}
             </td>
           {% endfor %}
         </tr>
