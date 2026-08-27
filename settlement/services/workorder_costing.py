@@ -56,6 +56,13 @@ MANUFACTURING_FIELDS = (
 )
 WIP_CONVERSION_RATE = Decimal("0.5")
 
+# 视同完工：工单明细确认已完工（有实际完工时间或完成状态为已完工）且完工率达标的工单，
+# 尾料按损耗处理，在产品清零、成本并入完工（避免"已结束工单在产品永远挂账结转"）
+# （染色/纺纱/包覆/针织适用；机织、浆粕不适用）
+MIN_FINISH_RATE_PCT = Decimal("70")     # 完工率阈值（%）：完工÷计划×100
+FINISHED_WORKORDER_STATUSES = ("超时完成", "按时完成", "已完成")  # 工单明细中视为已完工的完成状态
+SMALL_ORDER_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+
 
 def money(value) -> Decimal:
     return Decimal(value or ZERO).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -145,11 +152,14 @@ def build_product_resolver(period: AccountingPeriod):
 
 
 def _collect_work_orders(period: AccountingPeriod):
-    """返回需要核算的工单列表，主档缺失的自动补建。
+    """返回需要核算的工单列表。
 
     只核算"有业务"的工单：投料记录 / 报工记录 / 报工入库流水 / 期初在产品
     （有主档但本期间无任何业务的工单不核算——计划时间与核算月份无关，
      成本按业务发生的期间归属）。主档仅用于补充计划数量、车间等属性。
+
+    主档缺失的台账工单不允许自动补建（用户要求）：直接报错中断，
+    提示先导入工单主档或核对台账单号。
     """
     masters = {wo.order_no: wo for wo in period.work_orders.all()}
     issue_nos = set(
@@ -182,21 +192,16 @@ def _collect_work_orders(period: AccountingPeriod):
         ).values_list("order_no", flat=True)
     )
     all_nos = issue_nos | report_nos | receipt_nos | opening_nos
-    orders = []
-    for order_no in sorted(all_nos):
-        wo = masters.get(order_no)
-        if wo is None:
-            wo, _created = WorkOrder.objects.update_or_create(
-                period=period,
-                order_no=order_no,
-                defaults={
-                    "order_type": "自动补建",
-                    "remark": "由投料/报工台账自动补建",
-                    "production_dept_code": resolve_workshop(period, order_no),
-                },
-            )
-        orders.append(wo)
-    return orders
+    missing = sorted(n for n in all_nos if n not in masters)
+    if missing:
+        shown = "、".join(missing[:20])
+        suffix = f" 等共 {len(missing)} 个" if len(missing) > 20 else f"（共 {len(missing)} 个）"
+        raise ValueError(
+            "以下工单在工单主档中不存在，无法核算（系统不允许自动补建）："
+            f"{shown}{suffix}。请先在『工单主档』导入这些工单，"
+            "或核对投料/报工/期初在产品台账中的工单编号。"
+        )
+    return [masters[n] for n in sorted(all_nos)]
 
 
 def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None):
@@ -365,6 +370,10 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
     """计算并持久化工单成本结果，返回结果列表。"""
     prices = prices or {}
     opening_map = {item.order_no: item for item in period.opening_wip.all()}
+    # 工单明细（用户上传）：用于视同完工判定（实际完工时间 / 完成状态）
+    work_order_detail_map = {
+        d.order_no: d for d in period.work_order_details.all()
+    }
     # 粗纱链计算层计划（仅计算不落库：自动完工/补投/粗纱计算单价）
     roving_plan = build_roving_plan(period, prices)
     material_by_order = _material_by_order(period, prices, roving_plan)
@@ -432,6 +441,23 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         plan_qty = Decimal(wo.plan_quantity or ZERO)
         ws = wo.production_dept_code
         wip_qty = _wip_qty(wo, finished_qty, plan_qty)
+        # 视同完工：① 工单明细确认已完工（有实际完工时间 或 完成状态为已完工）
+        #           ② 完工率达标 → 尾料按损耗处理，在产品清零、成本并入完工
+        # （避免"已结束工单在产品永远挂账结转"）
+        _detail = work_order_detail_map.get(wo.order_no)
+        _detail_finished = _detail is not None and (
+            bool(_detail.actual_finish)
+            or (_detail.completion_status in FINISHED_WORKORDER_STATUSES)
+        )
+        if (
+            ws in SMALL_ORDER_WORKSHOPS
+            and _detail_finished
+            and plan_qty > ZERO
+            and finished_qty > ZERO
+            and wip_qty > ZERO
+            and (finished_qty / plan_qty * Decimal("100")) >= MIN_FINISH_RATE_PCT
+        ):
+            wip_qty = ZERO
         if (
             direct_material == ZERO
             and finished_qty == ZERO
