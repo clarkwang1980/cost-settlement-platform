@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}总成本表 · {{ data.period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">TOTAL COST SUMMARY</p>
+    <h1>总成本表</h1>
+    <p>各车间 期初 / 本期投入 / 产成品成本 / 在产品 分科目汇总；勾稽：期初 + 本期投入 = 产成品成本 + 在产品。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button primary" href="{% url 'total_cost_export' data.period.id %}">导出Excel</a>
+    <a class="button secondary" href="{% url 'work_order_costs' data.period.id %}">查看工单成本</a>
+    <a class="button secondary" href="{% url 'production_cost_summary' data.period.id %}">生产成本</a>
+  </div>
+</section>
+
+{% if data.pending %}
+<div class="cost-notice">
+  以下车间本期<strong>尚未结算</strong>：{% for code in data.pending %}{{ code }}{% if not forloop.last %}、{% endif %}{% endfor %}。
+  其本期投入 / 产成品成本 / 在产品暂显示 <strong>--</strong>（仅有期初在产品），完成车间结算后自动补全。
+</div>
+{% endif %}
+
+{% if not data.balanced %}
+<div class="cost-notice" style="border-left-color:#c0392b;">
+  <strong>勾稽不平衡</strong>：部分车间存在 期初 + 本期投入 ≠ 产成品成本 + 在产品 的科目，
+  请检查结算状态与数据（详见导出 Excel 或联系管理员）。
+</div>
+{% endif %}
+
+<section class="section-card">
+  <div class="table-scroll" style="overflow-x:auto;">
+    <table class="data-table total-cost-table">
+      <thead>
+        <tr>
+          <th rowspan="2">成本项目</th>
+          {% for block in data.blocks %}
+            <th colspan="{{ data.workshops|length|add:1 }}" style="text-align:center;">{{ block }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {% for block in data.blocks %}
+            {% for ws in data.workshops %}
+              <th>{{ ws.label }}</th>
+            {% endfor %}
+            <th class="total-col">合计</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in data.rows %}
+        <tr>
+          <td class="subject-cell">{{ row.subject }}</td>
+          {% for cell in row.cells %}
+            <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
+              {% if cell.value is None %}--{% else %}¥{{ cell.value|floatformat:2|thousands }}{% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+        <tr class="total-row">
+          <td class="subject-cell">合计</td>
+          {% for cell in data.total_cells %}
+            <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
+              {% if cell.value is None %}--{% else %}¥{{ cell.value|floatformat:2|thousands }}{% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">NOTES</p>
+      <h2>口径说明</h2>
+    </div>
+    {% if data.balanced %}
+      <span class="pill success">勾稽平衡</span>
+    {% else %}
+      <span class="pill warning">勾稽异常</span>
+    {% endif %}
+  </div>
+  <ul class="note-list">
+    <li>① 期初 = 期初在产品表按车间汇总；本期投入 = 工单结算结果 − 期初；产成品成本 / 在产品 = 结算结果完工 / 在产品拆分。</li>
+    <li>② 产成品 / 在产品中的 水电费 / 蒸汽费 / 燃气费 / 染料助剂费 / 机物料费 / 折旧费 按该车间制造费用结构比例拆分（结算结果只到制造费用总额）。</li>
+    <li>③ 未结算车间本期投入 / 产成品 / 在产品无数据（--），仅有期初在产品，待结算后结转补全。</li>
+    <li>④ 勾稽：期初 + 本期投入 = 产成品成本 + 在产品（对已结算车间逐科目校验）。</li>
+  </ul>
+</section>
+
+<style>
+  .total-cost-table { min-width: 1200px; border-collapse: collapse; }
+  .total-cost-table th, .total-cost-table td { border: 1px solid #d5d8dc; padding: 6px 8px; white-space: nowrap; }
+  .total-cost-table thead th { background: #eaf0f8; }
+  .total-cost-table .total-col { background: #fdf0e6; font-weight: 600; }
+  .total-cost-table tr.total-row td { background: #fdf0e6; font-weight: 600; }
+  .total-cost-table .subject-cell { text-align: left; font-weight: 500; }
+</style>
+{% endblock %}

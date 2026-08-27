@@ -1,6 +1,6 @@
 from django.urls import path
 
-from settlement import views
+from settlement import views, views_total_cost
 
 
 urlpatterns = [
@@ -154,6 +154,16 @@ urlpatterns = [
         "periods/<int:period_id>/work-order-costs/",
         views.work_order_costs,
         name="work_order_costs",
+    ),
+    path(
+        "periods/<int:period_id>/total-cost/",
+        views_total_cost.total_cost_view,
+        name="total_cost",
+    ),
+    path(
+        "periods/<int:period_id>/total-cost/export/",
+        views_total_cost.total_cost_export,
+        name="total_cost_export",
     ),
     path(
         "periods/<int:period_id>/production-costs/",
