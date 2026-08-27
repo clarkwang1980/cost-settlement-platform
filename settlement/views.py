@@ -1481,11 +1481,16 @@ def order_material_report(request, period_id):
         qty = sum((r["actual_issue_quantity"] for r in ws_rows), Decimal("0"))
         amt = sum((r["amount"] for r in ws_rows if r["amount"] is not None), Decimal("0"))
         no_price_n = sum(1 for r in ws_rows if r["unit_price"] is None)
+        no_price_mats = {}
+        for r in ws_rows:
+            if r["unit_price"] is None:
+                no_price_mats.setdefault(r["material_code"], r["material_name"] or "")
         sections.append(
             {
                 "workshop": ws,
                 "label": WORKSHOP_LABELS.get(ws, ws or "未归属"),
                 "rows": ws_rows,
+                "no_price_materials": no_price_mats,
                 "subtotal": {"issue_quantity": qty, "amount": amt, "no_price_count": no_price_n},
             }
         )

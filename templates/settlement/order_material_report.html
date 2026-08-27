@@ -40,15 +40,6 @@
   {% endif %}
 </section>
 
-{% if totals.no_price_count %}
-<section class="section-card" style="border-left:4px solid #c0392b;">
-  <p class="no-price" style="margin:0;">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：</p>
-  <p style="margin:4px 0 0;color:#5a6472;">
-    {% for code, name in totals.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}
-  </p>
-  <p style="margin:4px 0 0;color:#5a6472;">请在「历史单价」模板中补充这些物料的入库单价后重新上传，再重新结算。</p>
-</section>
-{% endif %}
 
 <section class="section-card filter-card">
   <form class="filter-grid" method="get">
@@ -134,6 +125,12 @@
           </tr>
         {% empty %}<tr><td colspan="30" class="empty-cell">该车间没有符合条件的投料记录。</td></tr>{% endfor %}
         </tbody>
+      {% if section.subtotal.no_price_count %}
+      <tr style="background:#FDF0EE;">
+        <td colspan="30" class="no-price">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：{% for code, name in section.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}。请在「历史单价」模板补充后重新上传、结算。</td>
+      </tr>
+      {% endif %}
+
         {% if section.rows %}
         <tfoot>
           <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
@@ -170,6 +167,12 @@
           </tr>
         {% empty %}<tr><td colspan="10" class="empty-cell">该车间没有符合条件的投料记录。</td></tr>{% endfor %}
         </tbody>
+      {% if section.subtotal.no_price_count %}
+      <tr style="background:#FDF0EE;">
+        <td colspan="10" class="no-price">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：{% for code, name in section.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}。请在「历史单价」模板补充后重新上传、结算。</td>
+      </tr>
+      {% endif %}
+
         {% if section.rows %}
         <tfoot>
           <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
