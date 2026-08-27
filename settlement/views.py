@@ -1493,7 +1493,7 @@ def order_material_report(request, period_id):
     if active_ws not in present:
         active_ws = present[0] if present else ""
     show_all = request.GET.get("full") == "1"
-    return render(
+    response = render(
         request,
         "settlement/order_material_report.html",
         {
@@ -1505,6 +1505,9 @@ def order_material_report(request, period_id):
             "show_all": show_all,
         },
     )
+    # 禁止浏览器缓存，避免改版后用户看到旧页面
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @login_required
