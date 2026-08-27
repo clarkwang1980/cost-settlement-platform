@@ -20,7 +20,10 @@ from settlement.services.total_cost import (
 def total_cost_view(request, period_id):
     period = get_object_or_404(AccountingPeriod, pk=period_id)
     data = build_total_cost_data(period)
-    return render(request, "settlement/total_cost.html", {"data": data})
+    return render(request, "settlement/total_cost.html", {
+        "data": data,
+        "period": period,
+    })
 
 
 # ---------------- 导出 Excel ----------------
