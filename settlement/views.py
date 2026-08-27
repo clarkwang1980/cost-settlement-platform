@@ -1746,20 +1746,21 @@ def work_order_costs(request, period_id):
         for field in MANUFACTURING_FIELDS:
             fee_total = workshop_fee_total[ws][field]
             mat_total = workshop_material_total[ws]
-            setattr(
-                item,
-                f"rate_{field}_pct",
+            rate = (
                 ((fee_total / mat_total) * Decimal("100"))
                 if mat_total
-                else Decimal("0"),
+                else Decimal("0")
             )
+            setattr(item, f"rate_{field}_pct", rate if rate else None)
         equivalent = Decimal(item.finished_quantity or 0) + Decimal(
             item.wip_quantity or 0
         ) * Decimal("0.5")
+        item.equivalent_qty = equivalent
         denom2 = workshop_equivalent[ws]
-        item.rate_wages_pct = (
+        wage_rate = (
             (equivalent / denom2 * Decimal("100")) if denom2 else Decimal("0")
         )
+        item.rate_wages_pct = wage_rate if wage_rate else None
 
     # 投料进度（投料进度表）与粗纱标志
     from settlement.models import BomLine, IssueProgress
@@ -1858,6 +1859,10 @@ def work_order_costs(request, period_id):
     for item in results:
         order_no = item.work_order.order_no
         ws = item.work_order.production_dept_code
+        # 期初在产品：数量/金额（金额=材料+制造费用+工资合计）
+        opening = openings.get(order_no)
+        item.opening_quantity = Decimal(opening.quantity if opening else Decimal("0"))
+        item.opening_amount = Decimal(opening.total if opening else Decimal("0"))
         # 累计投料：投料进度表优先，无则用实际投料记录合计
         if order_no in progress_qty_by_order:
             item.accum_issue = progress_qty_by_order[order_no]
@@ -2463,6 +2468,8 @@ LISTING_EXPORTS = {
     "material_issue_ledger": {"title": "投料台账"},
     "work_report_ledger": {"title": "报工台账"},
     "work_order_detail": {"title": "工单明细"},
+    "material_check": {"title": "投料核对"},
+    "deemed_finished": {"title": "视同完工清单"},
     "reconciliation": {"title": "勾稽结果"},
     "workshop_settlement": {"title": "车间结转"},
     "workshop_cost": {"title": "车间费用"},
@@ -3478,13 +3485,21 @@ def _listing_rows(request, period, kind):
                 "product": "product_code",
             },
         )
-        results = list(
-            results.order_by(
-                "work_order__production_dept_code", "work_order__order_no"
+        results = list(results)
+        # 按结转顺序排序：车间按「车间结算」sequence（与页面一致），车间内按工单号
+        ws_seq = {
+            s.workshop: s.sequence
+            for s in period.workshop_settlements.all()
+        }
+        results.sort(
+            key=lambda item: (
+                ws_seq.get(item.work_order.production_dept_code, 999),
+                item.work_order.order_no,
             )
         )
         from settlement.services.workorder_costing import MANUFACTURING_FIELDS
         from settlement.models import BomLine, IssueProgress
+        opening_map = {o.order_no: o for o in period.opening_wip.all()}
 
         # 投料进度与粗纱标志（与页面一致）
         progress_rows = list(
@@ -3576,6 +3591,10 @@ def _listing_rows(request, period, kind):
         for item in results:
             order_no = item.work_order.order_no
             ws = item.work_order.production_dept_code
+            # 期初在产品：数量/金额（金额=材料+制造费用+工资合计）
+            opening = opening_map.get(order_no)
+            item.opening_quantity = Decimal(opening.quantity if opening else Decimal("0"))
+            item.opening_amount = Decimal(opening.total if opening else Decimal("0"))
             if order_no in progress_qty_by_order:
                 item.accum_issue = progress_qty_by_order[order_no]
             else:
@@ -3690,12 +3709,13 @@ def _listing_rows(request, period, kind):
         headers = [
             "核算期间", "工单编号", "车间", "类别", "产品编码", "产品名称",
             "计划完工时间", "实际完工时间", "完成状态", "计划数量",
+            "期初数量", "期初金额",
             "本期投料", "投料单价", "累计投料", "投料状态",
             "本期完工", "累计完工", "本期完工率", "累计完工率", "是否用粗纱", "报工数量",
-            "在产品数量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
+            "在产品数量", "折合产量", "材料成本", "水电", "水电分配率%", "蒸汽", "蒸汽分配率%",
             "天然气", "天然气分配率%", "折旧", "折旧分配率%", "机物料", "机物料分配率%",
             "染料助剂", "染料助剂分配率%", "工资", "工资分配率%", "工单总成本",
-            "完工成本", "完工单位成本", "在产品成本",
+            "完工成本", "完工单位成本", "期末在产品数量", "在产品成本",
         ]
         if hide_gas:
             headers = [h for h in headers if h not in ("天然气", "天然气分配率%")]
@@ -3726,6 +3746,10 @@ def _listing_rows(request, period, kind):
                     else Decimal("0")
                 )
 
+            def _rate_text(fee_field, ws):
+                v = _rate(fee_field, ws)
+                return "—" if not v else v
+
             def _wage_rate(item, ws):
                 denom = equiv_total.get(ws, Decimal("0"))
                 if not denom:
@@ -3734,6 +3758,10 @@ def _listing_rows(request, period, kind):
                     item.wip_quantity or 0
                 ) * Decimal("0.5")
                 return (equivalent / denom) * Decimal("100")
+
+            def _wage_rate_text(item, ws):
+                v = _wage_rate(item, ws)
+                return "—" if not v else v
 
             SUM_FIELDS = (
                 "direct_material", "water_power", "steam", "natural_gas",
@@ -3766,6 +3794,8 @@ def _listing_rows(request, period, kind):
                     item.wo_actual_finish,
                     item.wo_completion_status,
                     item.plan_quantity,
+                    item.opening_quantity,
+                    item.opening_amount,
                     item.current_issue,
                     item.current_unit_price,
                     item.accum_issue,
@@ -3777,33 +3807,36 @@ def _listing_rows(request, period, kind):
                     item.uses_roving,
                     item.finished_quantity,
                     item.wip_quantity,
+                    Decimal(item.finished_quantity or 0) + Decimal(item.wip_quantity or 0) * Decimal("0.5"),
                     item.direct_material,
                     item.water_power,
-                    _rate("water_power", ws),
+                    _rate_text("water_power", ws),
                     item.steam,
-                    _rate("steam", ws),
+                    _rate_text("steam", ws),
                 ]
                 if not hide_gas:
-                    row += [item.natural_gas, _rate("natural_gas", ws)]
+                    row += [item.natural_gas, _rate_text("natural_gas", ws)]
                 row += [
                     item.depreciation,
-                    _rate("depreciation", ws),
+                    _rate_text("depreciation", ws),
                     item.consumables,
-                    _rate("consumables", ws),
+                    _rate_text("consumables", ws),
                     item.dye_auxiliary,
-                    _rate("dye_auxiliary", ws),
+                    _rate_text("dye_auxiliary", ws),
                     item.wages,
-                    _wage_rate(item, ws),
+                    _wage_rate_text(item, ws),
                     item.total_cost,
                     item.finished_cost,
                     item.finished_unit_cost,
+                    item.wip_quantity,
                     item.wip_cost,
                 ]
                 return tuple(row)
 
             def _subtotal_row(ws, st):
                 row = [f"{WORKSHOP_LABELS.get(ws, ws)}合计（{st['count']}张工单）"]
-                row += [""] * 19
+                # 列2-24：工单编号~折合产量（含期初数量/期初金额/报工数量/在产品数量/折合产量）
+                row += [""] * 23
                 row += [
                     st["direct_material"],
                     st["water_power"], "",
@@ -3817,7 +3850,9 @@ def _listing_rows(request, period, kind):
                     st["dye_auxiliary"], "",
                     st["wages"], "",
                     st["total_cost"],
-                    st["finished_cost"], "",
+                    st["finished_cost"],
+                    "",  # 完工单位成本
+                    "",  # 期末在产品数量
                     st["wip_cost"],
                 ]
                 return tuple(row)
@@ -3835,6 +3870,248 @@ def _listing_rows(request, period, kind):
                 highlight.add(len(rows))
 
         sheets.append(( "工单成本", headers, rows, highlight ))
+
+
+    elif kind == "material_check":
+        # ===== 投料核对报表：真实缺料工单（有报工、无投料、无期初、非粗纱）+ 供料匹配（单表）=====
+        # 机织(JiZhi)、浆粕车间暂不纳入
+        from collections import defaultdict as _dd_mc
+        from settlement.models import OpeningWip as _OpeningWipMC
+
+        _WS_SCOPE = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+        _reported_mc = set(
+            period.work_reports.exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        _issued_mc = set(
+            period.material_issues.exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        _ws_of_mc = {
+            o.order_no: o.production_dept_code
+            for o in period.work_orders.all()
+        }
+        _roving_mc = set(
+            period.bom_lines.filter(sub_item_code__startswith="BC-")
+            .values_list("work_order_no", flat=True)
+        )
+        _roving_mc |= set(
+            period.material_issues.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        _roving_mc |= set(
+            period.issue_progress.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+
+        def _fin_qty_mc(ono):
+            return sum(
+                (Decimal(x.quantity or 0) for x in period.work_reports.filter(work_order_no=ono)),
+                Decimal("0"),
+            )
+
+        def _bom_consume_mc(ono, mat):
+            return sum(
+                (
+                    Decimal(l.qty or 0) * _fin_qty_mc(ono)
+                    for l in period.bom_lines.filter(work_order_no=ono, sub_item_code=mat)
+                ),
+                Decimal("0"),
+            )
+
+        # 真实缺料工单：有报工、无投料、无期初在产品、非粗纱、车间范围内
+        _targets = []
+        for _o in sorted(_reported_mc - _issued_mc):
+            _ws = _ws_of_mc.get(_o)
+            if _ws not in _WS_SCOPE:
+                continue
+            if _o in _roving_mc:
+                continue
+            _op = _OpeningWipMC.objects.filter(period=period, order_no=_o).first()
+            if _op and Decimal(_op.material or 0) > 0:
+                continue  # 有期初在产品 = 账面不缺料，不统计
+            _r = period.work_order_cost_results.select_related("work_order").filter(
+                work_order__order_no=_o
+            ).first()
+            _wb = sorted(
+                {
+                    str(x.batch_no or "")
+                    for x in period.work_reports.filter(work_order_no=_o)
+                    if x.batch_no
+                }
+            )
+            _targets.append(
+                {
+                    "order_no": _o,
+                    "ws": _ws,
+                    "fin": _fin_qty_mc(_o),
+                    "product": (_r.product_name if _r else ""),
+                    "report_batch": "、".join(_wb),
+                    "bom": list(period.bom_lines.filter(work_order_no=_o)),
+                }
+            )
+
+        # 投料汇总（物料,工单）-> 数量 / 批次
+        _issue_by_mc = _dd_mc(Decimal)
+        _issue_batch_mc = _dd_mc(list)
+        for _mi in period.material_issues.exclude(work_order_no="").exclude(material_code=""):
+            _k = (_mi.material_code, _mi.work_order_no)
+            _issue_by_mc[_k] += Decimal(_mi.actual_issue_quantity or 0)
+            _issue_batch_mc[_k].append(str(_mi.batch_no or ""))
+
+        # 匹配并生成单表行（每行 = 缺料工单 × 原料需求）
+        _rows = []
+        for _t in _targets:
+            for _line in _t["bom"]:
+                _mat = _line.sub_item_code
+                _need = Decimal(_line.qty or 0) * _t["fin"]
+                if _need <= 0:
+                    continue
+                _cands = []
+                for (_mm, _so), _qty in _issue_by_mc.items():
+                    if _mm != _mat or _so == _t["order_no"]:
+                        continue
+                    if _so in _roving_mc and _ws_of_mc.get(_so) == "tefang":
+                        continue
+                    _rem = _qty - _bom_consume_mc(_so, _mat)
+                    if _rem > Decimal("0.0001"):
+                        _cands.append((_so, _rem, _issue_batch_mc[(_mm, _so)]))
+                _pref = _t["order_no"].split("-")[0]
+                if _cands:
+                    # 依据：同产品前缀 > 仅同原料；剩余多者优先
+                    _cands.sort(
+                        key=lambda c: (
+                            0 if c[0].split("-")[0] == _pref else 1,
+                            -float(c[1]),
+                        )
+                    )
+                    _so, _rem, _batches = _cands[0]
+                    _transfer = min(_need, _rem)
+                    _same_prod = _so.split("-")[0] == _pref
+                    _basis = "同产品系列" if _same_prod else "仅同原料"
+                    _advice = "建议采用" if _same_prod else "需人工确认"
+                    _so_batch = "、".join(sorted({b for b in _batches if b}))
+                else:
+                    _so, _transfer, _rem = "", Decimal("0"), Decimal("0")
+                    _basis, _advice, _so_batch = "无供料", "BOM反推补投", ""
+                _rows.append(
+                    (
+                        f"{period.month:%Y-%m}",
+                        WORKSHOP_LABELS.get(_t["ws"], _t["ws"]),
+                        _t["order_no"],
+                        _t["product"],
+                        _t["fin"],
+                        _mat,
+                        _line.sub_item_name,
+                        _need,
+                        _t["report_batch"],
+                        _so or "(无供料)",
+                        _so_batch,
+                        _transfer,
+                        _rem,
+                        _basis,
+                        _advice,
+                    )
+                )
+
+        sheets.append(
+            (
+                "投料核对",
+                [
+                    "期间", "车间", "缺料工单", "产品名称", "完工数量",
+                    "原料编码", "原料名称", "需求数量", "缺料工单报工批次",
+                    "供料工单", "供料工单投料批次",
+                    "转出数量", "供料方扣减后剩余", "匹配依据", "建议",
+                ],
+                _rows,
+            )
+        )
+
+    elif kind == "deemed_finished":
+        # ===== 视同完工清单：工单明细确认已完工 + 完工率达标 → 在产品清零，成本并入完工 =====
+        # 与核算逻辑一致：机织/浆粕不适用；判定 = ①明细实际完工时间非空或完成状态为已完工 ②完工率≥70%
+        from settlement.services.workorder_costing import (
+            MIN_FINISH_RATE_PCT,
+            FINISHED_WORKORDER_STATUSES,
+            SMALL_ORDER_WORKSHOPS,
+        )
+        from collections import defaultdict as _dd_df
+
+        _issue_qty_df = _dd_df(Decimal)
+        for _mi in period.material_issues.exclude(work_order_no=""):
+            _issue_qty_df[_mi.work_order_no] += Decimal(_mi.actual_issue_quantity or 0)
+        _roving_df = set(
+            period.bom_lines.filter(sub_item_code__startswith="BC-")
+            .values_list("work_order_no", flat=True)
+        )
+        _roving_df |= set(
+            period.material_issues.filter(material_code__startswith="BC-")
+            .exclude(work_order_no="")
+            .values_list("work_order_no", flat=True)
+        )
+        _detail_df = {d.order_no: d for d in period.work_order_details.all()}
+
+        _df_rows = []
+        for _r in period.work_order_cost_results.select_related("work_order").filter(
+            work_order__production_dept_code__in=SMALL_ORDER_WORKSHOPS
+        ).order_by("work_order__production_dept_code", "work_order__order_no"):
+            _ws = _r.work_order.production_dept_code
+            _plan = Decimal(_r.plan_quantity or 0)
+            _fin = Decimal(_r.finished_quantity or 0)
+            if _plan <= 0 or _fin <= 0:
+                continue
+            _ono = _r.work_order.order_no
+            # ① 工单明细确认已完工（实际完工时间 或 完成状态为已完工）
+            _d = _detail_df.get(_ono)
+            _detail_finished = _d is not None and (
+                bool(_d.actual_finish)
+                or (_d.completion_status in FINISHED_WORKORDER_STATUSES)
+            )
+            if not _detail_finished:
+                continue
+            # 原在产品数量（处理前口径，与核算 _wip_qty 一致）
+            if _ws == "tefang" and not (_ono.upper().startswith("BC-") or _ono in _roving_df):
+                _wip_before = max(_issue_qty_df.get(_ono, Decimal("0")) - _fin, Decimal("0"))
+            else:
+                _wip_before = max(_plan - _fin, Decimal("0"))
+            if _wip_before <= 0:
+                continue
+            # ② 完工率达标
+            if (_fin / _plan * Decimal("100")) < MIN_FINISH_RATE_PCT:
+                continue
+            _df_rows.append(
+                (
+                    f"{period.month:%Y-%m}",
+                    WORKSHOP_LABELS.get(_ws, _ws),
+                    _ono,
+                    _r.product_name,
+                    _plan,
+                    _fin,
+                    (_fin / _plan * Decimal("100")).quantize(Decimal("0.1")),
+                    _wip_before,
+                    Decimal(_r.wip_quantity or 0),
+                    _d.actual_finish or _d.completion_status or "",
+                    _r.direct_material,
+                    _r.finished_cost,
+                    _r.finished_unit_cost,
+                    "工单明细确认已完工，尾料按损耗并入完工成本，在产品清零不再结转",
+                )
+            )
+        sheets.append(
+            (
+                "视同完工清单",
+                [
+                    "期间", "车间", "工单号", "产品名称",
+                    "计划数量", "完工数量", "完工率%",
+                    "原在产品数量", "处理后在产品数量",
+                    "明细实际完工时间/状态",
+                    "直接材料", "完工成本", "完工单位成本", "处理说明",
+                ],
+                _df_rows,
+            )
+        )
 
     elif kind == "reconciliation":
         sheets.append(
@@ -3874,29 +4151,83 @@ def _listing_rows(request, period, kind):
 
     elif kind == "workshop_cost":
         # 车间费用：格式/字段按用户上传文件原样，数据=本期全部车间费用；无上传时回退数据库明细
+        # 补充（2026-08-27 用户要求）：车间名转中文、合计列填每行合计、末尾追加合计行
         header, raw_rows, _ = _uploaded_ledger_rows(
             period, ImportBatch.Kind.WORKSHOP_COST, period.workshop_cost_pools.all()
         )
         if header:
-            sheets.append(("车间费用", header, raw_rows))
+            rows = [list(r) for r in raw_rows]
+            ws_idx = next(
+                (i for i, h in enumerate(header) if normalize_header(h) == "车间"),
+                None,
+            )
+            total_idx = next(
+                (i for i, h in enumerate(header) if normalize_header(h) == "合计"),
+                None,
+            )
+            skip_idx = {ws_idx, total_idx}
+            num_idx = [
+                i for i, h in enumerate(header)
+                if i not in skip_idx
+                and normalize_header(h) not in ("备注", "说明", "序号")
+            ]
+            if ws_idx is not None:
+                for r in rows:
+                    if r[ws_idx] not in (None, ""):
+                        r[ws_idx] = WORKSHOP_LABELS.get(str(r[ws_idx]), r[ws_idx])
+            if total_idx is not None:
+                for r in rows:
+                    nums = []
+                    for i in num_idx:
+                        try:
+                            nums.append(Decimal(r[i] or 0))
+                        except Exception:
+                            pass
+                    if nums:
+                        r[total_idx] = sum(nums)
+            if total_idx is not None:
+                total_row = [""] * len(header)
+                total_row[ws_idx if ws_idx is not None else 0] = "合计"
+                for i in num_idx:
+                    vals = []
+                    for r in rows:
+                        try:
+                            vals.append(Decimal(r[i] or 0))
+                        except Exception:
+                            pass
+                    if vals:
+                        total_row[i] = sum(vals)
+                vals = [
+                    Decimal(r[total_idx] or 0)
+                    for r in rows if r[total_idx] not in (None, "")
+                ]
+                if vals:
+                    total_row[total_idx] = sum(vals)
+                rows.append(tuple(total_row))
+            sheets.append(("车间费用", header, rows))
             return sheets
+        pools = list(period.workshop_cost_pools.all().order_by("workshop"))
+        _rows = [
+            (
+                WORKSHOP_LABELS.get(p.workshop, p.workshop),
+                p.water_power,
+                p.steam,
+                p.natural_gas,
+                p.depreciation,
+                p.consumables,
+                p.dye_auxiliary,
+                p.wages,
+            )
+            for p in pools
+        ]
+        _rows.append(
+            ("合计",) + tuple(sum(r[i] for r in _rows) for i in range(1, 8))
+        )
         sheets.append(
             (
                 "车间费用",
                 ["车间", "水电", "蒸汽", "天然气", "折旧", "机物料", "染料助剂", "工资"],
-                (
-                    (
-                        WORKSHOP_LABELS.get(p.workshop, p.workshop),
-                        p.water_power,
-                        p.steam,
-                        p.natural_gas,
-                        p.depreciation,
-                        p.consumables,
-                        p.dye_auxiliary,
-                        p.wages,
-                    )
-                    for p in period.workshop_cost_pools.all().order_by("workshop")
-                ),
+                _rows,
             )
         )
 
@@ -4017,61 +4348,82 @@ def export_center(request, period_id):
     """报表导出中心：勾选需要导出的报表，打包成 ZIP 下载。"""
     period = get_object_or_404(AccountingPeriod, id=period_id)
 
-    REPORT_CATALOG = [
-        {"kind": "opening_inventory", "name": "期初存货（上传原样）",
-         "desc": "期初库存余额台账，按上传文件原样导出（保留仓库/批次明细，行数与上传一致）"},
-        {"kind": "ending_inventory", "name": "期末存货",
-         "desc": "期末库存余额台账（物料、结存数量、单价、金额，系统自动计算）"},
-        {"kind": "inventory_ledger", "name": "库存流水",
-         "desc": "本期间全部库存出入库流水（单据、物料、数量、单价、金额）"},
-        {"kind": "purchase_contract", "name": "采购合同",
-         "desc": "采购合同台账（合同号、供应商、品名、数量、不含税单价、剩余数量）"},
-        {"kind": "purchase_invoice", "name": "采购发票匹配",
-         "desc": "采购发票及核销的入库/期初暂估明细"},
-        {"kind": "purchase_accrual", "name": "月末采购暂估",
-         "desc": "截至月末仍未到票的采购入库及暂估金额"},
-        {"kind": "purchase_difference", "name": "本月采购暂估差异",
-         "desc": "本月发票核销产生的暂估价差（交总账处理）"},
-        {"kind": "purchase_reversal", "name": "发票暂估回冲明细",
-         "desc": "每张采购发票核销了哪笔入库/期初暂估：暂估金额、发票金额、价差、累计核销与剩余未到票"},
-        {"kind": "sales_invoice", "name": "销售发票匹配",
-         "desc": "销售发票及核销的出库/期初发出商品明细"},
-        {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
-         "desc": "截至月末仍未开票的销售出库及发出商品成本"},
-        {"kind": "inventory_valuation", "name": "库存金额结转",
-         "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
-        {"kind": "work_order_cost", "name": "工单成本",
-         "desc": "各生产工单按投料/报工核算的完工与在制成本明细"},
-        {"kind": "work_order_detail", "name": "工单明细",
-         "desc": "各工单：创建时间、车间、计划/实际完工时间、完成状态、计划/投料/入库数量"},
-        {"kind": "work_order", "name": "生产工单",
-         "desc": "生产工单主档台账（数量、状态、计划时间）"},
-        {"kind": "work_order_ledger", "name": "工单台账（原样明细）",
-         "desc": "ERP 工单主档原样台账：工单号、类型、车间、计划数量、状态、计划时间、订单号、物料颜色等全字段"},
-        {"kind": "material_issue_ledger", "name": "投料台账（原样明细）",
-         "desc": "ERP 投料记录原样台账：物料、投料/实际投料数量、批次、仓位、投料时间、人员、工单号等全字段"},
-        {"kind": "work_report_ledger", "name": "报工台账（原样明细）",
-         "desc": "ERP 报工记录原样台账：报工数量、质量状态、工时、部门、设备、工单号、颜色/批次等全字段"},
-        {"kind": "order_material", "name": "工单投料",
-         "desc": "按工单 × 物料汇总投料记录台账数量与金额"},
-        {"kind": "order_completion", "name": "工单报工",
-         "desc": "工单完工汇报：报工数量、完工成本、报工入库数量与金额"},
-        {"kind": "reconciliation", "name": "勾稽结果与异常清单",
-         "desc": "全部勾稽项目（含异常清单），两个工作表"},
-        {"kind": "workshop_cost", "name": "车间费用",
-         "desc": "各车间本期费用（水电/蒸汽/天然气/折旧/机物料/染料助剂/工资），按上传原样格式导出"},
-        {"kind": "workshop_settlement", "name": "车间结转",
-         "desc": "车间结转顺序、状态与成本结果"},
+    REPORT_GROUPS = [
+        {
+            "group": "原材料与采购",
+            "items": [
+                {"kind": "opening_inventory", "name": "期初存货（上传原样）",
+                 "desc": "期初库存余额台账，按上传文件原样导出（保留仓库/批次明细，行数与上传一致）"},
+                {"kind": "ending_inventory", "name": "期末存货",
+                 "desc": "期末库存余额台账（物料、结存数量、单价、金额，系统自动计算）"},
+                {"kind": "inventory_ledger", "name": "库存流水",
+                 "desc": "本期间全部库存出入库流水（单据、物料、数量、单价、金额）"},
+                {"kind": "inventory_valuation", "name": "库存金额结转",
+                 "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
+                {"kind": "price_table", "name": "单价表（历史单价·跨月对比）",
+                 "desc": "各物料最近多期的入库/出库单价（上传的历史单价优先，未上传用系统计算价）；含新增物料自动补全"},
+                {"kind": "purchase_contract", "name": "采购合同",
+                 "desc": "采购合同台账（合同号、供应商、品名、数量、不含税单价、剩余数量）"},
+                {"kind": "purchase_invoice", "name": "采购发票匹配",
+                 "desc": "采购发票及核销的入库/期初暂估明细"},
+                {"kind": "purchase_accrual", "name": "月末采购暂估",
+                 "desc": "截止月末仍未到票的采购入库及暂估金额"},
+                {"kind": "purchase_difference", "name": "本月采购暂估差异",
+                 "desc": "本月发票核销产生的暂估价差（交总账处理）"},
+                {"kind": "purchase_reversal", "name": "发票暂估回冲明细",
+                 "desc": "每张采购发票核销了哪笔入库/期初暂估：暂估金额、发票金额、价差、累计核销与剩余未到票"},
+            ],
+        },
+        {
+            "group": "生产与成本",
+            "items": [
+                {"kind": "work_order", "name": "生产工单",
+                 "desc": "生产工单主档台账（数量、状态、计划时间）"},
+                {"kind": "work_order_ledger", "name": "工单台账（原样明细）",
+                 "desc": "ERP 工单主档原样台账：工单号、类型、车间、计划数量、状态、计划时间、订单号、物料颜色等全字段"},
+                {"kind": "order_material", "name": "工单投料",
+                 "desc": "按工单 × 物料汇总投料记录台账数量与金额"},
+                {"kind": "material_issue_ledger", "name": "投料台账（原样明细）",
+                 "desc": "ERP 投料记录原样台账：物料、投料/实际投料数量、批次、仓位、投料时间、人员、工单号等全字段"},
+                {"kind": "order_completion", "name": "工单报工",
+                 "desc": "工单完工汇报：报工数量、完工成本、报工入库数量与金额"},
+                {"kind": "work_report_ledger", "name": "报工台账（原样明细）",
+                 "desc": "ERP 报工记录原样台账：报工数量、质量状态、工时、部门、设备、工单号、颜色/批次等全字段"},
+                {"kind": "work_order_detail", "name": "工单明细",
+                 "desc": "各工单：创建时间、车间、计划/实际完工时间、完成状态、计划/投料/入库数量"},
+                {"kind": "material_check", "name": "投料核对（异常排查）",
+                 "desc": "有报工无投料的工单、被认领的供料工单、缺料←供料匹配关系；仅染色/纺纱/包覆/针织，用于与生产核对剩余料去向"},
+                {"kind": "work_order_cost", "name": "工单成本",
+                 "desc": "各生产工单按投料/报工核算的完工与在制成本明细"},
+                {"kind": "workshop_cost", "name": "车间费用",
+                 "desc": "各车间本期费用（水电/蒸汽/天然气/折旧/机物料/染料助剂/工资），按上传原样格式导出"},
+                {"kind": "workshop_settlement", "name": "车间结转",
+                 "desc": "车间结转顺序、状态与成本结果"},
+                {"kind": "deemed_finished", "name": "视同完工清单（小工单）",
+                 "desc": "工单明细确认已完工且完工率≥70% 视同完工：在产品清零、尾料按损耗并入完工成本，不再结转"},
+            ],
+        },
+        {
+            "group": "销售与开票",
+            "items": [
+                {"kind": "sales_invoice", "name": "销售发票匹配",
+                 "desc": "销售发票及核销的出库/期初发出商品明细"},
+                {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
+                 "desc": "截止月末仍未开票的销售出库及发出商品成本"},
+            ],
+        },
+        {
+            "group": "勾稽与综合",
+            "items": [
+                {"kind": "reconciliation", "name": "勾稽结果与异常清单",
+                 "desc": "全部勾稽项目（含异常清单），两个工作表"},
+                {"kind": "settlement_workbook", "name": "结算工作簿（完整）",
+                 "desc": "含 16 个工作表的完整结算底稿：库存计价、跨期结转、月末暂估、勾稽等"},
+                {"kind": "uploaded_files", "name": "上传的原始文件",
+                 "desc": "本期间全部上传的原始文件（CSV/XLSX）"},
+            ],
+        },
     ]
-    SPECIAL_REPORTS = [
-        {"key": "price_table", "name": "单价表（历史单价·跨月对比）",
-         "desc": "各物料最近多期的入库/出库单价（上传的历史单价优先，未上传用系统计算价）；含新增物料自动补全"},
-        {"key": "settlement_workbook", "name": "结算工作簿（完整）",
-         "desc": "含 16 个工作表的完整结算底稿：库存计价、跨期结转、月末暂估、勾稽等"},
-        {"key": "uploaded_files", "name": "上传的原始文件",
-         "desc": "本期间全部上传的原始文件（CSV/XLSX）"},
-    ]
-
     if request.method == "POST":
         selected = request.POST.getlist("reports")
         if not selected:
@@ -4125,8 +4477,7 @@ def export_center(request, period_id):
         "settlement/export_center.html",
         {
             "period": period,
-            "reports": REPORT_CATALOG,
-            "special_reports": SPECIAL_REPORTS,
+            "grouped_reports": REPORT_GROUPS,
         },
     )
 
