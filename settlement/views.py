@@ -4079,6 +4079,50 @@ def _listing_rows(request, period, kind):
                     )
                 )
 
+        # ===== 按车间分组整理（含车间小计，Sheet1/Sheet2 共用车间顺序）=====
+        from collections import OrderedDict as _od_ws
+        _ws_label2code = {v: k for k, v in WORKSHOP_LABELS.items()}
+        _ws_codes = list(
+            period.workshop_settlements.order_by("sequence").values_list(
+                "workshop", flat=True
+            )
+        )
+        if not _ws_codes:
+            _ws_codes = list(WORKSHOP_LABELS.keys())
+
+        def _ws_key(_code):
+            return _ws_codes.index(_code) if _code in _ws_codes else 999
+
+        # Sheet1 投料核对：按车间分组 + 车间小计
+        _by_ws1 = _od_ws()
+        for _row in _rows:
+            _code = _ws_label2code.get(_row[1], _row[1])
+            _by_ws1.setdefault(_code, []).append(_row)
+        _rows_sorted = []
+        for _code in sorted(_by_ws1, key=_ws_key):
+            _ws_rows1 = _by_ws1[_code]
+            _rows_sorted.extend(_ws_rows1)
+            _rows_sorted.append(
+                (
+                    "",
+                    WORKSHOP_LABELS.get(_code, _code) + " 小计",
+                    f"{len(_ws_rows1)} 条",
+                    "",
+                    sum((Decimal(r[4] or 0) for r in _ws_rows1), Decimal("0")),
+                    "",
+                    "",
+                    sum((Decimal(r[7] or 0) for r in _ws_rows1), Decimal("0")),
+                    "",
+                    "",
+                    "",
+                    sum((Decimal(r[11] or 0) for r in _ws_rows1), Decimal("0")),
+                    "",
+                    "",
+                    "",
+                )
+            )
+        _rows = _rows_sorted
+
         sheets.append(
             (
                 "投料核对",
@@ -4153,6 +4197,31 @@ def _listing_rows(request, period, kind):
                     "",
                 )
             )
+        # Sheet2 BOM反推补投对比：按车间分组 + 车间小计（保留总合计行）
+        _by_ws2 = _od_ws()
+        for _row in _backfill_rows[:-1]:
+            _code = _ws_label2code.get(_row[1], _row[1])
+            _by_ws2.setdefault(_code, []).append(_row)
+        _bf_rows_sorted = []
+        for _code in sorted(_by_ws2, key=_ws_key):
+            _ws_rows2 = _by_ws2[_code]
+            _bf_rows_sorted.extend(_ws_rows2)
+            _bf_rows_sorted.append(
+                (
+                    "",
+                    WORKSHOP_LABELS.get(_code, _code) + " 小计",
+                    f"{len(_ws_rows2)} 张工单",
+                    "",
+                    sum((Decimal(r[4] or 0) for r in _ws_rows2), Decimal("0")),
+                    sum((Decimal(r[5] or 0) for r in _ws_rows2), Decimal("0")),
+                    sum((Decimal(r[6] or 0) for r in _ws_rows2), Decimal("0")),
+                    sum((Decimal(r[7] or 0) for r in _ws_rows2), Decimal("0")),
+                    "",
+                )
+            )
+        _bf_rows_sorted.append(_backfill_rows[-1])  # 总合计
+        _backfill_rows = _bf_rows_sorted
+
         sheets.append(
             (
                 "BOM反推补投对比",
