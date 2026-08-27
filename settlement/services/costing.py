@@ -927,6 +927,9 @@ def _prepare_period(period):
     auto_match_all(period)
     ensure_workshop_settlements(period)
     clear_baogong_receipt_prices(period)
+    # 清空后用现有工单成本结果立即回填全部报工入库，
+    # 保证已结转车间的报工入库始终带完工成本，不被后续单车间结转清空
+    price_baogong_receipts(period, None)
     _fill_opening_prices(period)
     return carry_summary
 
