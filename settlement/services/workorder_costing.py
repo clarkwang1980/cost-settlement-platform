@@ -210,7 +210,14 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
     """按 工单 × 物料 汇总实际投料数量，乘以物料月末加权价；
     叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）；
     再对有报工、无投料、无期初、非粗纱链的工单按 BOM 单耗×报工数量 反推补投材料成本（仅计算层）。
+
+    单价统一口径（与页面/导出一致）：月末加权价优先 → 历史单价（receipt_price）兜底；
+    月末加权价缺失或为 0 时用历史单价，两者都没有则该物料金额 0。
     """
+    prices = dict(prices)
+    for _hp in period.historical_prices.all():
+        if _hp.receipt_price is not None and not prices.get(_hp.material_code):
+            prices[_hp.material_code] = Decimal(_hp.receipt_price)
     amounts = defaultdict(lambda: ZERO)
     issues = (
         period.material_issues.exclude(work_order_no="")
