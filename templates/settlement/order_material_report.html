@@ -16,11 +16,6 @@
   .no-price{color:#c0392b;font-weight:600;}
   .table-wrap table th,.table-wrap table td{padding:5px 8px;}
   .table-wrap table small{display:block;color:#8a94a3;font-size:12px;}
-  .view-toggle{display:flex;align-items:center;gap:10px;margin:0 0 14px;flex-wrap:wrap;}
-  .view-toggle .toggle-btn{display:inline-block;padding:6px 14px;border:1px solid #d5dbe3;border-radius:8px;
-          background:#fff;color:#5a6472;font-size:13px;text-decoration:none;}
-  .view-toggle .toggle-btn.active{background:#0f62fe;border-color:#0f62fe;color:#fff;font-weight:600;}
-  .view-toggle .hint{color:#8a94a3;font-size:12px;}
 </style>
 <section class="page-heading">
   <div>
@@ -42,22 +37,6 @@
   {% endif %}
 </section>
 
-
-<section class="section-card filter-card">
-  <form class="filter-grid" method="get">
-    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
-    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 tefang / 染色车间"></label>
-    <label>物料编码<input name="material" value="{{ request.GET.material }}"></label>
-    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'order_material_report' period.id %}">清空</a></div>
-  </form>
-</section>
-
-<div class="view-toggle">
-  <a class="toggle-btn {% if not show_all %}active{% endif %}" href="{% url 'order_material_report' period.id %}?{% if request.GET.order_no %}order_no={{ request.GET.order_no|urlencode }}&{% endif %}{% if request.GET.workshop %}workshop={{ request.GET.workshop|urlencode }}&{% endif %}{% if request.GET.material %}material={{ request.GET.material|urlencode }}&{% endif %}">精简视图</a>
-  <a class="toggle-btn {% if show_all %}active{% endif %}" href="{% url 'order_material_report' period.id %}?full=1{% if request.GET.order_no %}&order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.workshop %}&workshop={{ request.GET.workshop|urlencode }}{% endif %}{% if request.GET.material %}&material={{ request.GET.material|urlencode }}{% endif %}">完整字段</a>
-  <span class="hint">精简视图显示核心列；完整字段与导出/上传模板一致（30 列）</span>
-</div>
-
 {% if sections %}
 <section class="ws-tabs" role="tablist">
   {% for section in sections %}
@@ -65,128 +44,59 @@
          {% if section.workshop == active_ws %}checked{% endif %}>
   <label class="ws-tab" for="ws-tab-{{ forloop.counter0 }}">{{ section.label }} <small>{{ section.rows|length }} 行</small></label>
   {% endfor %}
-{% for section in sections %}
-<div class="ws-panel" data-panel="ws-tab-{{ forloop.counter0 }}">
-  <section class="summary-strip">
-    <article><span>{{ section.label }} · 投料行数</span><strong>{{ section.rows|length }}</strong></article>
-    <article><span>{{ section.label }} · 投料数量</span><strong>{{ section.subtotal.issue_quantity|floatformat:3|thousands }}</strong></article>
-    <article><span>{{ section.label }} · 投料金额</span><strong>¥{{ section.subtotal.amount|floatformat:2|thousands }}</strong></article>
-    {% if section.subtotal.no_price_count %}
-    <article style="background:#FDF0EE;"><span>{{ section.label }} · 无单价</span><strong class="no-price">{{ section.subtotal.no_price_count }} 行</strong></article>
-    {% endif %}
-  </section>
-  <section class="section-card">
-    <div class="table-wrap">
-      {% if show_all %}
-      <table>
-        <thead>
-          <tr>
-            <th>生产任务编号</th><th>工序编号</th><th>工序名称</th><th>物料编码</th><th>物料名称</th>
-            <th>物料分类</th><th>物料属性</th><th>物料规格</th>
-            <th class="num">投料数量</th><th class="num">已回撤数量</th><th class="num">实际投料数量</th><th>投料单位</th>
-            <th class="num">辅助数量</th><th>辅助单位</th><th>标识码</th><th>批次号</th><th>质量状态</th><th>投料仓位</th>
-            <th>被替代物料编号</th><th>被替代物料名称</th><th>投料时间</th><th>投料人员</th><th>执行人员</th>
-            <th>工单编号</th><th>主产出物料编号</th><th>主产出物料名称</th><th>销售订单编号</th><th>投料记录编号</th>
-            <th class="num">单价</th><th class="num">金额</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for r in section.rows %}
-          <tr>
-            <td>{{ r.task_no|default:"—" }}</td>
-            <td>{{ r.operation_no|default:"—" }}</td>
-            <td>{{ r.operation_name|default:"—" }}</td>
-            <td><strong>{{ r.material_code }}</strong></td>
-            <td>{{ r.material_name|default:"—" }}</td>
-            <td>{{ r.material_category|default:"—" }}</td>
-            <td>{{ r.material_attribute|default:"—" }}</td>
-            <td>{{ r.material_spec|default:"—" }}</td>
-            <td class="num">{{ r.issue_quantity|floatformat:3|thousands }}</td>
-            <td class="num">{{ r.returned_quantity|floatformat:3|thousands }}</td>
-            <td class="num">{{ r.actual_issue_quantity|floatformat:3|thousands }}</td>
-            <td>{{ r.issue_uom|default:"—" }}</td>
-            <td class="num">{% if r.auxiliary_quantity %}{{ r.auxiliary_quantity|floatformat:2|thousands }}{% else %}—{% endif %}</td>
-            <td>{{ r.auxiliary_uom|default:"—" }}</td>
-            <td>{{ r.identifier|default:"—" }}</td>
-            <td>{{ r.batch_no|default:"—" }}</td>
-            <td>{{ r.quality_status|default:"—" }}</td>
-            <td>{{ r.issue_location|default:"—" }}</td>
-            <td>{{ r.replaced_material_code|default:"—" }}</td>
-            <td>{{ r.replaced_material_name|default:"—" }}</td>
-            <td>{% if r.issue_time %}{{ r.issue_time|date:"Y-m-d H:i" }}{% else %}—{% endif %}</td>
-            <td>{{ r.issuer|default:"—" }}</td>
-            <td>{{ r.executor|default:"—" }}</td>
-            <td><strong>{{ r.work_order_no }}</strong></td>
-            <td>{{ r.main_output_code|default:"—" }}</td>
-            <td>{{ r.main_output_name|default:"—" }}</td>
-            <td>{{ r.sales_order_no|default:"—" }}</td>
-            <td>{{ r.record_no|default:"—" }}</td>
-            <td class="num">{% if r.unit_price %}{{ r.unit_price|floatformat:4|thousands }}{% else %}<span class="no-price">无单价</span>{% endif %}</td>
-            <td class="num">{% if r.amount %}<strong>¥{{ r.amount|floatformat:2|thousands }}</strong>{% else %}<span class="no-price">无金额</span>{% endif %}</td>
-          </tr>
-        {% empty %}<tr><td colspan="30" class="empty-cell">该车间没有符合条件的投料记录。</td></tr>{% endfor %}
-        </tbody>
+  {% for section in sections %}
+  <div class="ws-panel" data-panel="ws-tab-{{ forloop.counter0 }}">
+    <section class="summary-strip">
+      <article><span>{{ section.label }} · 投料行数</span><strong>{{ section.rows|length }}</strong></article>
+      <article><span>{{ section.label }} · 投料数量</span><strong>{{ section.subtotal.issue_quantity|floatformat:3|thousands }}</strong></article>
+      <article><span>{{ section.label }} · 投料金额</span><strong>¥{{ section.subtotal.amount|floatformat:2|thousands }}</strong></article>
       {% if section.subtotal.no_price_count %}
-      <tr style="background:#FDF0EE;">
-        <td colspan="30" class="no-price">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：{% for code, name in section.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}。请在「历史单价」模板补充后重新上传、结算。</td>
-      </tr>
+      <article style="background:#FDF0EE;"><span>{{ section.label }} · 无单价</span><strong class="no-price">{{ section.subtotal.no_price_count }} 行</strong></article>
       {% endif %}
-
-        {% if section.rows %}
-        <tfoot>
-          <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
-            <td colspan="10">{{ section.label }} 合计（{{ section.rows|length }} 行{% if section.subtotal.no_price_count %}，其中 {{ section.subtotal.no_price_count }} 行无单价{% endif %}）</td>
-            <td class="num">{{ section.subtotal.issue_quantity|floatformat:3|thousands }}</td>
-            <td colspan="18"></td>
-            <td class="num">¥{{ section.subtotal.amount|floatformat:2|thousands }}</td>
+    </section>
+    <section class="section-card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>工单编号</th><th>物料</th><th>规格</th><th>单位</th>
+              <th class="num">实际投料数量</th>
+              <th class="num">单价</th><th class="num">金额</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in section.rows %}
+            <tr>
+              <td><strong>{{ r.work_order_no }}</strong></td>
+              <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
+              <td>{{ r.material_spec|default:"—" }}</td>
+              <td>{{ r.issue_uom|default:"—" }}</td>
+              <td class="num">{{ r.actual_issue_quantity|floatformat:3|thousands }}</td>
+              <td class="num">{% if r.unit_price %}{{ r.unit_price|floatformat:4|thousands }}{% else %}<span class="no-price">无单价</span>{% endif %}</td>
+              <td class="num">{% if r.amount %}<strong>¥{{ r.amount|floatformat:2|thousands }}</strong>{% else %}<span class="no-price">无金额</span>{% endif %}</td>
+            </tr>
+          {% empty %}<tr><td colspan="7" class="empty-cell">该车间没有符合条件的投料记录。</td></tr>{% endfor %}
+          </tbody>
+          {% if section.subtotal.no_price_count %}
+          <tr style="background:#FDF0EE;">
+            <td colspan="7" class="no-price">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：{% for code, name in section.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}。请在「历史单价」模板补充后重新上传、结算。</td>
           </tr>
-        </tfoot>
-        {% endif %}
-      </table>
-      {% else %}
-      <table>
-        <thead>
-          <tr>
-            <th>工单编号</th><th>物料</th><th>规格</th><th>单位</th>
-            <th class="num">实际投料数量</th>
-            <th class="num">单价</th><th class="num">金额</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for r in section.rows %}
-          <tr>
-            <td><strong>{{ r.work_order_no }}</strong></td>
-            <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
-            <td>{{ r.material_spec|default:"—" }}</td>
-            <td>{{ r.issue_uom|default:"—" }}</td>
-            <td class="num">{{ r.actual_issue_quantity|floatformat:3|thousands }}</td>
-            <td class="num">{% if r.unit_price %}{{ r.unit_price|floatformat:4|thousands }}{% else %}<span class="no-price">无单价</span>{% endif %}</td>
-            <td class="num">{% if r.amount %}<strong>¥{{ r.amount|floatformat:2|thousands }}</strong>{% else %}<span class="no-price">无金额</span>{% endif %}</td>
-          </tr>
-        {% empty %}<tr><td colspan="7" class="empty-cell">该车间没有符合条件的投料记录。</td></tr>{% endfor %}
-        </tbody>
-      {% if section.subtotal.no_price_count %}
-      <tr style="background:#FDF0EE;">
-        <td colspan="7" class="no-price">⚠ 以下物料没有单价（无月末加权价且无历史单价），投料金额无法计算：{% for code, name in section.no_price_materials.items %}{{ code }}{% if name %}（{{ name }}）{% endif %}{% if not forloop.last %}、{% endif %}{% endfor %}。请在「历史单价」模板补充后重新上传、结算。</td>
-      </tr>
-      {% endif %}
-
-        {% if section.rows %}
-        <tfoot>
-          <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
-            <td colspan="3">{{ section.label }} 合计（{{ section.rows|length }} 行{% if section.subtotal.no_price_count %}，其中 {{ section.subtotal.no_price_count }} 行无单价{% endif %}）</td>
-            <td class="num">{{ section.subtotal.issue_quantity|floatformat:3|thousands }}</td>
-            <td colspan="2"></td>
-            <td class="num">¥{{ section.subtotal.amount|floatformat:2|thousands }}</td>
-          </tr>
-        </tfoot>
-        {% endif %}
-      </table>
-      {% endif %}
-    </div>
-  </section>
-</div>
-{% endfor %}
+          {% endif %}
+          {% if section.rows %}
+          <tfoot>
+            <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
+              <td colspan="3">{{ section.label }} 合计（{{ section.rows|length }} 行{% if section.subtotal.no_price_count %}，其中 {{ section.subtotal.no_price_count }} 行无单价{% endif %}）</td>
+              <td class="num">{{ section.subtotal.issue_quantity|floatformat:3|thousands }}</td>
+              <td colspan="2"></td>
+              <td class="num">¥{{ section.subtotal.amount|floatformat:2|thousands }}</td>
+            </tr>
+          </tfoot>
+          {% endif %}
+        </table>
+      </div>
+    </section>
+  </div>
+  {% endfor %}
 </section>
 {% else %}
 <section class="section-card">
