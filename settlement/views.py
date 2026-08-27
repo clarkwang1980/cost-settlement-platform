@@ -1365,8 +1365,9 @@ def work_order_report(request, period_id):
 
 
 def build_material_issue_rows(period, order_no="", workshop="", material=""):
-    """按工单 × 物料汇总投料记录台账（实际投料数量、单价、金额）。
-    单价 = 月末加权价（inventory_valuations）→ 历史单价（receipt_price）兜底。"""
+    """投料记录明细行（与导出模板字段一致）：每条投料记录一行，含全部模板字段 + 单价 + 金额。
+    单价 = 月末加权价（inventory_valuations）→ 历史单价（receipt_price）兜底；
+    无单价时 unit_price/amount 为 None（页面/导出提示"无单价"）。"""
     prices = {
         item.material_code: Decimal(item.weighted_average_price or 0)
         for item in period.inventory_valuations.all()
@@ -1382,43 +1383,70 @@ def build_material_issue_rows(period, order_no="", workshop="", material=""):
         issues = issues.filter(work_order_no__icontains=order_no)
     if material:
         issues = issues.filter(material_code__icontains=material)
-    buckets = {}
+    rows = []
     for issue in issues:
         if not issue.work_order_no or not issue.material_code:
             continue
-        if workshop and workshop not in (
-            wo_workshop.get(issue.work_order_no, "") or ""
-        ):
+        ws = wo_workshop.get(issue.work_order_no, "") or ""
+        if workshop and workshop not in ws:
             continue
-        key = (issue.work_order_no, issue.material_code)
-        bucket = buckets.setdefault(
-            key,
+        price = prices.get(issue.material_code) or None
+        qty = Decimal(issue.actual_issue_quantity or 0)
+        unit_price = (
+            price.quantize(Decimal("0.0001"))
+            if price is not None else None
+        )
+        amount = (
+            (price * qty).quantize(Decimal("0.01"))
+            if price is not None and qty else None
+        )
+        rows.append(
             {
-                "order_no": issue.work_order_no,
-                "workshop": wo_workshop.get(issue.work_order_no, ""),
+                "task_no": issue.task_no,
+                "operation_no": issue.operation_no,
+                "operation_name": issue.operation_name,
                 "material_code": issue.material_code,
                 "material_name": issue.material_name,
-                "specification": issue.material_spec,
-                "uom": issue.issue_uom,
-                "issue_quantity": Decimal("0"),
-                "unit_price": prices.get(issue.material_code, Decimal("0")),
-                "amount": Decimal("0"),
-            },
+                "material_category": issue.material_category,
+                "material_attribute": issue.material_attribute,
+                "material_spec": issue.material_spec,
+                "issue_quantity": issue.issue_quantity,
+                "returned_quantity": issue.returned_quantity,
+                "actual_issue_quantity": qty,
+                "issue_uom": issue.issue_uom,
+                "auxiliary_quantity": issue.auxiliary_quantity,
+                "auxiliary_uom": issue.auxiliary_uom,
+                "identifier": issue.identifier,
+                "batch_no": issue.batch_no,
+                "quality_status": issue.quality_status,
+                "issue_location": issue.issue_location,
+                "replaced_material_code": issue.replaced_material_code,
+                "replaced_material_name": issue.replaced_material_name,
+                "issue_time": issue.issue_time,
+                "issuer": issue.issuer,
+                "executor": issue.executor,
+                "work_order_no": issue.work_order_no,
+                "main_output_code": issue.main_output_code,
+                "main_output_name": issue.main_output_name,
+                "sales_order_no": issue.sales_order_no,
+                "record_no": issue.record_no,
+                "workshop": ws,
+                "unit_price": unit_price,
+                "amount": amount,
+            }
         )
-        qty = Decimal(issue.actual_issue_quantity or 0)
-        bucket["issue_quantity"] += qty
-        bucket["amount"] += qty * prices.get(issue.material_code, Decimal("0"))
-    rows = []
-    for bucket in buckets.values():
-        bucket["amount"] = bucket["amount"].quantize(Decimal("0.01"))
-        bucket["unit_price"] = bucket["unit_price"].quantize(Decimal("0.0001"))
-        rows.append(bucket)
     rows.sort(
-        key=lambda r: (r["workshop"], r["order_no"], r["material_code"])
+        key=lambda r: (r["workshop"], r["work_order_no"], r["material_code"])
     )
+    no_price = [r for r in rows if r["unit_price"] is None]
+    no_price_materials = {}
+    for r in no_price:
+        no_price_materials.setdefault(r["material_code"], r["material_name"] or "")
     totals = {
-        "issue_quantity": sum((r["issue_quantity"] for r in rows), Decimal("0")),
-        "amount": sum((r["amount"] for r in rows), Decimal("0")),
+        "issue_quantity": sum((r["actual_issue_quantity"] for r in rows), Decimal("0")),
+        "amount": sum((r["amount"] for r in rows if r["amount"] is not None), Decimal("0")),
+        "no_price_count": len(no_price),
+        "no_price_materials": no_price_materials,
     }
     return rows, totals
 
@@ -1450,14 +1478,15 @@ def order_material_report(request, period_id):
     sections = []
     for ws in present:
         ws_rows = by_ws[ws]
-        qty = sum((r["issue_quantity"] for r in ws_rows), Decimal("0"))
-        amt = sum((r["amount"] for r in ws_rows), Decimal("0"))
+        qty = sum((r["actual_issue_quantity"] for r in ws_rows), Decimal("0"))
+        amt = sum((r["amount"] for r in ws_rows if r["amount"] is not None), Decimal("0"))
+        no_price_n = sum(1 for r in ws_rows if r["unit_price"] is None)
         sections.append(
             {
                 "workshop": ws,
                 "label": WORKSHOP_LABELS.get(ws, ws or "未归属"),
                 "rows": ws_rows,
-                "subtotal": {"issue_quantity": qty, "amount": amt},
+                "subtotal": {"issue_quantity": qty, "amount": amt, "no_price_count": no_price_n},
             }
         )
     active_ws = (request.GET.get("workshop") or "").strip()
