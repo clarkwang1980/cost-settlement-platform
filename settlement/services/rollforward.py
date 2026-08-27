@@ -230,6 +230,7 @@ def _carry_wip_and_orders(period, previous):
                 "batch": None,
                 "source_period": previous,
                 "is_system_generated": True,
+                "quantity": result.wip_quantity,
                 "material": result.wip_material,
                 "water_power": components["water_power"],
                 "steam": components["steam"],

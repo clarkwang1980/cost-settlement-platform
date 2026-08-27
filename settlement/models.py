@@ -732,6 +732,9 @@ class OpeningWip(models.Model):
     )
     is_system_generated = models.BooleanField(default=False)
     order_no = models.CharField(max_length=100, db_index=True)
+    quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, default=ZERO, verbose_name="期初在产品数量"
+    )
     material = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     water_power = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     steam = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)

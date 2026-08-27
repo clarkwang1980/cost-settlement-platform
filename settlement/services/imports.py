@@ -228,6 +228,7 @@ ALIASES = {
     },
     "opening_wip": {
         "order_no": ["工单号", "生产订单号", "订单号"],
+        "quantity": ["数量", "期初数量", "在产品数量", "期初在产品数量"],
         "material": ["材料", "材料成本", "期初材料"],
         "water_power": ["水电", "水电费"],
         "steam": ["蒸汽", "蒸汽费"],
@@ -1391,6 +1392,7 @@ def _import_opening_wip(batch, row):
             "batch": batch,
             "source_period": None,
             "is_system_generated": False,
+            "quantity": to_decimal(row.get("quantity"), Decimal("0")),
             "material": to_decimal(row.get("material"), Decimal("0")),
             "water_power": to_decimal(row.get("water_power"), Decimal("0")),
             "steam": to_decimal(row.get("steam"), Decimal("0")),

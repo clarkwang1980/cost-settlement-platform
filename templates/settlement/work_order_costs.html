@@ -53,11 +53,12 @@
           <th>期间</th><th>工单</th><th>类别</th><th>产品</th>
           <th>计划完工时间</th><th>实际完工时间</th><th>完成状态</th>
           <th class="num">计划数量</th>
+          <th class="num">期初数量</th><th class="num">期初金额</th>
           <th class="num">本期投料</th><th class="num">投料单价</th><th class="num">累计投料</th><th>投料状态</th>
           <th class="num">本期完工</th><th class="num">累计完工</th>
           <th class="num">本期完工率</th><th class="num">累计完工率</th>
           {% if section.workshop == "tefang" %}<th>是否用粗纱</th>{% endif %}
-          <th class="num">报工数量</th><th class="num">在产品</th>
+          <th class="num">报工数量</th><th class="num">在产品</th><th class="num">折合产量</th>
           <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
           <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
           {% if section.workshop != "tefang" %}<th class="num">天然气</th><th class="num">天然气分配率</th>{% endif %}
@@ -65,7 +66,7 @@
           <th class="num">机物料</th><th class="num">机物料分配率</th>
           <th class="num">染料助剂</th><th class="num">染料助剂分配率</th>
           <th class="num">工资</th><th class="num">工资分配率</th>
-          <th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">在产品成本</th>
+          <th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">期末在产品数量</th><th class="num">在产品成本</th>
         </tr></thead>
         <tbody>
         {% for item in section.rows %}
@@ -78,6 +79,8 @@
           <td>{{ item.wo_actual_finish }}</td>
           <td>{{ item.wo_completion_status }}</td>
           <td class="num">{{ item.plan_quantity|floatformat:2|thousands }}</td>
+          <td class="num">{% if item.opening_quantity %}{{ item.opening_quantity|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if item.opening_amount %}{{ item.opening_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
           <td class="num">{{ item.current_issue|floatformat:2|thousands }}</td>
           <td class="num">{% if item.current_unit_price %}{{ item.current_unit_price|floatformat:4|thousands }}{% else %}—{% endif %}</td>
           <td class="num">{{ item.accum_issue|floatformat:2|thousands }}</td>
@@ -89,37 +92,41 @@
           {% if section.workshop == "tefang" %}<td>{{ item.uses_roving }}</td>{% endif %}
           <td class="num">{{ item.finished_quantity|floatformat:2|thousands }}</td>
           <td class="num">{{ item.wip_quantity|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.equivalent_qty|floatformat:2|thousands }}</td>
           <td class="num">{{ item.direct_material|floatformat:2|thousands }}</td>
           <td class="num">{{ item.water_power|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_water_power_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_water_power_pct %}{{ item.rate_water_power_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num">{{ item.steam|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_steam_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_steam_pct %}{{ item.rate_steam_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           {% if section.workshop != "tefang" %}<td class="num">{{ item.natural_gas|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_natural_gas_pct|floatformat:2|thousands }}%</td>{% endif %}
+          <td class="num">{% if item.rate_natural_gas_pct %}{{ item.rate_natural_gas_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>{% endif %}
           <td class="num">{{ item.depreciation|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_depreciation_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_depreciation_pct %}{{ item.rate_depreciation_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num">{{ item.consumables|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_consumables_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_consumables_pct %}{{ item.rate_consumables_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num">{{ item.dye_auxiliary|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_dye_auxiliary_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_dye_auxiliary_pct %}{{ item.rate_dye_auxiliary_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num">{{ item.wages|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.rate_wages_pct|floatformat:2|thousands }}%</td>
+          <td class="num">{% if item.rate_wages_pct %}{{ item.rate_wages_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
           <td class="num"><strong>{{ item.total_cost|floatformat:2|thousands }}</strong></td>
           <td class="num">{{ item.finished_cost|floatformat:2|thousands }}</td>
           <td class="num">{{ item.finished_unit_cost|floatformat:6|thousands }}</td>
+          <td class="num">{{ item.wip_quantity|floatformat:2|thousands }}</td>
           <td class="num">{{ item.wip_cost|floatformat:2|thousands }}</td>
         </tr>
         {% endfor %}
         {% if section.subtotal %}
-        <tr style="background:#eef2f7;font-weight:600;">
+        <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
           <td colspan="3"><strong>{{ section.label }}合计（{{ section.subtotal.count }} 张工单）</strong></td>
-          <td></td><td></td><td></td><td></td>
+          <td></td>
+          <td></td><td></td><td></td>
           <td class="num"></td>
+          <td class="num"></td><td class="num"></td>
           <td class="num"></td><td class="num"></td><td class="num"></td><td></td>
           <td class="num"></td><td class="num"></td>
           <td class="num"></td><td class="num"></td>
           {% if section.workshop == "tefang" %}<td></td>{% endif %}
-          <td class="num"></td><td class="num"></td>
+          <td class="num"></td><td class="num"></td><td class="num"></td>
           <td class="num">{{ section.subtotal.direct_material|floatformat:2|thousands }}</td>
           <td class="num">{{ section.subtotal.water_power|floatformat:2|thousands }}</td><td class="num"></td>
           <td class="num">{{ section.subtotal.steam|floatformat:2|thousands }}</td><td class="num"></td>
@@ -130,6 +137,7 @@
           <td class="num">{{ section.subtotal.wages|floatformat:2|thousands }}</td><td class="num"></td>
           <td class="num"><strong>{{ section.subtotal.total_cost|floatformat:2|thousands }}</strong></td>
           <td class="num">{{ section.subtotal.finished_cost|floatformat:2|thousands }}</td>
+          <td class="num"></td>
           <td class="num"></td>
           <td class="num">{{ section.subtotal.wip_cost|floatformat:2|thousands }}</td>
         </tr>

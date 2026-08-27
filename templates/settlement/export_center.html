@@ -2,6 +2,31 @@
 {% load workshop_tags %}
 {% block title %}报表导出中心 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  /* 报表卡片横向网格排列：减少纵向滚动 */
+  .export-report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .export-report-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid #d5dbe3;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    min-height: 64px;
+  }
+  .export-report-card:hover { border-color: #0f62fe; background: #f5f9ff; }
+  .export-report-card input { margin-top: 2px; }
+  .export-report-card div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .export-report-card small { color: #5a6472; line-height: 1.4; }
+</style>
 <section class="page-heading">
   <div>
     <p class="eyebrow">EXPORT CENTER</p>
@@ -21,13 +46,14 @@
     <button class="button primary" type="submit">导出所选（ZIP）</button>
   </div>
 
+  {% for group in grouped_reports %}
   <section class="section-card">
     <div class="section-heading">
-      <div><p class="eyebrow">MANAGEMENT REPORTS</p><h2>管理报表</h2></div>
-      <span class="pill">{{ reports|length }} 张</span>
+      <div><h2>{{ group.group }}</h2></div>
+      <span class="pill">{{ group.items|length }} 张</span>
     </div>
     <div class="export-report-grid">
-      {% for report in reports %}
+      {% for report in group.items %}
       <label class="export-report-card">
         <input type="checkbox" name="reports" value="{{ report.kind }}">
         <div>
@@ -38,24 +64,7 @@
       {% endfor %}
     </div>
   </section>
-
-  <section class="section-card">
-    <div class="section-heading">
-      <div><p class="eyebrow">COMBINED & FILES</p><h2>综合报表与原始文件</h2></div>
-      <span class="pill">{{ special_reports|length }} 项</span>
-    </div>
-    <div class="export-report-grid">
-      {% for report in special_reports %}
-      <label class="export-report-card">
-        <input type="checkbox" name="reports" value="{{ report.key }}">
-        <div>
-          <strong>{{ report.name }}</strong>
-          <small>{{ report.desc }}</small>
-        </div>
-      </label>
-      {% endfor %}
-    </div>
-  </section>
+  {% endfor %}
 
   <div class="export-toolbar">
     <span id="selected-count" class="muted-text">已选 0 项</span>
