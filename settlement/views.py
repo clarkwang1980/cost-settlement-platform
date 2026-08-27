@@ -1365,11 +1365,15 @@ def work_order_report(request, period_id):
 
 
 def build_material_issue_rows(period, order_no="", workshop="", material=""):
-    """按工单 × 物料汇总投料记录台账（实际投料数量、金额按月末加权价）。"""
+    """按工单 × 物料汇总投料记录台账（实际投料数量、单价、金额）。
+    单价 = 月末加权价（inventory_valuations）→ 历史单价（receipt_price）兜底。"""
     prices = {
         item.material_code: Decimal(item.weighted_average_price or 0)
         for item in period.inventory_valuations.all()
     }
+    for hp in period.historical_prices.all():
+        if hp.receipt_price is not None:
+            prices.setdefault(hp.material_code, Decimal(hp.receipt_price))
     wo_workshop = {
         wo.order_no: wo.production_dept_code for wo in period.work_orders.all()
     }
@@ -1397,6 +1401,7 @@ def build_material_issue_rows(period, order_no="", workshop="", material=""):
                 "specification": issue.material_spec,
                 "uom": issue.issue_uom,
                 "issue_quantity": Decimal("0"),
+                "unit_price": prices.get(issue.material_code, Decimal("0")),
                 "amount": Decimal("0"),
             },
         )
@@ -1406,6 +1411,7 @@ def build_material_issue_rows(period, order_no="", workshop="", material=""):
     rows = []
     for bucket in buckets.values():
         bucket["amount"] = bucket["amount"].quantize(Decimal("0.01"))
+        bucket["unit_price"] = bucket["unit_price"].quantize(Decimal("0.0001"))
         rows.append(bucket)
     rows.sort(
         key=lambda r: (r["workshop"], r["order_no"], r["material_code"])
@@ -3189,8 +3195,38 @@ def _listing_rows(request, period, kind):
         header, raw_rows, _ = _uploaded_ledger_rows(
             period, ImportBatch.Kind.MATERIAL_ISSUE, period.material_issues.all()
         )
+        # 单价 = 月末加权价（inventory_valuations）→ 历史单价（receipt_price）兜底，追加为最后一列
+        _mi_prices = {}
+        for _v in period.inventory_valuations.all():
+            _mi_prices.setdefault(_v.material_code, Decimal(_v.weighted_average_price or 0))
+        for _hp in period.historical_prices.all():
+            if _hp.receipt_price is not None:
+                _mi_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
+
+        def _mi_unit_price(_code):
+            _p = _mi_prices.get(_code or "")
+            return Decimal(_p).quantize(Decimal("0.0001")) if _p else None
+
         if header:
-            sheets.append(("投料台账", header, raw_rows))
+            _alias = {}
+            for _f, _names in ALIASES["material_issue"].items():
+                for _n in _names:
+                    _alias[normalize_header(_n)] = _f
+            _mat_idx = None
+            for _i, _h in enumerate(header):
+                if _alias.get(normalize_header(_h)) == "material_code":
+                    _mat_idx = _i
+                    break
+            _header2 = list(header) + ["单价"]
+            _rows2 = [
+                tuple(_row) + (
+                    _mi_unit_price(
+                        str(_row[_mat_idx]) if _mat_idx is not None and _row[_mat_idx] else ""
+                    ),
+                )
+                for _row in raw_rows
+            ]
+            sheets.append(("投料台账", _header2, _rows2))
             return sheets
         issues = period.material_issues.all()
         issues = _text_filters(
@@ -3208,7 +3244,7 @@ def _listing_rows(request, period, kind):
                  "物料属性", "物料规格", "投料数量", "已撤回数量", "实际投料数量", "投料单位",
                  "辅助数量", "辅助单位", "标识码", "批次号", "质量状态", "投料仓位",
                  "被替代物料编码", "被替代物料名称", "投料时间", "投料人员", "执行人员",
-                 "工单编号", "主产出物料编码", "主产出物料名称", "销售订单编号", "投料记录编号"],
+                 "工单编号", "主产出物料编码", "主产出物料名称", "销售订单编号", "投料记录编号", "单价"],
                 (
                     (
                         item.task_no,
@@ -3239,6 +3275,7 @@ def _listing_rows(request, period, kind):
                         item.main_output_name,
                         item.sales_order_no,
                         item.record_no,
+                        _mi_unit_price(item.material_code),
                     )
                     for item in issues.order_by("id")
                 ),
@@ -3364,7 +3401,7 @@ def _listing_rows(request, period, kind):
             (
                 "工单投料",
                 ["工单编号", "车间", "物料编码", "物料名称", "规格", "单位",
-                 "实际投料数量", "投料金额"],
+                 "实际投料数量", "单价", "投料金额"],
                 (
                     (
                         r["order_no"],
@@ -3374,6 +3411,7 @@ def _listing_rows(request, period, kind):
                         r["specification"],
                         r["uom"],
                         r["issue_quantity"],
+                        r["unit_price"],
                         r["amount"],
                     )
                     for r in rows

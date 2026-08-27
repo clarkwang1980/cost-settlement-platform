@@ -1859,7 +1859,8 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 ws = load_workbook(BytesIO(zf.read(fname))).active
                 rows = list(ws.iter_rows(values_only=True))
                 header = [str(c) for c in rows[0]]
-                self.assertEqual(header, ["工单编号", "物料编码", "投料数量", "备注"])
+                # 投料台账 = 上传表头（4列） + 追加"单价"列（v1.5.28）
+                self.assertEqual(header, ["工单编号", "物料编码", "投料数量", "备注", "单价"])
                 self.assertEqual(len(rows) - 1, 2)
                 # 数据内容映射正确
                 data = {r[0]: r for r in rows[1:]}
