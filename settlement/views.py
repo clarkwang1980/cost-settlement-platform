@@ -2572,6 +2572,109 @@ def _listing_rows(request, period, kind):
     """按 kind 返回 (工作表名, 表头, 数据行) 列表，筛选逻辑与列表页一致。"""
     sheets = []
 
+    # ===== 台账公共生成器：投料台账（上传原样+单价）/ 报工台账（上传原样）=====
+    def _mi_ledger_sheet():
+        """投料台账：上传原样列 + 单价列（月末加权价→历史单价兜底）；无上传回退数据库明细+单价。"""
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.MATERIAL_ISSUE, period.material_issues.all()
+        )
+        _mi_prices = {}
+        for _v in period.inventory_valuations.all():
+            _mi_prices.setdefault(_v.material_code, Decimal(_v.weighted_average_price or 0))
+        for _hp in period.historical_prices.all():
+            if _hp.receipt_price is not None:
+                _mi_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
+
+        def _mi_unit_price(_code):
+            _p = _mi_prices.get(_code or "")
+            return Decimal(_p).quantize(Decimal("0.0001")) if _p else None
+
+        if header:
+            _alias = {}
+            for _f, _names in ALIASES["material_issue"].items():
+                for _n in _names:
+                    _alias[normalize_header(_n)] = _f
+            _mat_idx = None
+            for _i, _h in enumerate(header):
+                if _alias.get(normalize_header(_h)) == "material_code":
+                    _mat_idx = _i
+                    break
+            _header2 = list(header) + ["单价"]
+            _rows2 = [
+                tuple(_row) + (
+                    _mi_unit_price(
+                        str(_row[_mat_idx]) if _mat_idx is not None and _row[_mat_idx] else ""
+                    ),
+                )
+                for _row in raw_rows
+            ]
+            return _header2, _rows2
+        issues = period.material_issues.all()
+        issues = _text_filters(
+            request,
+            issues,
+            {"order_no": "work_order_no", "material": "material_code"},
+        )
+        return (
+            ["生产任务编号", "工序编号", "工序名称", "物料编码", "物料名称", "物料分类",
+             "物料属性", "物料规格", "投料数量", "已回撤数量", "实际投料数量", "投料单位",
+             "辅助数量", "辅助单位", "标识码", "批次号", "质量状态", "投料仓位",
+             "被替代物料编号", "被替代物料名称", "投料时间", "投料人员", "执行人员",
+             "工单编号", "主产出物料编号", "主产出物料名称", "销售订单编号", "投料记录编号",
+             "单价"],
+            [
+                (
+                    item.task_no, item.operation_no, item.operation_name, item.material_code,
+                    item.material_name, item.material_category, item.material_attribute,
+                    item.material_spec, item.issue_quantity, item.returned_quantity,
+                    item.actual_issue_quantity, item.issue_uom, item.auxiliary_quantity,
+                    item.auxiliary_uom, item.identifier, item.batch_no, item.quality_status,
+                    item.issue_location, item.replaced_material_code, item.replaced_material_name,
+                    item.issue_time, item.issuer, item.executor, item.work_order_no,
+                    item.main_output_code, item.main_output_name, item.sales_order_no,
+                    item.record_no, _mi_unit_price(item.material_code),
+                )
+                for item in issues.order_by("id")
+            ],
+        )
+
+    def _wr_ledger_sheet():
+        """报工台账：上传原样列；无上传回退数据库明细。"""
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORK_REPORT, period.work_reports.all()
+        )
+        if header:
+            return header, raw_rows
+        reports = period.work_reports.all()
+        reports = _text_filters(
+            request,
+            reports,
+            {"order_no": "work_order_no", "material": "material_code",
+             "quality_status": "quality_status"},
+        )
+        return (
+            ["报工时间", "生产任务编号", "工序编号", "工序名称", "报工物料编码", "报工物料名称",
+             "生产人员", "质量状态", "不良原因", "报工数量", "报工单位", "辅助数量", "辅助单位",
+             "批次号", "标识码", "流转卡编号", "工时", "工时单位", "备注", "部门", "设备",
+             "工单编号", "工单物料编码", "工单物料名称", "订单号", "纸管颜色", "纺纱班别",
+             "含水率", "批号流水", "织布序号", "织布机台", "产出仓位", "工单部门"],
+            [
+                (
+                    item.report_time, item.task_no, item.operation_no, item.operation_name,
+                    item.material_code, item.material_name, item.operator, item.quality_status,
+                    item.defect_reason, item.quantity, item.uom, item.auxiliary_quantity,
+                    item.auxiliary_uom, item.batch_no, item.identifier, item.route_card_no,
+                    item.work_hours, item.work_hours_uom, item.remark, item.department,
+                    item.equipment, item.work_order_no, item.work_order_material_code,
+                    item.work_order_material_name, item.order_no, item.paper_tube_color,
+                    item.spinning_shift, item.moisture_content, item.dye_batch_flow,
+                    item.weaving_sequence, item.weaving_machine, item.output_location,
+                    item.work_order_department,
+                )
+                for item in reports.order_by("id")
+            ],
+        )
+
     if kind == "inventory_ledger":
         txns = period.inventory_transactions.select_related("batch", "material")
         txns = _date_filter(request, txns, "txn_date", "txn_date")
@@ -3191,164 +3294,11 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "material_issue_ledger":
-        # 投料台账：格式/字段按用户上传文件原样，数据=本期全部投料记录；无上传时回退数据库明细
-        header, raw_rows, _ = _uploaded_ledger_rows(
-            period, ImportBatch.Kind.MATERIAL_ISSUE, period.material_issues.all()
-        )
-        # 单价 = 月末加权价（inventory_valuations）→ 历史单价（receipt_price）兜底，追加为最后一列
-        _mi_prices = {}
-        for _v in period.inventory_valuations.all():
-            _mi_prices.setdefault(_v.material_code, Decimal(_v.weighted_average_price or 0))
-        for _hp in period.historical_prices.all():
-            if _hp.receipt_price is not None:
-                _mi_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
-
-        def _mi_unit_price(_code):
-            _p = _mi_prices.get(_code or "")
-            return Decimal(_p).quantize(Decimal("0.0001")) if _p else None
-
-        if header:
-            _alias = {}
-            for _f, _names in ALIASES["material_issue"].items():
-                for _n in _names:
-                    _alias[normalize_header(_n)] = _f
-            _mat_idx = None
-            for _i, _h in enumerate(header):
-                if _alias.get(normalize_header(_h)) == "material_code":
-                    _mat_idx = _i
-                    break
-            _header2 = list(header) + ["单价"]
-            _rows2 = [
-                tuple(_row) + (
-                    _mi_unit_price(
-                        str(_row[_mat_idx]) if _mat_idx is not None and _row[_mat_idx] else ""
-                    ),
-                )
-                for _row in raw_rows
-            ]
-            sheets.append(("投料台账", _header2, _rows2))
-            return sheets
-        issues = period.material_issues.all()
-        issues = _text_filters(
-            request,
-            issues,
-            {
-                "order_no": "work_order_no",
-                "material": "material_code",
-            },
-        )
-        sheets.append(
-            (
-                "投料台账",
-                ["生产任务编号", "工序编号", "工序名称", "物料编码", "物料名称", "物料分类",
-                 "物料属性", "物料规格", "投料数量", "已撤回数量", "实际投料数量", "投料单位",
-                 "辅助数量", "辅助单位", "标识码", "批次号", "质量状态", "投料仓位",
-                 "被替代物料编码", "被替代物料名称", "投料时间", "投料人员", "执行人员",
-                 "工单编号", "主产出物料编码", "主产出物料名称", "销售订单编号", "投料记录编号", "单价"],
-                (
-                    (
-                        item.task_no,
-                        item.operation_no,
-                        item.operation_name,
-                        item.material_code,
-                        item.material_name,
-                        item.material_category,
-                        item.material_attribute,
-                        item.material_spec,
-                        item.issue_quantity,
-                        item.returned_quantity,
-                        item.actual_issue_quantity,
-                        item.issue_uom,
-                        item.auxiliary_quantity,
-                        item.auxiliary_uom,
-                        item.identifier,
-                        item.batch_no,
-                        item.quality_status,
-                        item.issue_location,
-                        item.replaced_material_code,
-                        item.replaced_material_name,
-                        item.issue_time,
-                        item.issuer,
-                        item.executor,
-                        item.work_order_no,
-                        item.main_output_code,
-                        item.main_output_name,
-                        item.sales_order_no,
-                        item.record_no,
-                        _mi_unit_price(item.material_code),
-                    )
-                    for item in issues.order_by("id")
-                ),
-            )
-        )
-
+        _h, _r = _mi_ledger_sheet()
+        sheets.append(("投料台账", _h, _r))
     elif kind == "work_report_ledger":
-        # 报工台账：格式/字段按用户上传文件原样，数据=本期全部报工记录；无上传时回退数据库明细
-        header, raw_rows, _ = _uploaded_ledger_rows(
-            period, ImportBatch.Kind.WORK_REPORT, period.work_reports.all()
-        )
-        if header:
-            sheets.append(("报工台账", header, raw_rows))
-            return sheets
-        reports = period.work_reports.all()
-        reports = _text_filters(
-            request,
-            reports,
-            {
-                "order_no": "work_order_no",
-                "material": "material_code",
-                "quality_status": "quality_status",
-            },
-        )
-        sheets.append(
-            (
-                "报工台账",
-                ["报工时间", "生产任务编号", "工序编号", "工序名称", "报工物料编码", "报工物料名称",
-                 "生产人员", "质量状态", "不良原因", "报工数量", "报工单位", "辅助数量", "辅助单位",
-                 "批次号", "标识码", "流转卡编号", "工时", "工时单位", "备注", "部门", "设备",
-                 "工单编号", "工单物料编码", "工单物料名称", "订单号", "纸管颜色", "纺纱班别",
-                 "含水率", "批号流水", "织布序号", "织布机台", "产出仓位", "工单部门"],
-                (
-                    (
-                        item.report_time,
-                        item.task_no,
-                        item.operation_no,
-                        item.operation_name,
-                        item.material_code,
-                        item.material_name,
-                        item.operator,
-                        item.quality_status,
-                        item.defect_reason,
-                        item.quantity,
-                        item.uom,
-                        item.auxiliary_quantity,
-                        item.auxiliary_uom,
-                        item.batch_no,
-                        item.identifier,
-                        item.route_card_no,
-                        item.work_hours,
-                        item.work_hours_uom,
-                        item.remark,
-                        item.department,
-                        item.equipment,
-                        item.work_order_no,
-                        item.work_order_material_code,
-                        item.work_order_material_name,
-                        item.order_no,
-                        item.paper_tube_color,
-                        item.spinning_shift,
-                        item.moisture_content,
-                        item.dye_batch_flow,
-                        item.weaving_sequence,
-                        item.weaving_machine,
-                        item.output_location,
-                        item.work_order_department,
-                    )
-                    for item in reports.order_by("id")
-                ),
-            )
-        )
-
+        _h, _r = _wr_ledger_sheet()
+        sheets.append(("报工台账", _h, _r))
     elif kind == "work_order":
         orders = period.work_orders.all()
         orders = _text_filters(
@@ -3391,101 +3341,89 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "order_material":
-        rows, _totals = build_material_issue_rows(
-            period,
-            order_no=request.GET.get("order_no", "").strip(),
-            workshop=request.GET.get("workshop", "").strip(),
-            material=request.GET.get("material", "").strip(),
-        )
-        sheets.append(
-            (
-                "工单投料",
-                ["工单编号", "车间", "物料编码", "物料名称", "规格", "单位",
-                 "实际投料数量", "单价", "投料金额"],
-                (
-                    (
-                        r["order_no"],
-                        WORKSHOP_LABELS.get(r["workshop"], r["workshop"]),
-                        r["material_code"],
-                        r["material_name"],
-                        r["specification"],
-                        r["uom"],
-                        r["issue_quantity"],
-                        r["unit_price"],
-                        r["amount"],
-                    )
-                    for r in rows
-                ),
-            )
-        )
-
+        # 工单投料：字段与上传模板一致（原样）+ 单价列（与投料台账相同口径）
+        _h, _r = _mi_ledger_sheet()
+        sheets.append(("工单投料", _h, _r))
     elif kind == "order_completion":
-        # 工单报工：报工数量、完工成本、报工入库
-        masters = {wo.order_no: wo for wo in period.work_orders.all()}
-        report_nos = set(
-            period.work_reports.exclude(work_order_no="").values_list(
-                "work_order_no", flat=True
-            )
+        # 工单报工：字段与上传模板一致（原样）+ 追加完工成本列（按工单关联结算结果）
+        header, raw_rows, _ = _uploaded_ledger_rows(
+            period, ImportBatch.Kind.WORK_REPORT, period.work_reports.all()
         )
-        all_nos = sorted(set(masters) | report_nos)
-        report_agg = {
-            row["work_order_no"]: row
-            for row in period.work_reports.exclude(work_order_no="")
-            .values("work_order_no")
-            .annotate(report_qty=Sum("quantity"))
+        _wr_results = {
+            item.work_order.order_no: item
+            for item in period.work_order_cost_results.select_related("work_order").all()
         }
-        receipt_agg = {}
-        for row in (
+        _wr_receipt = {}
+        for _row in (
             period.inventory_transactions.filter(business_type="报工")
             .values("document_no")
             .annotate(txn_qty=Sum("quantity"), txn_amount=Sum("amount"))
         ):
-            receipt_agg[row["document_no"]] = row
-        results = {
-            item.work_order.order_no: item
-            for item in period.work_order_cost_results.select_related(
-                "work_order"
-            ).all()
-        }
-        completion_rows = []
-        for order_no in all_nos:
-            wo = masters.get(order_no)
-            result = results.get(order_no)
-            report = report_agg.get(order_no)
-            receipt = receipt_agg.get(order_no)
-            product_code, product_name = _work_order_product(period, order_no)
-            completion_rows.append(
-                (
-                    order_no,
-                    WORKSHOP_LABELS.get(
-                        wo.production_dept_code if wo else "",
-                        wo.production_dept_code if wo else "",
-                    ),
-                    product_code,
-                    product_name,
-                    Decimal(wo.plan_quantity) if wo else Decimal("0"),
-                    Decimal(report["report_qty"]) if report else Decimal("0"),
-                    result.finished_cost if result else Decimal("0"),
-                    result.finished_unit_cost if result else Decimal("0"),
-                    result.wip_cost if result else Decimal("0"),
-                    result.total_cost if result else Decimal("0"),
-                    Decimal(receipt["txn_qty"]) if receipt else Decimal("0"),
-                    Decimal(receipt["txn_amount"])
-                    if receipt and receipt["txn_amount"] is not None
-                    else Decimal("0"),
-                    wo.status if wo else "",
-                )
+            _wr_receipt[_row["document_no"]] = _row
+
+        def _wr_extra(_ono):
+            _r = _wr_results.get(_ono)
+            _rc = _wr_receipt.get(_ono)
+            return (
+                _r.finished_cost if _r else None,
+                _r.finished_unit_cost if _r else None,
+                _r.wip_cost if _r else None,
+                _r.total_cost if _r else None,
+                _rc["txn_qty"] if _rc else None,
+                _rc["txn_amount"] if _rc and _rc["txn_amount"] is not None else None,
             )
+
+        if header:
+            _alias = {}
+            for _f, _names in ALIASES["work_report"].items():
+                for _n in _names:
+                    _alias[normalize_header(_n)] = _f
+            _wo_idx = None
+            for _i, _h in enumerate(header):
+                if _alias.get(normalize_header(_h)) == "work_order_no":
+                    _wo_idx = _i
+                    break
+            _header2 = list(header) + ["完工成本", "单位完工成本", "在产品成本", "总成本",
+                                       "报工入库数量", "报工入库金额"]
+            _rows2 = []
+            for _row in raw_rows:
+                _ono = str(_row[_wo_idx]) if _wo_idx is not None and _row[_wo_idx] else ""
+                _rows2.append(tuple(_row) + _wr_extra(_ono))
+            sheets.append(("工单报工", _header2, _rows2))
+            return sheets
+        reports = period.work_reports.all()
+        reports = _text_filters(
+            request,
+            reports,
+            {"order_no": "work_order_no", "material": "material_code",
+             "quality_status": "quality_status"},
+        )
         sheets.append(
             (
                 "工单报工",
-                ["工单编号", "车间", "产品编码", "产品名称", "计划数量", "报工数量",
-                 "完工成本", "单位完工成本", "在产品成本", "总成本",
-                 "报工入库数量", "报工入库金额", "状态"],
-                completion_rows,
+                ["报工时间", "生产任务编号", "工序编号", "工序名称", "报工物料编码", "报工物料名称",
+                 "生产人员", "质量状态", "不良原因", "报工数量", "报工单位", "辅助数量", "辅助单位",
+                 "批次号", "标识码", "流转卡编号", "工时", "工时单位", "备注", "部门", "设备",
+                 "工单编号", "工单物料编码", "工单物料名称", "订单号", "纸管颜色", "纺纱班别",
+                 "含水率", "批号流水", "织布序号", "织布机台", "产出仓位", "工单部门",
+                 "完工成本", "单位完工成本", "在产品成本", "总成本", "报工入库数量", "报工入库金额"],
+                [
+                    (
+                        item.report_time, item.task_no, item.operation_no, item.operation_name,
+                        item.material_code, item.material_name, item.operator, item.quality_status,
+                        item.defect_reason, item.quantity, item.uom, item.auxiliary_quantity,
+                        item.auxiliary_uom, item.batch_no, item.identifier, item.route_card_no,
+                        item.work_hours, item.work_hours_uom, item.remark, item.department,
+                        item.equipment, item.work_order_no, item.work_order_material_code,
+                        item.work_order_material_name, item.order_no, item.paper_tube_color,
+                        item.spinning_shift, item.moisture_content, item.dye_batch_flow,
+                        item.weaving_sequence, item.weaving_machine, item.output_location,
+                        item.work_order_department,
+                    ) + _wr_extra(item.work_order_no)
+                    for item in reports.order_by("id")
+                ],
             )
         )
-
     elif kind == "inventory_valuation":
         sheets.append(
             (
