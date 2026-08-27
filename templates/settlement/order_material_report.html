@@ -63,7 +63,6 @@
          {% if section.workshop == active_ws %}checked{% endif %}>
   <label class="ws-tab" for="ws-tab-{{ forloop.counter0 }}">{{ section.label }} <small>{{ section.rows|length }} 行</small></label>
   {% endfor %}
-</section>
 {% for section in sections %}
 <div class="ws-panel" data-panel="ws-tab-{{ forloop.counter0 }}">
   <section class="summary-strip">
@@ -189,6 +188,7 @@
   </section>
 </div>
 {% endfor %}
+</section>
 {% else %}
 <section class="section-card">
   <p class="empty-cell">没有符合条件的投料记录。</p>
