@@ -2053,12 +2053,16 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertTrue(uploaded.exists())
         self.assertEqual(uploaded.first().quantity, Decimal("100"))
-        # 系统不再自动生成期末行
-        self.assertFalse(
-            self.period.ending_inventory_balances.filter(
-                is_system_generated=True
-            ).exists()
+        # 系统自动生成期末行：无人工期末的物料按 期初+入库−出库 生成
+        sys_ending = self.period.ending_inventory_balances.filter(
+            is_system_generated=True
         )
+        self.assertTrue(sys_ending.exists())
+        # 上传了人工期末的 OP-RM 不被系统覆盖（以人工为准）
+        op_rm_manual = self.period.ending_inventory_balances.filter(
+            is_system_generated=False, material_code="OP-RM"
+        )
+        self.assertTrue(op_rm_manual.exists())
         # 勾稽期末用上传值；上传期末与系统计算不一致时，库存勾稽应反映该差异
         inv_check = self.period.reconciliations.get(
             check_code="inventory_amount"
@@ -2286,11 +2290,13 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         run = run_settlement(period)
         self.assertTrue(run.converged)
-        # 期末存货以用户上传报表为准：未上传期末时，系统不自动生成期末行
-        self.assertFalse(
-            EndingInventoryBalance.objects.filter(
-                period=period, is_system_generated=True
-            ).exists()
+        # 系统自动生成期末行（无人工期末的物料按 期初+入库−出库 生成）
+        sys_ending = EndingInventoryBalance.objects.filter(
+            period=period, is_system_generated=True
+        )
+        self.assertTrue(sys_ending.exists())
+        self.assertTrue(
+            sys_ending.filter(material_code="OP-RM").exists()
         )
         valuation = period.inventory_valuations.get(material_code="OP-RM")
         self.assertEqual(valuation.ending_quantity, Decimal("150"))

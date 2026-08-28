@@ -239,6 +239,9 @@ def _persist_valuations(period, summaries, iterations, converged):
     )
     # 期末存货以用户上传报表为准（数量不变），单价金额由系统按月末加权价回填
     _fill_ending_prices(period, summaries)
+    # 系统自动期末：对"无人工期末"的物料按 期初+入库−出库(FIFO批次) 生成
+    # （浆粕成品等未上传期末的物料由此自动算出期末数；有人工期末的物料以人工为准）
+    _persist_ending_by_batch(period, summaries)
 
 
 def _fill_ending_prices(period, summaries):
