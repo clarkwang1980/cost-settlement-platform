@@ -253,6 +253,9 @@ BOM_BACKFILL_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi")
 JIZHI_BACKFILL = ("JiZhi",)
 # 机织完工比例超产判定阈值（报工/计划 > 120% 视为异常，按需求数全额，不乘超额）
 JIZHI_OVERRUN_PCT = Decimal("120")
+# 机织重量法在产品：在产品kg = 期初数量kg + 投料kg − 报工米×米重×(1+损耗率)
+# 米重 = BOM 单耗之和（kg/米）；损耗率用户拍板 5%~10%，取中值 7.5%（可配置）
+JIZHI_WIP_LOSS_RATE = Decimal("0.075")
 
 
 def _backfill_material_by_bom(period, prices, amounts):
@@ -590,11 +593,26 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         and wo.order_no not in _jz_open_set
         and wo.order_no not in _jz_rov_set
     }
+    # 机织重量法在产品所需的映射：
+    # 米重(kg/米) = BOM 单耗之和（分子÷分母），缺失为 0（退回米数法）
+    jz_kg_per_m = defaultdict(Decimal)
+    for _ln in period.bom_lines.all():
+        _d = _ln.qty_denominator or Decimal("1")
+        if _d > ZERO:
+            jz_kg_per_m[_ln.work_order_no] += _ln.qty_numerator / _d
+    # 期初在产品数量（kg）——机织在产品重量法的起点
+    jz_opening_qty = {
+        item.order_no: Decimal(item.quantity or ZERO)
+        for item in period.opening_wip.all()
+    }
 
     def _wip_qty(wo_obj, finished_qty_val, plan_qty_val):
-        """纺纱车间在产品口径（用户规则）：
-        粗纱工单(BC-)/用粗纱工单 → 0（粗纱无在产品）；
-        不用粗纱工单 → max(投料kg-完工kg, 0)；
+        """在产品数量口径：
+        纺纱车间：粗纱工单(BC-)/用粗纱工单 → 0（粗纱无在产品）；
+                 不用粗纱工单 → max(投料kg-完工kg, 0)；
+        机织车间（重量法，用户定稿）：在产品kg = 期初数量kg + 投料kg − 报工米×米重×(1+损耗率)，
+                 折回米（wip_quantity 存折合米数，量纲与米数法一致）；
+                 米重缺失（BOM 无单耗）或无投料无期初 → 退回 max(计划-完工, 0) 兜底；
         其他车间 → max(计划-完工, 0)。
         """
         ws = wo_obj.production_dept_code
@@ -604,6 +622,17 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
                 return ZERO
             if issue_qty_by_order.get(order_no, ZERO) > ZERO:
                 return max(issue_qty_by_order[order_no] - finished_qty_val, ZERO)
+        if ws == "JiZhi":
+            kg_m = jz_kg_per_m.get(order_no, ZERO)
+            if kg_m > ZERO:
+                opening_kg = jz_opening_qty.get(order_no, ZERO)
+                issued_kg = issue_qty_by_order.get(order_no, ZERO)
+                consumed_kg = (
+                    finished_qty_val * kg_m * (Decimal("1") + JIZHI_WIP_LOSS_RATE)
+                )
+                wip_kg = max(opening_kg + issued_kg - consumed_kg, ZERO)
+                return wip_kg / kg_m
+            return max(plan_qty_val - finished_qty_val, ZERO)
         return max(plan_qty_val - finished_qty_val, ZERO)
 
     for wo in orders:
@@ -617,6 +646,11 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         plan_qty = Decimal(wo.plan_quantity or ZERO)
         ws = wo.production_dept_code
         wip_qty = _wip_qty(wo, finished_qty, plan_qty)
+        if ws == "JiZhi" and wo.order_no not in jizhi_backfill_orders:
+            # 机织重量法在产品 ≤ 米数法上限（max(计划-报工,0)）：
+            # 投料过剩/米重偏小时以计划为界，避免在产品超过计划
+            meter_wip = max(plan_qty - finished_qty, ZERO)
+            wip_qty = min(wip_qty, meter_wip)
         if wo.order_no in jizhi_backfill_orders:
             # 机织反推工单：无投料无期初，反推金额=本期完工材料成本，无在产品
             wip_qty = ZERO
