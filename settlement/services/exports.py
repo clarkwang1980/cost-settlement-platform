@@ -13,6 +13,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from settlement.models import MatchAllocation
+from settlement.services.imports import WORKSHOP_LABELS
 from settlement.services.matching import is_purchase_receipt, is_sales_issue
 from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
@@ -375,7 +376,7 @@ def build_settlement_workbook(period):
         (
             (
                 item.sequence,
-                item.workshop,
+                WORKSHOP_LABELS.get(item.workshop, item.workshop),
                 item.get_status_display(),
                 item.order_cost,
                 item.production_receipt_amount,

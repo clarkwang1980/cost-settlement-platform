@@ -45,7 +45,7 @@ from settlement.services.workorder_costing import (
     is_baogong_receipt,
     price_baogong_receipts,
 )
-from settlement.services.imports import WORKSHOP_ORDER
+from settlement.services.imports import WORKSHOP_ORDER, WORKSHOP_LABELS
 
 
 ZERO = Decimal("0")
@@ -883,7 +883,7 @@ def update_workshop_sequences(period: AccountingPeriod, sequence_by_id):
         try:
             value = int(sequence_by_id[item.id])
         except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"{item.workshop}的结转顺序无效。") from exc
+            raise ValueError(f"{WORKSHOP_LABELS.get(item.workshop, item.workshop)}的结转顺序无效。") from exc
         if value <= 0:
             raise ValueError("结转顺序必须是大于0的整数。")
         values.append(value)
@@ -1057,7 +1057,7 @@ def _settle_workshop_core(period, settlement, user=None):
     )
     if not converged:
         raise ValueError(
-            f"{settlement.workshop}完工入库成本在"
+            f"{WORKSHOP_LABELS.get(settlement.workshop, settlement.workshop)}完工入库成本在"
             f"{MAX_ITERATIONS}次循环后仍未收敛。"
         )
     return {
@@ -1176,7 +1176,7 @@ def settle_workshop(period, settlement_id, user=None):
                 id=settlement_id
             )
             if settlement.status == WorkshopSettlement.Status.SETTLED:
-                raise ValueError(f"{settlement.workshop}已经完成结转。")
+                raise ValueError(f"{WORKSHOP_LABELS.get(settlement.workshop, settlement.workshop)}已经完成结转。")
             predecessors = period.workshop_settlements.filter(
                 sequence__lt=settlement.sequence
             ).exclude(status=WorkshopSettlement.Status.SETTLED)

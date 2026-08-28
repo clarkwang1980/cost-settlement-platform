@@ -407,7 +407,8 @@ def settle_workshop_view(request, period_id, settlement_id):
             settlement_id,
             request.user,
         )
-        workshop = run.summary.get("workshop", "该车间")
+        workshop_code = run.summary.get("workshop", "")
+        workshop = WORKSHOP_LABELS.get(workshop_code, workshop_code or "该车间")
         messages.success(
             request,
             f"{workshop}结转完成，共循环{run.iterations}次。"
