@@ -32,7 +32,6 @@
       <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_flow' %}">浆粕流水</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末</a>
-      <a class="button small secondary" href="{% url 'download_template' 'pulp_receipt' %}">浆粕成品入库</a>
       <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水只传成品（生产入库/销售出库）；原料领料已在库存流水中，系统按备注月份自动归集。</div>
     </div>    </div>
     {% if carry.previous and carry.ready %}
