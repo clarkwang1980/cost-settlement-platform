@@ -30,7 +30,7 @@ MFG_FIELDS = ["water_power", "steam", "natural_gas", "dye_auxiliary",
 MFG_SUBJECT = {"water_power": "水电费", "steam": "蒸汽费", "natural_gas": "燃气费",
                "dye_auxiliary": "染料助剂费", "consumables": "机物料费",
                "depreciation": "折旧费"}
-BLOCKS = ["期初", "本期投入", "产成品成本", "在产品"]
+BLOCKS = ["期初成本", "本期投入", "产成品成本", "在产品成本"]
 
 DEFAULT_WORKSHOPS = ["RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi", "浆粕车间"]
 WORKSHOP_LABELS = {"RanZheng": "染色车间", "tefang": "纺纱车间", "BaoFu": "包覆车间",
@@ -130,7 +130,7 @@ def build_total_cost_data(period):
     # 期初
     for code in workshops:
         for s in SUBJECTS:
-            matrix["期初"][code][s] = opening[code].get(s, ZERO).quantize(
+            matrix["期初成本"][code][s] = opening[code].get(s, ZERO).quantize(
                 CENT, rounding=ROUND_HALF_UP)
 
     # 本期投入 = 结果 − 期初（未结算车间为 None）
@@ -156,16 +156,16 @@ def build_total_cost_data(period):
             CENT, rounding=ROUND_HALF_UP)
         matrix["产成品成本"][code]["人工费"] = fin_wage.quantize(
             CENT, rounding=ROUND_HALF_UP)
-        matrix["在产品"][code]["直接材料"] = wip_mat.quantize(
+        matrix["在产品成本"][code]["直接材料"] = wip_mat.quantize(
             CENT, rounding=ROUND_HALF_UP)
-        matrix["在产品"][code]["人工费"] = wip_wage.quantize(
+        matrix["在产品成本"][code]["人工费"] = wip_wage.quantize(
             CENT, rounding=ROUND_HALF_UP)
         mfg_total = sum(r[MFG_SUBJECT[f]] for f in MFG_FIELDS)
         if mfg_total > 0:
             ratios = {f: r[MFG_SUBJECT[f]] / mfg_total for f in MFG_FIELDS}
         else:
             ratios = {f: ZERO for f in MFG_FIELDS}
-        for block, total in (("产成品成本", fin_ovh), ("在产品", wip_ovh)):
+        for block, total in (("产成品成本", fin_ovh), ("在产品成本", wip_ovh)):
             assigned = ZERO
             for i, f in enumerate(MFG_FIELDS):
                 subj = MFG_SUBJECT[f]
@@ -212,8 +212,8 @@ def build_total_cost_data(period):
     imbalance = []
     for code in settled_codes:
         for s in SUBJECTS:
-            lhs = matrix["期初"][code][s] + matrix["本期投入"][code][s]
-            rhs = matrix["产成品成本"][code][s] + matrix["在产品"][code][s]
+            lhs = matrix["期初成本"][code][s] + matrix["本期投入"][code][s]
+            rhs = matrix["产成品成本"][code][s] + matrix["在产品成本"][code][s]
             if lhs != rhs:
                 balanced = False
                 imbalance.append((code, s, lhs, rhs))
