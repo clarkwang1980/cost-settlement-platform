@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from collections import defaultdict
 from decimal import Decimal
 
@@ -3941,7 +3941,7 @@ def _listing_rows(request, period, kind):
         from collections import defaultdict as _dd_mc
         from settlement.models import OpeningWip as _OpeningWipMC
 
-        _WS_SCOPE = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+        _WS_SCOPE = ("RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi")
         _reported_mc = set(
             period.work_reports.exclude(work_order_no="")
             .values_list("work_order_no", flat=True)
@@ -4235,7 +4235,7 @@ def _listing_rows(request, period, kind):
 
     elif kind == "deemed_finished":
         # ===== 视同完工清单：工单明细确认已完工 + 完工率达标 → 在产品清零，成本并入完工 =====
-        # 与核算逻辑一致：机织/浆粕不适用；判定 = ①明细实际完工时间非空或完成状态为已完工 ②完工率≥70%
+        # 与核算逻辑一致：浆粕不适用（机织已纳入视同完工）；判定 = ①明细实际完工时间非空或完成状态为已完工 ②完工率≥70%
         from settlement.services.workorder_costing import (
             MIN_FINISH_RATE_PCT,
             FINISHED_WORKORDER_STATUSES,

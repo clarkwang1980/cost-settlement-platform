@@ -582,6 +582,18 @@ class BomLine(models.Model):
     standard_price = models.DecimalField(
         max_digits=20, decimal_places=6, null=True, blank=True, verbose_name="标准成品单价"
     )
+    loss_rate = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        verbose_name="损耗率(%)", help_text="BOM 模板「损耗率(%)」列，如 5 表示 5%",
+    )
+    standard_qty = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True,
+        verbose_name="标准用量", help_text="子项用量（分子÷分母）",
+    )
+    required_qty = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True,
+        verbose_name="需求数", help_text="该工单该子项的 BOM 需求总量（千克）= 工单数量×标准用量×(1+损耗率)，用于无投料工单材料成本反推",
+    )
 
     class Meta:
         ordering = ["work_order_no", "line_no", "id"]

@@ -351,6 +351,9 @@ ALIASES["bom"] = {
     "uom": ["单位名称", "单位", "计量单位"],
     "unit_price": ["单价（子项物料的单价）", "单价子项物料的单价", "子项单价", "单价"],
     "standard_price": ["标准成品单价", "标准单价", "成品标准单价"],
+    "loss_rate": ["损耗率(%)", "损耗率", "损耗率%"],
+    "standard_qty": ["标准用量"],
+    "required_qty": ["需求数", "需求量", "BOM需求数", "需求数量"],
 }
 
 ALIASES["issue_progress"] = {
@@ -1264,6 +1267,9 @@ def _import_bom(batch, row):
         uom=text(row.get("uom")),
         unit_price=to_decimal(row.get("unit_price")),
         standard_price=to_decimal(row.get("standard_price")),
+        loss_rate=to_decimal(row.get("loss_rate")),
+        standard_qty=to_decimal(row.get("standard_qty")),
+        required_qty=to_decimal(row.get("required_qty")),
     )
 
 

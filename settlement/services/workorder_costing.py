@@ -60,10 +60,10 @@ WIP_CONVERSION_RATE = Decimal("0.5")
 # （避免"已结束工单在产品永远挂账结转"）
 # 完工时间口径与工单成本页「实际完工时间」列一致：工单明细实际完工时间 → 报工记录最大报工时间兜底；
 # 或完成状态为已完工（超时完成/按时完成/已完成）
-# （染色/纺纱/包覆/针织适用；机织、浆粕不适用）
+# （染色/纺纱/包覆/针织/机织适用；浆粕不适用）
 MIN_FINISH_RATE_PCT = Decimal("70")     # 完工率阈值（%）：完工÷计划×100
 FINISHED_WORKORDER_STATUSES = ("超时完成", "按时完成", "已完成")  # 工单明细中视为已完工的完成状态
-SMALL_ORDER_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+SMALL_ORDER_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi")
 
 
 def money(value) -> Decimal:
@@ -211,13 +211,15 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
     叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）；
     再对有报工、无投料、无期初、非粗纱链的工单按 BOM 单耗×报工数量 反推补投材料成本（仅计算层）。
 
-    单价统一口径（与页面/导出一致）：月末加权价优先 → 历史单价（receipt_price）兜底；
-    月末加权价缺失或为 0 时用历史单价，两者都没有则该物料金额 0。
+    单价统一口径（与页面/导出一致）：月末加权价优先 → 历史单价（入库价优先、出库价兜底）；
+    两者都没有则该物料金额 0。
     """
     prices = dict(prices)
     for _hp in period.historical_prices.all():
         if _hp.receipt_price is not None and not prices.get(_hp.material_code):
             prices[_hp.material_code] = Decimal(_hp.receipt_price)
+        elif _hp.issue_price is not None and not prices.get(_hp.material_code):
+            prices[_hp.material_code] = Decimal(_hp.issue_price)
     amounts = defaultdict(lambda: ZERO)
     issues = (
         period.material_issues.exclude(work_order_no="")
@@ -240,9 +242,16 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
     return {order_no: money(value) for order_no, value in amounts.items()}
 
 
-# 有报工、无投料、无期初在产品、非粗纱链的工单（染色/纺纱/包覆/针织）：
-# 材料成本按 BOM 单耗 × 报工数量 × 物料价 反推补投（仅计算层，不落库存/投料台账）
-BOM_BACKFILL_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi")
+# 有报工、无投料、无期初在产品、非粗纱链的工单（染色/纺纱/包覆/针织/机织）：
+# 材料成本按 BOM 反推补投（仅计算层，不落库存/投料台账）
+# - 染色/纺纱/包覆/针织：BOM 单耗 × 报工数量 × 物料价
+# - 机织：BOM 需求数 × 完工比例 × 物料价（完工比例 = min(报工/计划, 1)，超产封顶；
+#         需求数 = BOM模板"需求数"列，缺失时用 计划×单耗 现算，与 ERP 申请数量口径一致）
+BOM_BACKFILL_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi")
+# 机织用"需求数×完工比例"口径；其余车间维持"单耗×报工"
+JIZHI_BACKFILL = ("JiZhi",)
+# 机织完工比例超产判定阈值（报工/计划 > 120% 视为异常，按需求数全额，不乘超额）
+JIZHI_OVERRUN_PCT = Decimal("120")
 
 
 def _backfill_material_by_bom(period, prices, amounts):
@@ -290,29 +299,70 @@ def _backfill_material_by_bom(period, prices, amounts):
         "work_order_no", "quantity"
     ):
         finish_qty[row["work_order_no"]] += Decimal(row["quantity"] or ZERO)
+    # 计划数量（机织完工比例）
+    plan_qty = {
+        o.order_no: Decimal(o.plan_quantity or ZERO)
+        for o in period.work_orders.all()
+    }
     # BOM 行按工单分组
     bom_by_order = defaultdict(list)
     for line in period.bom_lines.filter(work_order_no__in=missing):
         bom_by_order[line.work_order_no].append(line)
-    # 历史单价兜底（月末加权价缺失时）
+    # 历史单价兜底（月末加权价缺失时）：入库价优先、出库价兜底
     hist_price = {}
     for hp in period.historical_prices.all():
         if hp.receipt_price is not None:
             hist_price[hp.material_code] = Decimal(hp.receipt_price)
+        elif hp.issue_price is not None:
+            hist_price[hp.material_code] = Decimal(hp.issue_price)
     for order_no in missing:
         qty = finish_qty.get(order_no, ZERO)
         if qty <= ZERO:
             continue
-        for line in bom_by_order.get(order_no, []):
-            sub_qty = Decimal(line.qty) * qty
-            if sub_qty <= ZERO:
-                continue
-            mat_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
-            if not mat_price:
-                mat_price = hist_price.get(line.sub_item_code, ZERO)
-            if not mat_price:
-                continue
-            amounts[order_no] += sub_qty * mat_price
+        ws = dept_map.get(order_no)
+        if ws in JIZHI_BACKFILL:
+            # 机织：BOM 需求数 × 完工比例
+            plan = plan_qty.get(order_no, ZERO)
+            if plan > ZERO:
+                ratio = qty / plan
+                if ratio > Decimal("1"):
+                    ratio = Decimal("1")  # 超产封顶（≤120% 按需求数全额，超 120% 也按全额并提示）
+                if qty > plan * JIZHI_OVERRUN_PCT / Decimal("100"):
+                    ratio = Decimal("1")
+            else:
+                ratio = Decimal("1")  # 计划缺失视为全完工（与系统口径一致）
+            for line in bom_by_order.get(order_no, []):
+                sub_qty = _jizhi_line_need(line, plan) * ratio
+                if sub_qty <= ZERO:
+                    continue
+                mat_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
+                if not mat_price:
+                    mat_price = hist_price.get(line.sub_item_code, ZERO)
+                if not mat_price:
+                    continue
+                amounts[order_no] += sub_qty * mat_price
+        else:
+            # 染色/纺纱/包覆/针织：BOM 单耗 × 报工数量（维持原口径）
+            for line in bom_by_order.get(order_no, []):
+                sub_qty = Decimal(line.qty) * qty
+                if sub_qty <= ZERO:
+                    continue
+                mat_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
+                if not mat_price:
+                    mat_price = hist_price.get(line.sub_item_code, ZERO)
+                if not mat_price:
+                    continue
+                amounts[order_no] += sub_qty * mat_price
+
+
+def _jizhi_line_need(line, plan_qty):
+    """机织 BOM 行的需求数：优先取模板"需求数"列；缺失时用 计划×单耗×(1+损耗率) 现算。"""
+    if line.required_qty is not None and line.required_qty > ZERO:
+        return Decimal(line.required_qty)
+    base = Decimal(line.qty) * (plan_qty if plan_qty > ZERO else Decimal("1"))
+    if line.loss_rate is not None and line.loss_rate > ZERO:
+        base = base * (Decimal("1") + Decimal(line.loss_rate) / Decimal("100"))
+    return base
 
 
 def _roving_output_code(period: AccountingPeriod, order_no: str) -> str:
