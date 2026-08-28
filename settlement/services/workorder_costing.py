@@ -79,11 +79,16 @@ def clamp_rate(value) -> Decimal:
     return min(max(value, ZERO), Decimal("1"))
 
 
+# 完工入库业务类型：报工（染色/纺纱等 ERP 习惯）+ 生产入库（浆粕等）
+# 两者都按工单完工成本计价、作为完工数量兜底
+FINISHED_RECEIPT_TYPES = ("报工", "生产入库")
+
+
 def is_baogong_receipt(txn: InventoryTransaction) -> bool:
-    """库存流水"报工"入库（完工入库），按工单完工成本计价。"""
+    """库存流水完工入库（报工/生产入库），按工单完工成本计价。"""
     return txn.direction == InventoryTransaction.Direction.IN and (
-        txn.business_type or ""
-    ).strip() == "报工"
+        (txn.business_type or "").strip() in FINISHED_RECEIPT_TYPES
+    )
 
 
 def resolve_workshop(period, order_no: str) -> str:
@@ -176,7 +181,7 @@ def _collect_work_orders(period: AccountingPeriod):
     )
     # 报工入库流水（浆粕/粗纱等中间品，单据号=工单号）
     receipt_nos = set(
-        period.inventory_transactions.filter(business_type="报工")
+        period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
         .exclude(document_no="")
         .values_list("document_no", flat=True)
     )
@@ -410,7 +415,7 @@ def build_roving_plan(period: AccountingPeriod, prices=None):
         .values_list("work_order_no", flat=True)
     )
     receipt_orders = set(
-        period.inventory_transactions.filter(business_type="报工")
+        period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
         .exclude(document_no="")
         .values_list("document_no", flat=True)
     )
@@ -487,7 +492,7 @@ def _finished_by_order(period: AccountingPeriod, roving_plan=None):
     # 兜底：无报工记录、但有"报工"入库流水的工单（浆粕/粗纱等中间品），
     # 完工数量 = 报工入库数量合计（按单据编号=工单号关联）
     receipt_totals = (
-        period.inventory_transactions.filter(business_type="报工")
+        period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
         .exclude(document_no="")
         .values("document_no")
         .annotate(total=Sum("quantity"))
@@ -817,7 +822,7 @@ def price_baogong_receipts(period: AccountingPeriod, workshops=None) -> Decimal:
         item.work_order.order_no: item
         for item in period.work_order_cost_results.select_related("work_order").all()
     }
-    txns = period.inventory_transactions.filter(business_type="报工")
+    txns = period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
     if workshops is not None:
         workshop_set = set(workshops)
         txns = [
@@ -844,7 +849,7 @@ def price_baogong_receipts(period: AccountingPeriod, workshops=None) -> Decimal:
 
 def clear_baogong_receipt_prices(period: AccountingPeriod, workshops=None):
     """重置时清空"报工"入库的计价。"""
-    txns = period.inventory_transactions.filter(business_type="报工")
+    txns = period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
     if workshops is not None:
         workshop_set = set(workshops)
         results = {

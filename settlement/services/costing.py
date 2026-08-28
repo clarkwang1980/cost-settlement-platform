@@ -40,6 +40,7 @@ from settlement.services.sales_uninvoiced import (
     summarize_sales_uninvoiced,
 )
 from settlement.services.workorder_costing import (
+    FINISHED_RECEIPT_TYPES,
     calculate_work_order_costs,
     clear_baogong_receipt_prices,
     is_baogong_receipt,
@@ -582,7 +583,7 @@ def _build_exceptions(period, converged):
             )
     # 报工入库未按完工成本计价
     for txn in period.inventory_transactions.filter(
-        business_type="报工"
+        business_type__in=FINISHED_RECEIPT_TYPES
     ).exclude(match_mode=MatchingMode.IGNORED):
         if txn.amount is None:
             _add_exception(
@@ -601,7 +602,7 @@ def _build_exceptions(period, converged):
     ):
         report_qty[row["work_order_no"]] = Decimal(row["total"] or ZERO)
     receipt_qty = defaultdict(lambda: ZERO)
-    for txn in period.inventory_transactions.filter(business_type="报工"):
+    for txn in period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES):
         receipt_qty[txn.document_no] += Decimal(txn.quantity or ZERO)
     for order_no, reported in report_qty.items():
         received = receipt_qty.get(order_no, ZERO)
@@ -759,7 +760,7 @@ def _build_reconciliations(period):
         (
             Decimal(txn.amount or ZERO)
             for txn in period.inventory_transactions.all()
-            if (txn.business_type or "").strip() == "报工"
+            if (txn.business_type or "").strip() in FINISHED_RECEIPT_TYPES
         ),
         ZERO,
     )
@@ -1028,7 +1029,7 @@ def _settle_workshop_core(period, settlement, user=None):
     )
     settlement.production_receipt_amount = money(
         period.inventory_transactions.filter(
-            business_type="报工",
+            business_type__in=FINISHED_RECEIPT_TYPES,
             document_no__in=[
                 item.work_order.order_no
                 for item in period.work_order_cost_results.select_related(
@@ -1105,7 +1106,7 @@ def _global_cost_finalize(period: AccountingPeriod):
         )
         settlement.production_receipt_amount = money(
             period.inventory_transactions.filter(
-                business_type="报工",
+                business_type__in=FINISHED_RECEIPT_TYPES,
                 document_no__in=[
                     item.work_order.order_no
                     for item in period.work_order_cost_results.select_related(

@@ -76,6 +76,7 @@ from settlement.services.purchase_accruals import (
     summarize_purchase_reversals,
 )
 from settlement.services.workorder_costing import (
+    FINISHED_RECEIPT_TYPES,
     build_product_resolver,
     build_work_order_cost_summary,
 )
@@ -162,7 +163,7 @@ def _inventory_match_category(txn):
     if is_sales_issue(txn):
         return "销售出库"
     business_type = (txn.business_type or "").strip()
-    if business_type == "报工":
+    if business_type in FINISHED_RECEIPT_TYPES:
         return "完工入库"
     if business_type in {"投料", "投料回撤", "投料撤回"}:
         return "生产投料"
@@ -811,7 +812,7 @@ def work_order_matches(request, period_id):
     }
     receipt_agg = {}
     for row in (
-        period.inventory_transactions.filter(business_type="报工")
+        period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
         .values("document_no")
         .annotate(
             txn_count=Count("id"),
@@ -1541,7 +1542,7 @@ def order_completion_report(request, period_id):
     }
     receipt_agg = {}
     for row in (
-        period.inventory_transactions.filter(business_type="报工")
+        period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
         .values("document_no")
         .annotate(txn_qty=Sum("quantity"), txn_amount=Sum("amount"))
     ):
@@ -3218,7 +3219,7 @@ def _listing_rows(request, period, kind):
         }
         receipt_agg = {}
         for row in (
-            period.inventory_transactions.filter(business_type="报工")
+            period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
             .values("document_no")
             .annotate(txn_qty=Sum("quantity"))
         ):
@@ -3275,7 +3276,7 @@ def _listing_rows(request, period, kind):
         # 各工单报工入库数量（"报工"入库流水合计，按单据号=工单号关联）
         receipt_agg = {
             row["document_no"]: row["total"]
-            for row in period.inventory_transactions.filter(business_type="报工")
+            for row in period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
             .exclude(document_no="")
             .values("document_no")
             .annotate(total=Sum("quantity"))
@@ -3449,7 +3450,7 @@ def _listing_rows(request, period, kind):
         }
         _wr_receipt = {}
         for _row in (
-            period.inventory_transactions.filter(business_type="报工")
+            period.inventory_transactions.filter(business_type__in=FINISHED_RECEIPT_TYPES)
             .values("document_no")
             .annotate(txn_qty=Sum("quantity"), txn_amount=Sum("amount"))
         ):
