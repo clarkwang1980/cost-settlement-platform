@@ -59,6 +59,18 @@ def build_total_cost_data(period):
     workshops = _workshop_order(period)
     ws_label = {code: WORKSHOP_LABELS.get(code, code) for code in workshops}
 
+    # 浆粕车间：走专门成本归集（pulp_costing），无 WorkOrderCostResult。
+    # 用归集结果填充：本期投入（材料=原料领料、制造费用=车间费用、人工=车间工资）与
+    # 产成品成本（= 本期投入，浆粕无在产品、全完工）。
+    PULP_WS = "浆粕车间"
+    pulp_data = None
+    if PULP_WS in workshops:
+        from settlement.services.pulp_costing import collect_pulp_costs
+        try:
+            pulp_data = collect_pulp_costs(period)
+        except Exception:
+            pulp_data = None
+
     # 工单主档：order_no -> 车间
     wo_dept = dict(period.work_orders.values_list("order_no", "production_dept_code"))
 
@@ -86,6 +98,29 @@ def build_total_cost_data(period):
         result[code]["wip_material"] += Decimal(r.wip_material or ZERO)
         result[code]["wip_wages"] += Decimal(r.wip_wages or ZERO)
         result[code]["wip_overhead"] += Decimal(r.wip_overhead or ZERO)
+
+    # 浆粕车间：把归集结果并入 result（材料/费用/工资科目 + finished 全量、wip=0）
+    if pulp_data and pulp_data.get("products"):
+        mfg_by_field = defaultdict(Decimal)
+        # 用车间费用表结构拆分制造费用科目
+        pool = period.workshop_cost_pools.filter(workshop=PULP_WS).first()
+        if pool:
+            for f in ("water_power", "steam", "natural_gas",
+                      "dye_auxiliary", "consumables", "depreciation"):
+                mfg_by_field[SUBJECTS[RESULT_COLS.index(f)]] = Decimal(getattr(pool, f) or ZERO)
+        mat_total = Decimal(pulp_data["material_fanglun"] + pulp_data["material_jinglun"])
+        wages_total = Decimal(pulp_data["wages_total"])
+        result[PULP_WS]["直接材料"] += mat_total
+        result[PULP_WS]["人工费"] += wages_total
+        for subj, v in mfg_by_field.items():
+            result[PULP_WS][subj] += v
+        finished_total = sum(
+            (Decimal(c["total"]) for c in pulp_data["products"].values()), ZERO
+        )
+        result[PULP_WS]["finished_material"] += mat_total
+        result[PULP_WS]["finished_wages"] += wages_total
+        result[PULP_WS]["finished_overhead"] += Decimal(pulp_data["mfg_total"])
+        # wip 为 0（浆粕全完工）
 
     settled_codes = set(result.keys())
     # 汇总数据 matrix[block][code][subject]
