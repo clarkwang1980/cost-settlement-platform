@@ -80,10 +80,6 @@ class ImportBatch(models.Model):
             "work_report",
             "报工记录",
         )
-        PULP_RECEIPT = (
-            "pulp_receipt",
-            "浆粕成品入库",
-        )
         PULP_OPENING = (
             "pulp_opening",
             "浆粕期初成品",

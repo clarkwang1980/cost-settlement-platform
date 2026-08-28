@@ -109,7 +109,6 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.WORK_ORDER: "生产工单.csv",
     ImportBatch.Kind.MATERIAL_ISSUE: "投料记录.csv",
     ImportBatch.Kind.WORK_REPORT: "报工记录.csv",
-ImportBatch.Kind.PULP_RECEIPT: "浆粕成品入库.xlsx",
         "pulp_opening": "浆粕期初成品.xlsx",
     "pulp_flow": "浆粕成品流水.xlsx",
     "pulp_ending": "浆粕期末成品.xlsx",
