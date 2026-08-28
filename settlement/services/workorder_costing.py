@@ -216,10 +216,11 @@ def _material_by_order(period: AccountingPeriod, prices: dict, roving_plan=None)
     """
     prices = dict(prices)
     for _hp in period.historical_prices.all():
-        if _hp.receipt_price is not None and not prices.get(_hp.material_code):
-            prices[_hp.material_code] = Decimal(_hp.receipt_price)
-        elif _hp.issue_price is not None and not prices.get(_hp.material_code):
+        # 投料=出库动作，历史单价兜底用出库单价优先、入库单价兜底
+        if _hp.issue_price is not None and not prices.get(_hp.material_code):
             prices[_hp.material_code] = Decimal(_hp.issue_price)
+        elif _hp.receipt_price is not None and not prices.get(_hp.material_code):
+            prices[_hp.material_code] = Decimal(_hp.receipt_price)
     amounts = defaultdict(lambda: ZERO)
     issues = (
         period.material_issues.exclude(work_order_no="")
@@ -308,13 +309,13 @@ def _backfill_material_by_bom(period, prices, amounts):
     bom_by_order = defaultdict(list)
     for line in period.bom_lines.filter(work_order_no__in=missing):
         bom_by_order[line.work_order_no].append(line)
-    # 历史单价兜底（月末加权价缺失时）：入库价优先、出库价兜底
+    # 历史单价兜底（月末加权价缺失时）：投料=出库动作，出库单价优先、入库单价兜底
     hist_price = {}
     for hp in period.historical_prices.all():
-        if hp.receipt_price is not None:
-            hist_price[hp.material_code] = Decimal(hp.receipt_price)
-        elif hp.issue_price is not None:
+        if hp.issue_price is not None:
             hist_price[hp.material_code] = Decimal(hp.issue_price)
+        elif hp.receipt_price is not None:
+            hist_price[hp.material_code] = Decimal(hp.receipt_price)
     for order_no in missing:
         qty = finish_qty.get(order_no, ZERO)
         if qty <= ZERO:

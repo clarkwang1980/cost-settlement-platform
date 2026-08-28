@@ -1373,7 +1373,9 @@ def build_material_issue_rows(period, order_no="", workshop="", material=""):
         for item in period.inventory_valuations.all()
     }
     for hp in period.historical_prices.all():
-        if hp.receipt_price is not None:
+        if hp.issue_price is not None:
+            prices.setdefault(hp.material_code, Decimal(hp.issue_price))
+        elif hp.receipt_price is not None:
             prices.setdefault(hp.material_code, Decimal(hp.receipt_price))
     wo_workshop = {
         wo.order_no: wo.production_dept_code for wo in period.work_orders.all()
@@ -1904,7 +1906,9 @@ def work_order_costs(request, period_id):
     for v in period.inventory_valuations.all():
         material_price.setdefault(v.material_code, Decimal(v.weighted_average_price or 0))
     for hp in period.historical_prices.all():
-        if hp.receipt_price is not None:
+        if hp.issue_price is not None:
+            material_price.setdefault(hp.material_code, Decimal(hp.issue_price))
+        elif hp.receipt_price is not None:
             material_price.setdefault(hp.material_code, Decimal(hp.receipt_price))
     # 工单投料数量聚合：(work_order_no, material_code) -> 实际投料数量
     issue_qty_by_pair = defaultdict(Decimal)
@@ -2653,7 +2657,9 @@ def _listing_rows(request, period, kind):
         for _v in period.inventory_valuations.all():
             _mi_prices.setdefault(_v.material_code, Decimal(_v.weighted_average_price or 0))
         for _hp in period.historical_prices.all():
-            if _hp.receipt_price is not None:
+            if _hp.issue_price is not None:
+                _mi_prices.setdefault(_hp.material_code, Decimal(_hp.issue_price))
+            elif _hp.receipt_price is not None:
                 _mi_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
 
         def _mi_unit_price(_code):
@@ -3624,7 +3630,9 @@ def _listing_rows(request, period, kind):
         for v in period.inventory_valuations.all():
             material_price.setdefault(v.material_code, Decimal(v.weighted_average_price or 0))
         for hp in period.historical_prices.all():
-            if hp.receipt_price is not None:
+            if hp.issue_price is not None:
+                material_price.setdefault(hp.material_code, Decimal(hp.issue_price))
+            elif hp.receipt_price is not None:
                 material_price.setdefault(hp.material_code, Decimal(hp.receipt_price))
         issue_qty_by_pair = defaultdict(Decimal)
         for row in period.material_issues.exclude(work_order_no="").exclude(material_code="").values(
@@ -4149,7 +4157,9 @@ def _listing_rows(request, period, kind):
             for _v in _InvValMC.objects.filter(period=period)
         }
         for _hp in _HistPriceMC.objects.filter(period=period):
-            if _hp.receipt_price is not None:
+            if _hp.issue_price is not None:
+                _mc_prices.setdefault(_hp.material_code, Decimal(_hp.issue_price))
+            elif _hp.receipt_price is not None:
                 _mc_prices.setdefault(_hp.material_code, Decimal(_hp.receipt_price))
 
         _backfill_rows = []
