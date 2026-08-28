@@ -2560,6 +2560,10 @@ LISTING_EXPORTS = {
     "workshop_cost": {"title": "车间费用"},
     "opening_inventory": {"title": "期初存货"},
     "ending_inventory": {"title": "期末存货"},
+    "bom": {"title": "BOM表"},
+    "pulp_opening": {"title": "浆粕期初成品"},
+    "pulp_flow": {"title": "浆粕成品流水"},
+    "pulp_ending": {"title": "浆粕期末成品"},
 }
 
 
@@ -4560,6 +4564,56 @@ def _listing_rows(request, period, kind):
             )
         )
 
+    elif kind == "bom":
+        bom_rows = period.bom_lines.all().order_by("work_order_no", "line_no", "id")
+        sheets.append(("BOM表",
+            ["工单编号", "物料编号", "物料名称", "项次", "子项物料编号", "子项物料名称",
+             "子项用量:分子", "子项用量:分母", "单位名称", "损耗率(%)", "标准用量", "需求数",
+             "单价", "标准成品单价"],
+            ((item.work_order_no, item.material_code, item.material_name, item.line_no,
+              item.sub_item_code, item.sub_item_name, item.qty_numerator, item.qty_denominator,
+              item.uom, item.loss_rate, item.standard_qty, item.required_qty,
+              item.unit_price, item.standard_price) for item in bom_rows)))
+
+    elif kind == "pulp_opening":
+        def _is_pulp(code, name):
+            return ("浆粕" in str(name or "")) or ("微纤" in str(name or "")) or str(code or "").upper().startswith("JP-")
+        pulp_items = [it for it in period.opening_inventory_balances.all()
+                      if _is_pulp(it.material_code, it.material_name)]
+        sheets.append(("浆粕期初成品",
+            ["期初日期", "物料号", "物料名称", "分类名称", "仓库名称", "批次号",
+             "结存数量", "单位名称", "单价", "金额", "来源"],
+            ((it.opening_date, it.material_code, it.material_name, it.category_name,
+              it.warehouse, it.batch_no, it.quantity, it.uom, it.unit_price, it.amount,
+              "系统自动承接" if it.is_system_generated else "人工上传/覆盖")
+             for it in pulp_items)))
+
+    elif kind == "pulp_flow":
+        def _is_pulp2(code, name):
+            return ("浆粕" in str(name or "")) or ("微纤" in str(name or "")) or str(code or "").upper().startswith("JP-")
+        flow_txns = [t for t in period.inventory_transactions.all()
+                     if (t.business_type or "").strip() in ("生产入库", "销售出库")
+                     and _is_pulp2(t.material_code, t.material_name)]
+        sheets.append(("浆粕成品流水",
+            ["创建时间", "物料编号", "物料名称", "分类名称", "物料规格",
+             "仓库名称", "批次号", "操作数量", "单位名称", "单价", "金额",
+             "业务类型", "车间", "方向"],
+            ((t.txn_date, t.material_code, t.material_name, t.category_name, t.specification,
+              t.warehouse, t.batch_no, t.quantity, t.uom, t.unit_price, t.amount,
+              t.business_type, t.workshop or "", t.direction) for t in flow_txns)))
+
+    elif kind == "pulp_ending":
+        def _is_pulp3(code, name):
+            return ("浆粕" in str(name or "")) or ("微纤" in str(name or "")) or str(code or "").upper().startswith("JP-")
+        pulp_end = [it for it in period.ending_inventory_balances.all()
+                    if _is_pulp3(it.material_code, it.material_name)]
+        sheets.append(("浆粕期末成品",
+            ["期末日期", "物料号", "物料名称", "分类名称", "仓库名称", "批次号",
+             "结存数量", "单位名称", "单价", "金额", "来源"],
+            ((it.ending_date, it.material_code, it.material_name, it.category_name,
+              it.warehouse, it.batch_no, it.quantity, it.uom, it.unit_price, it.amount,
+              "系统自动计算" if it.is_system_generated else "人工上传/覆盖")
+             for it in pulp_end)))
     return sheets
 
 
@@ -4611,6 +4665,12 @@ def export_center(request, period_id):
                  "desc": "本月发票核销产生的暂估价差（交总账处理）"},
                 {"kind": "purchase_reversal", "name": "发票暂估回冲明细",
                  "desc": "每张采购发票核销了哪笔入库/期初暂估：暂估金额、发票金额、价差、累计核销与剩余未到票"},
+                {"kind": "pulp_opening", "name": "浆粕期初成品",
+                 "desc": "浆粕车间成品期初结存（浆粕/微纤等成品）"},
+                {"kind": "pulp_flow", "name": "浆粕成品流水",
+                 "desc": "浆粕成品的库存流水（生产入库/销售出库）"},
+                {"kind": "pulp_ending", "name": "浆粕期末成品",
+                 "desc": "浆粕车间成品期末结存"}
             ],
         },
         {
@@ -4640,6 +4700,8 @@ def export_center(request, period_id):
                  "desc": "车间结转顺序、状态与成本结果"},
                 {"kind": "deemed_finished", "name": "视同完工清单（小工单）",
                  "desc": "工单明细确认已完工且完工率≥70% 视同完工：在产品清零、尾料按损耗并入完工成本，不再结转"},
+                {"kind": "bom", "name": "BOM表",
+                 "desc": "工单 BOM 明细（子项物料、用量分子/分母、损耗率、标准用量、需求数、单价）"}
             ],
         },
         {
