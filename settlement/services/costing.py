@@ -990,6 +990,67 @@ def _normalize_priced_production_flows(period: AccountingPeriod):
 def _settle_workshop_core(period, settlement, user=None):
     # 粗纱链处理已改为计算层（build_roving_plan 内置于 calculate_work_order_costs），
     # 不再自动生成任何库存流水/投料记录，原始数据保持干净。
+    # 浆粕车间：特殊车间（无工单/无投料/无报工），成本归集 = 原料领料(库存流水备注7月) + 车间费用，
+    # 按产量分摊到 4 种成品，回填生产入库单价（见 pulp_costing）
+    if settlement.workshop == "浆粕车间":
+        from settlement.services.pulp_costing import (
+            collect_pulp_costs,
+            price_pulp_receipts,
+        )
+        costs = collect_pulp_costs(period)
+        max_change = price_pulp_receipts(period)
+        converged = max_change <= CONVERGENCE_TOLERANCE
+        iteration = 1
+        for _ in range(2, 4):
+            max_change = price_pulp_receipts(period)
+            iteration += 1
+            if max_change <= CONVERGENCE_TOLERANCE:
+                break
+        settlement.status = (
+            WorkshopSettlement.Status.SETTLED
+            if converged
+            else WorkshopSettlement.Status.FAILED
+        )
+        settlement.iterations = iteration
+        settlement.converged = converged
+        settlement.settled_at = timezone.now()
+        settlement.settled_by = user
+        settlement.order_cost = money(sum(
+            (Decimal(c["total"]) for c in costs["products"].values()), ZERO
+        ))
+        settlement.production_receipt_amount = money(sum(
+            (
+                Decimal(t.amount or ZERO)
+                for t in period.inventory_transactions.filter(business_type="生产入库")
+                if (t.material_name or "") and (
+                    "浆粕" in t.material_name or "微纤" in t.material_name
+                    or str(t.material_code or "").upper().startswith("JP-")
+                )
+            ),
+            ZERO,
+        ))
+        settlement.error_message = (
+            "" if converged else f"{MAX_ITERATIONS}次循环后仍未收敛。"
+        )
+        settlement.save(
+            update_fields=[
+                "status",
+                "iterations",
+                "converged",
+                "settled_at",
+                "settled_by",
+                "order_cost",
+                "production_receipt_amount",
+                "error_message",
+            ]
+        )
+        return {
+            "iterations": iteration,
+            "converged": converged,
+            "workshop": settlement.workshop,
+            "summary": {"workshop": settlement.workshop, "all_settled": False},
+        }
+
     previous_prices = {}
     summaries = {}
     converged = False
