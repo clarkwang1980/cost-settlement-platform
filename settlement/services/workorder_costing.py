@@ -558,6 +558,37 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         .exclude(work_order_no="")
         .values_list("work_order_no", flat=True)
     )
+    # 机织反推工单（无投料、无期初、非粗纱链、有报工）：
+    # 材料成本 = BOM需求数 × 完工比例 × 单价，该金额即为本期完工材料成本，
+    # 无投料/无期初无"投入"台账依据，不确认在产品 → 在产品=0、材料全部进完工
+    # （避免"反推金额×完工比例 后再按数量比例拆一次"造成完工材料二次打折）
+    _jz_issue_set = set(
+        period.material_issues.exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    _jz_open_set = set(
+        period.opening_wip.exclude(material=ZERO)
+        .values_list("order_no", flat=True)
+    )
+    _jz_rov_set = set(roving_orders)
+    _jz_rov_set |= set(
+        period.issue_progress.filter(material_code__startswith="BC-")
+        .exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    _jz_report_set = set(
+        period.work_reports.exclude(work_order_no="")
+        .values_list("work_order_no", flat=True)
+    )
+    jizhi_backfill_orders = {
+        wo.order_no
+        for wo in orders
+        if wo.production_dept_code == "JiZhi"
+        and wo.order_no in _jz_report_set
+        and wo.order_no not in _jz_issue_set
+        and wo.order_no not in _jz_open_set
+        and wo.order_no not in _jz_rov_set
+    }
 
     def _wip_qty(wo_obj, finished_qty_val, plan_qty_val):
         """纺纱车间在产品口径（用户规则）：
@@ -585,6 +616,9 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
         plan_qty = Decimal(wo.plan_quantity or ZERO)
         ws = wo.production_dept_code
         wip_qty = _wip_qty(wo, finished_qty, plan_qty)
+        if wo.order_no in jizhi_backfill_orders:
+            # 机织反推工单：无投料无期初，反推金额=本期完工材料成本，无在产品
+            wip_qty = ZERO
         # 视同完工：① 工单有完工时间（工单明细实际完工时间，或报工记录最大报工时间兜底，与页面口径一致）
         #          ② 完成状态为已完工（超时完成/按时完成/已完成）；完工率达标 → 尾料按损耗处理，
         #             在产品清零、成本并入完工（避免"已结束工单在产品永远挂账结转"）
