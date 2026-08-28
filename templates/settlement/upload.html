@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+ï»¿{% extends "base.html" %}
 {% load workshop_tags %}
 {% block title %}资料导入 · {{ period }}{% endblock %}
 {% block content %}
@@ -27,7 +27,14 @@
       {% for kind, label in template_kinds %}
         <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
       {% endfor %}
-    </div>
+    <div class="template-links" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #dde3ea;">
+      <div class="eyebrow" style="margin-bottom:0.35rem;">浆粕车间模板</div>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_flow' %}">浆粕流水</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_receipt' %}">浆粕成品入库</a>
+      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水只传成品（生产入库/销售出库）；原料领料已在库存流水中，系统按备注月份自动归集。</div>
+    </div>    </div>
     {% if carry.previous and carry.ready %}
       <div class="lock-banner">
         {{ carry.previous }}已锁账：本期无需重复上传期初库存和期初在产品，系统结算时自动承接；期初采购暂估和期初发出商品也不再重复上传，由历史明细继续滚动核销。人工期初仅用于覆盖同物料或同工单的自动数。
