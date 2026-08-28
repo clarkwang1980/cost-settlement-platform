@@ -22,7 +22,7 @@
   </section>
   <aside class="section-card guidance">
     <p class="eyebrow">UPLOAD CHECKLIST</p>
-    <h2>下载十九类导入模板</h2>
+    <h2>下载导入模板（共 {{ template_kinds|length }} 类）</h2>
     <div class="template-links">
       {% for kind, label in template_kinds %}
         <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
@@ -30,8 +30,8 @@
     <div class="template-links" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #dde3ea;">
       <div class="eyebrow" style="margin-bottom:0.35rem;">浆粕车间模板</div>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
-      <a class="button small secondary" href="{% url 'download_template' 'pulp_flow' %}">浆粕流水</a>
-      <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_flow' %}">浆粕成品流水</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末成品</a>
       <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水只传成品（生产入库/销售出库）；原料领料已在库存流水中，系统按备注月份自动归集。</div>
     </div>    </div>
     {% if carry.previous and carry.ready %}

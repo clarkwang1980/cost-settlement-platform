@@ -84,6 +84,18 @@ class ImportBatch(models.Model):
             "pulp_receipt",
             "浆粕成品入库",
         )
+        PULP_OPENING = (
+            "pulp_opening",
+            "浆粕期初成品",
+        )
+        PULP_FLOW = (
+            "pulp_flow",
+            "浆粕成品流水",
+        )
+        PULP_ENDING = (
+            "pulp_ending",
+            "浆粕期末成品",
+        )
         BOM = (
             "bom",
             "BOM表",

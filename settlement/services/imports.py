@@ -338,6 +338,10 @@ ALIASES = {
 
 # 浆粕成品入库：与库存出入库流水同一套表头别名与必填校验
 ALIASES["pulp_receipt"] = ALIASES["inventory"]
+# 浆粕专用资料类型：期初成品=期初存货格式，成品流水=库存流水格式，期末成品=期末存货格式
+ALIASES["pulp_opening"] = ALIASES["opening_inventory"]
+ALIASES["pulp_flow"] = ALIASES["inventory"]
+ALIASES["pulp_ending"] = ALIASES["ending_inventory"]
 
 ALIASES["bom"] = {
     "work_order_no": ["工单编号", "工单号"],
@@ -402,6 +406,9 @@ ALIASES["work_order_detail"] = {
 REQUIRED_FIELDS = {
     "inventory": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_receipt": {"txn_date", "business_type", "material_code", "quantity"},
+    "pulp_opening": {"material_code", "quantity"},
+    "pulp_flow": {"txn_date", "business_type", "material_code", "quantity"},
+    "pulp_ending": {"material_code", "quantity"},
     "bom": {"work_order_no", "sub_item_code"},
     "issue_progress": {"work_order_no", "material_code"},
     "historical_price": {"period", "material_code"},
@@ -893,6 +900,9 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.MATERIAL_ISSUE: _import_material_issue,
         ImportBatch.Kind.WORK_REPORT: _import_work_report,
         ImportBatch.Kind.PULP_RECEIPT: _import_inventory,
+        ImportBatch.Kind.PULP_OPENING: _import_opening_inventory,
+        ImportBatch.Kind.PULP_FLOW: _import_inventory,
+        ImportBatch.Kind.PULP_ENDING: _import_ending_inventory,
         ImportBatch.Kind.BOM: _import_bom,
         ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
         ImportBatch.Kind.HISTORICAL_PRICE: _import_historical_price,
