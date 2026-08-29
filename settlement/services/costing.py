@@ -75,6 +75,17 @@ def is_opening_transaction(txn: InventoryTransaction) -> bool:
     return "期初" in txn.business_type
 
 
+INTERNAL_TRANSFER_TYPES = ("调拨", "库存调整", "库存转换", "报工调整")
+
+
+def is_internal_transfer(txn: InventoryTransaction) -> bool:
+    """内部流转（仓库间移动/调整）：不构成真实的库存增减，不计入库存金额勾稽。
+    与导入时忽略匹配的内部流转类型保持一致（调拨、库存调整、库存转换、报工调整）。"""
+    bt = txn.business_type or ""
+    return any(token in bt for token in INTERNAL_TRANSFER_TYPES)
+
+
+
 def _fixed_receipt_amount(txn: InventoryTransaction) -> bool:
     if is_opening_transaction(txn):
         return True
@@ -648,7 +659,7 @@ def _build_reconciliations(period):
             for txn in period.inventory_transactions.filter(
                 direction=InventoryTransaction.Direction.IN
             )
-            if not is_opening_transaction(txn)
+            if not is_opening_transaction(txn) and not is_internal_transfer(txn)
         ),
         ZERO,
     )
@@ -658,6 +669,7 @@ def _build_reconciliations(period):
             for txn in period.inventory_transactions.filter(
                 direction=InventoryTransaction.Direction.OUT
             )
+            if not is_internal_transfer(txn)
         ),
         ZERO,
     )
