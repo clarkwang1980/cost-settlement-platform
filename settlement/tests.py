@@ -28,6 +28,7 @@ from settlement.models import (
     OpeningWip,
     PurchaseContractLine,
     PurchaseInvoiceLine,
+    PulpMaterial,
     ReconciliationResult,
     SalesInvoiceLine,
     WorkOrder,
@@ -52,6 +53,7 @@ from settlement.services.purchase_accruals import (
 from settlement.services.workorder_costing import (
     build_work_order_cost_summary,
 )
+from settlement.services.pulp_costing import collect_pulp_costs
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
     build_sales_uninvoiced_rows,
@@ -1911,7 +1913,7 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
         self.assertEqual(upload_page.status_code, 200)
         self.assertContains(upload_page, "上传前必须注意")
-        self.assertContains(upload_page, "十七类资料字段说明")
+        self.assertContains(upload_page, "十八类资料字段说明")
         self.assertContains(upload_page, "“替换”会删除本月整类资料")
         self.assertContains(upload_page, "同车间费用必须先汇总")
         self.assertContains(upload_page, "销售订单号、客户和产品一致")
@@ -2570,3 +2572,81 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                         uploaded_file=uploaded,
                         user=self.user,
                     )
+
+
+class PulpMaterialImportTests(TestCase):
+    """浆粕原料流水：上传即材料成本来源；未上传时浆粕车间不能结转。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="pulp-user", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+
+    def _import_csv(self, content):
+        uploaded = SimpleUploadedFile("pulp_material.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.PULP_MATERIAL,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        return batch
+
+    def test_import_and_material_allocation(self):
+        content = (
+            "日期,单据号,物料编码,物料名称,数量,单价,金额,备注\n"
+            "2026-07-31,OUT-1,R82.101,对位芳纶回收料-乱丝,1000,20,20000,浆粕车间7月领用\n"
+            "2026-07-31,OUT-2,R82.101,对位芳纶回收料-乱丝,500,20,,浆粕车间7月领用\n"
+            "2026-07-31,OUT-3,R84.101,国产聚丙烯腈丝束,2000,10.5,21000,浆粕车间7月领用\n"
+            "2026-07-31,OUT-X,示例-R99,示例物料,1,1,1,示例行\n"
+        ).encode("utf-8-sig")
+        batch = self._import_csv(content)
+        self.assertEqual(batch.row_count, 3)
+        mats = list(self.period.pulp_materials.all())
+        self.assertEqual(len(mats), 3)
+        # 金额缺省时按 数量×单价 计算：500×20=10000
+        self.assertEqual(mats[1].amount, Decimal("10000"))
+
+        WorkshopCostPool.objects.create(
+            period=self.period, batch=batch, workshop="浆粕车间",
+            water_power=1000, wages=2000,
+        )
+        for code, name, qty in [
+            ("21.03", "21.03 芳纶浆粕 DFP-103", 2000),
+            ("23.06", "23.06 腈纶浆粕 JLP-505", 3000),
+        ]:
+            InventoryTransaction.objects.create(
+                period=self.period, batch=batch, material_code=code,
+                material_name=name, business_type="生产入库",
+                txn_date=date(2026, 7, 31),
+                direction=InventoryTransaction.Direction.IN, quantity=qty,
+                unit_price=0, amount=0,
+            )
+        costs = collect_pulp_costs(self.period)
+        self.assertEqual(costs["material_fanglun"], Decimal("30000"))
+        self.assertEqual(costs["material_jinglun"], Decimal("21000"))
+        # 芳纶成品 21.03 得芳纶材料全额；腈纶成品 23.06 得腈纶材料全额
+        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("30000"))
+        self.assertEqual(costs["products"]["23.06"]["material"], Decimal("21000"))
+        # 费用按产量分摊：21.03 占 2000/5000，工资同理
+        self.assertEqual(costs["products"]["21.03"]["fee"], Decimal("400"))
+        self.assertEqual(costs["products"]["23.06"]["fee"], Decimal("600"))
+        self.assertEqual(costs["products"]["21.03"]["wages"], Decimal("800"))
+        self.assertEqual(costs["products"]["23.06"]["wages"], Decimal("1200"))
+
+    def test_missing_upload_blocks_settlement(self):
+        with self.assertRaises(ValueError):
+            collect_pulp_costs(self.period)
+
+    def test_unclassifiable_row_raises(self):
+        content = (
+            "日期,单据号,物料编码,物料名称,数量,单价,金额,备注\n"
+            "2026-07-31,OUT-9,R99.999,未知物料,100,1,100,\n"
+        ).encode("utf-8-sig")
+        self._import_csv(content)
+        with self.assertRaises(ValueError):
+            collect_pulp_costs(self.period)

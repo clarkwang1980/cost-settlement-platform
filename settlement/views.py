@@ -112,6 +112,7 @@ TEMPLATE_FILES = {
         "pulp_opening": "浆粕期初成品.xlsx",
     "pulp_flow": "浆粕成品流水.xlsx",
     "pulp_ending": "浆粕期末成品.xlsx",
+    "pulp_material": "浆粕原料流水.xlsx",
     ImportBatch.Kind.BOM: "BOM表.xlsx",
     ImportBatch.Kind.ISSUE_PROGRESS: "投料进度表.xlsx",
     ImportBatch.Kind.HISTORICAL_PRICE: "历史单价.csv",
@@ -2564,6 +2565,7 @@ LISTING_EXPORTS = {
     "pulp_opening": {"title": "浆粕期初成品"},
     "pulp_flow": {"title": "浆粕成品流水"},
     "pulp_ending": {"title": "浆粕期末成品"},
+    "pulp_material": {"title": "浆粕原料流水"},
 }
 
 
@@ -4614,6 +4616,13 @@ def _listing_rows(request, period, kind):
               it.warehouse, it.batch_no, it.quantity, it.uom, it.unit_price, it.amount,
               "系统自动计算" if it.is_system_generated else "人工上传/覆盖")
              for it in pulp_end)))
+
+    elif kind == "pulp_material":
+        mats = period.pulp_materials.all().order_by("id")
+        sheets.append(("浆粕原料流水",
+            ["日期", "单据号", "物料编码", "物料名称", "数量", "单价", "金额", "备注"],
+            ((m.txn_date, m.document_no, m.material_code, m.material_name,
+              m.quantity, m.unit_price, m.amount, m.remark) for m in mats)))
     return sheets
 
 
@@ -4670,7 +4679,9 @@ def export_center(request, period_id):
                 {"kind": "pulp_flow", "name": "浆粕成品流水",
                  "desc": "浆粕成品的库存流水（生产入库/销售出库）"},
                 {"kind": "pulp_ending", "name": "浆粕期末成品",
-                 "desc": "浆粕车间成品期末结存"}
+                 "desc": "浆粕车间成品期末结存"},
+                {"kind": "pulp_material", "name": "浆粕原料流水",
+                 "desc": "浆粕车间原料领料流水（材料成本计算来源，用户上传）"}
             ],
         },
         {

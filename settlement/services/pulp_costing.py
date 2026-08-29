@@ -2,11 +2,11 @@
 """浆粕车间成本归集（用户 2026-08-28 定稿口径）。
 
 浆粕是特殊车间：无生产工单（PULP202607 占位）、无投料记录、无报工。
-成本归集 = 原料领料(库存流水"领料出库"按备注"7月") + 车间费用，按产量分摊到 4 种成品，
+成本归集 = 原料领料(用户上传"浆粕原料流水") + 车间费用，按产量分摊到 4 种成品，
 并回填"生产入库"流水单价（完工成本）。
 
 口径：
-- 原料识别：库存流水 领料出库 且 备注含"7月"，且 物料名非"缝纫线"（缝纫线不是浆粕原料）
+- 原料识别：用户上传的「浆粕原料流水」（材料成本计算来源，未上传不能结转）
   - 名称含"芳纶" → 芳纶类原料
   - 名称含"腈"   → 腈纶类原料
 - 成品识别：物料名含"浆粕"或"微纤"，或 JP- 系列（与导出中心一致）
@@ -38,18 +38,6 @@ FEE_FIELDS = (
 )
 
 
-def is_pulp_issue(txn) -> bool:
-    """浆粕原料领料：领料出库 + 备注含本月('7月') + 非缝纫线。"""
-    if (txn.direction != InventoryTransaction.Direction.OUT or
-            (txn.business_type or "").strip() != "领料出库"):
-        return False
-    remark = txn.remark or ""
-    if "7月" not in remark:
-        return False
-    name = txn.material_name or ""
-    if "缝纫线" in name:
-        return False  # 缝纫线不是浆粕原料
-    return True
 
 
 def _is_pulp_product(code, name) -> bool:
@@ -68,21 +56,28 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
     """浆粕成本归集，返回 {"products": {成品编码: {"name","output","material","fee","wages","total","unit"}},
                                   "material_fanglun": 金额, "material_jinglun": 金额, "fee_total": 金额,
                                   "output_total": 产量合计}"""
-    # ---- 1) 原料领料（15 条：备注7月 + 非缝纫线）----
+    # ---- 1) 原料领料（用户上传的浆粕原料流水，材料成本计算来源）----
     mat_fanglun = ZERO   # 芳纶类原料金额
     mat_jinglun = ZERO   # 腈纶类原料金额
     issue_detail = []
-    for t in period.inventory_transactions.all():
-        if not is_pulp_issue(t):
-            continue
-        amt = Decimal(t.amount or ZERO)
-        name = t.material_name or ""
-        issue_detail.append((t.document_no, t.material_code, name, t.quantity, amt))
+    uploaded = list(period.pulp_materials.all().order_by("id"))
+    if not uploaded:
+        raise ValueError(
+            "未上传浆粕原料流水：请先在「资料导入」页上传当月浆粕原料流水，再结转浆粕车间。"
+        )
+    for m in uploaded:
+        amt = Decimal(m.amount or ZERO)
+        name = m.material_name or ""
         if _is_fanglun(name):
             mat_fanglun += amt
         elif _is_jinglun(name):
             mat_jinglun += amt
-        # 其它归类不到的不计（理论上不出现）
+        else:
+            raise ValueError(
+                f"浆粕原料流水第{m.id}行（{m.material_code} {name}）无法归类："
+                "物料名称须含「芳纶」或「腈」，请修正文件后重新上传。"
+            )
+        issue_detail.append((m.document_no, m.material_code, name, m.quantity, amt))
 
     # ---- 2) 成品与产量（生产入库数量）----
     products = {}  # code -> {"name", "category", "output"}

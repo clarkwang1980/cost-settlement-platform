@@ -32,6 +32,7 @@ from settlement.models import (
     OpeningWip,
     PurchaseContractLine,
     PurchaseInvoiceLine,
+    PulpMaterial,
     ReconciliationResult,
     SalesInvoiceLine,
     SettlementRun,
@@ -340,6 +341,16 @@ ALIASES = {
 ALIASES["pulp_opening"] = ALIASES["opening_inventory"]
 ALIASES["pulp_flow"] = ALIASES["inventory"]
 ALIASES["pulp_ending"] = ALIASES["ending_inventory"]
+ALIASES["pulp_material"] = {
+    "txn_date": ["日期", "领料日期", "创建时间"],
+    "document_no": ["单据号", "业务单据编号", "单据编号"],
+    "material_code": ["物料编码", "物料编号", "物料代码", "编码"],
+    "material_name": ["物料名称", "品名"],
+    "quantity": ["数量", "数量(kg)", "领料数量", "操作数量"],
+    "unit_price": ["单价", "出库单价", "单价(元/kg)"],
+    "amount": ["金额", "金额(元)"],
+    "remark": ["备注", "摘要"],
+}
 
 ALIASES["bom"] = {
     "work_order_no": ["工单编号", "工单号"],
@@ -406,6 +417,7 @@ REQUIRED_FIELDS = {
     "pulp_opening": {"material_code", "quantity"},
     "pulp_flow": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_ending": {"material_code", "quantity"},
+    "pulp_material": {"material_code", "quantity"},
     "bom": {"work_order_no", "sub_item_code"},
     "issue_progress": {"work_order_no", "material_code"},
     "historical_price": {"period", "material_code"},
@@ -899,6 +911,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.PULP_OPENING: _import_opening_inventory,
         ImportBatch.Kind.PULP_FLOW: _import_inventory,
         ImportBatch.Kind.PULP_ENDING: _import_ending_inventory,
+        ImportBatch.Kind.PULP_MATERIAL: _import_pulp_material,
         ImportBatch.Kind.BOM: _import_bom,
         ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
         ImportBatch.Kind.HISTORICAL_PRICE: _import_historical_price,
@@ -1659,3 +1672,33 @@ def _import_ending_inventory(batch, row):
         item.batch = batch
         item.is_system_generated = False
         item.save()
+
+
+def _import_pulp_material(batch, row):
+    """浆粕原料流水：材料成本计算来源。金额缺省时按 数量×单价 计算；两者皆无则报错。"""
+    material_code = text(row.get("material_code"))
+    material_name = text(row.get("material_name"))
+    if material_code.startswith("示例") or material_name.startswith("示例"):
+        return "skipped"
+    quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
+    unit_price = to_decimal(row.get("unit_price"))
+    amount = to_decimal(row.get("amount"))
+    if amount is None and unit_price is not None:
+        amount = (quantity * unit_price).quantize(Decimal("0.01"))
+    if amount is None:
+        raise ValueError(
+            f"第{row.get('_row_number', '?')}行缺少金额，且没有单价可计算"
+            f"（物料编码={material_code or '空'}）。"
+        )
+    PulpMaterial.objects.create(
+        period=batch.period,
+        batch=batch,
+        txn_date=to_date(row.get("txn_date")),
+        document_no=text(row.get("document_no")),
+        material_code=material_code,
+        material_name=material_name,
+        quantity=quantity,
+        unit_price=unit_price,
+        amount=amount,
+        remark=text(row.get("remark")),
+    )

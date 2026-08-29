@@ -46,6 +46,7 @@ for model in (
     models.Material,
     models.PurchaseContractLine,
     models.PurchaseInvoiceLine,
+    models.PulpMaterial,
     models.SalesInvoiceLine,
     models.WorkshopCostPool,
     models.WorkshopSettlement,

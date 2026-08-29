@@ -92,6 +92,10 @@ class ImportBatch(models.Model):
             "pulp_ending",
             "浆粕期末成品",
         )
+        PULP_MATERIAL = (
+            "pulp_material",
+            "浆粕原料流水",
+        )
         BOM = (
             "bom",
             "BOM表",
@@ -1303,3 +1307,44 @@ class ExceptionItem(models.Model):
 
     class Meta:
         ordering = ["severity", "category", "id"]
+
+
+class PulpMaterial(models.Model):
+    """浆粕车间原料领料流水：材料成本计算来源（用户上传）。"""
+
+    period = models.ForeignKey(
+        AccountingPeriod,
+        on_delete=models.CASCADE,
+        related_name="pulp_materials",
+    )
+    batch = models.ForeignKey(
+        ImportBatch,
+        on_delete=models.CASCADE,
+        related_name="pulp_materials",
+    )
+    txn_date = models.DateField(null=True, blank=True, verbose_name="日期")
+    document_no = models.CharField(max_length=80, blank=True, verbose_name="单据号")
+    material_code = models.CharField(max_length=80, verbose_name="物料编码")
+    material_name = models.CharField(max_length=255, blank=True, verbose_name="物料名称")
+    quantity = models.DecimalField(
+        max_digits=20, decimal_places=4, default=ZERO, verbose_name="数量"
+    )
+    unit_price = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="单价",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="金额"
+    )
+    remark = models.CharField(max_length=255, blank=True, verbose_name="备注")
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name = "浆粕原料流水"
+        verbose_name_plural = "浆粕原料流水"
+
+    def __str__(self):
+        return f"{self.period} {self.material_code} {self.material_name}"
