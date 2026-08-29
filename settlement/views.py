@@ -4599,10 +4599,10 @@ def _listing_rows(request, period, kind):
         sheets.append(("浆粕成品流水",
             ["创建时间", "物料编号", "物料名称", "分类名称", "物料规格",
              "仓库名称", "批次号", "操作数量", "单位名称", "单价", "金额",
-             "业务类型", "车间", "方向"],
+             "业务类型", "车间", "方向", "备注"],
             ((t.txn_date, t.material_code, t.material_name, t.category_name, t.specification,
               t.warehouse, t.batch_no, t.quantity, t.uom, t.unit_price, t.amount,
-              t.business_type, t.workshop or "", t.direction) for t in flow_txns)))
+              t.business_type, t.workshop or "", t.direction, t.remark or "") for t in flow_txns)))
 
     elif kind == "pulp_ending":
         def _is_pulp3(code, name):
