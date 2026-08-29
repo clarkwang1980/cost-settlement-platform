@@ -15,6 +15,7 @@ from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
 from settlement.models import OpeningWip, WorkOrderCostResult
+from settlement.services.imports import normalize_workshop
 
 ZERO = Decimal("0.00")
 CENT = Decimal("0.01")
@@ -44,12 +45,16 @@ def _money(value) -> Decimal:
 def _workshop_order(period):
     """车间顺序：车间结算 sequence 优先，兜底固定顺序。"""
     from settlement.models import WorkshopSettlement
-    seq = list(
-        WorkshopSettlement.objects.filter(period=period)
+    seq = [
+        normalize_workshop(w)
+        for w in WorkshopSettlement.objects.filter(period=period)
         .order_by("sequence", "id")
         .values_list("workshop", flat=True)
-    )
-    order = [w for w in seq if w in WORKSHOP_LABELS]
+    ]
+    order = []
+    for w in seq:
+        if w in WORKSHOP_LABELS and w not in order:
+            order.append(w)
     order += [w for w in DEFAULT_WORKSHOPS if w not in order]
     return order
 
@@ -72,12 +77,17 @@ def build_total_cost_data(period):
             pulp_data = None
 
     # 工单主档：order_no -> 车间
-    wo_dept = dict(period.work_orders.values_list("order_no", "production_dept_code"))
+    wo_dept = {
+        no: normalize_workshop(code)
+        for no, code in period.work_orders.values_list(
+            "order_no", "production_dept_code"
+        )
+    }
 
     # 期初在产品按车间汇总（8 科目）
     opening = defaultdict(lambda: defaultdict(Decimal))
     for item in period.opening_wip.all():
-        code = wo_dept.get(item.order_no) or ""
+        code = normalize_workshop(wo_dept.get(item.order_no) or "")
         for i, col in enumerate(OPENING_COLS):
             # 先精确累加，最后统一 quantize，避免逐行舍入累计误差
             opening[code][SUBJECTS[i]] += Decimal(getattr(item, col) or ZERO)
@@ -89,7 +99,7 @@ def build_total_cost_data(period):
         .select_related("work_order")
     )
     for r in results:
-        code = r.work_order.production_dept_code or ""
+        code = normalize_workshop(r.work_order.production_dept_code or "")
         for i, col in enumerate(RESULT_COLS):
             result[code][SUBJECTS[i]] += Decimal(getattr(r, col) or ZERO)
         result[code]["finished_material"] += Decimal(r.finished_material or ZERO)
