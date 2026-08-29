@@ -96,7 +96,7 @@ import zipfile
 
 
 TEMPLATE_FILES = {
-    ImportBatch.Kind.INVENTORY: "库存出入库流水.xlsx",
+    ImportBatch.Kind.INVENTORY: "库存出入库流水.csv",
     ImportBatch.Kind.PURCHASE_CONTRACT: "采购合同.csv",
     ImportBatch.Kind.PURCHASE_INVOICE: "采购发票.csv",
     ImportBatch.Kind.SALES_INVOICE: "销售发票.csv",
@@ -104,8 +104,8 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.OPENING_WIP: "期初在产品.xlsx",
     ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: "期初采购暂估明细.csv",
     ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细.csv",
-    ImportBatch.Kind.OPENING_INVENTORY: "期初存货.xlsx",
-    ImportBatch.Kind.ENDING_INVENTORY: "期末存货.xlsx",
+    ImportBatch.Kind.OPENING_INVENTORY: "期初存货.csv",
+    ImportBatch.Kind.ENDING_INVENTORY: "期末存货.csv",
     ImportBatch.Kind.WORK_ORDER: "生产工单.csv",
     ImportBatch.Kind.MATERIAL_ISSUE: "投料记录.csv",
     ImportBatch.Kind.WORK_REPORT: "报工记录.csv",
