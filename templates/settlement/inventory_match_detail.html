@@ -68,7 +68,7 @@
             {% elif group.kind == "sales_invoice" %}
               <option value="{{ item.id }}">{{ item.invoice_no }} · {{ item.customer_name|default:item.customer_code }} · {{ item.material_code }} · 未匹配{{ item.remaining_quantity|floatformat:3|thousands }}</option>
             {% else %}
-              <option value="{{ item.id }}">{{ item.order_no }} · {{ item.workshop }} · {{ item.product_code }}</option>
+              <option value="{{ item.id }}">{{ item.order_no }} · {{ item.workshop|workshop_label }} · {{ item.product_code }}</option>
             {% endif %}
           {% endfor %}
         </select>

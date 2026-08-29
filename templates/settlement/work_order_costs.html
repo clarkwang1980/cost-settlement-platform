@@ -42,7 +42,7 @@
     <section class="section-card">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">{{ section.workshop|upper }}</p>
+          <p class="eyebrow">{{ section.workshop|workshop_label }}</p>
           <h2>{{ section.label }} · 工单成本明细</h2>
         </div>
         <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_cost' %}?workshop={{ section.workshop }}{% if request.GET.order_no %}&amp;order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.product %}&amp;product={{ request.GET.product|urlencode }}{% endif %}">导出Excel</a>

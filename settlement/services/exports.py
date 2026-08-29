@@ -874,7 +874,8 @@ def build_settlement_workbook(period):
             return (
                 f"{period.month:%Y-%m}",
                 item.work_order.order_no,
-                item.work_order.production_dept_code,
+                WORKSHOP_LABELS.get(item.work_order.production_dept_code,
+                                   item.work_order.production_dept_code),
                 item.product_code,
                 item.product_name,
                 item.plan_quantity,
@@ -909,7 +910,7 @@ def build_settlement_workbook(period):
 
         def _subtotal_row(ws, st):
             return (
-                f"{ws} 合计（{st['count']}张工单）",
+                f"{WORKSHOP_LABELS.get(ws, ws)} 合计（{st['count']}张工单）",
                 "", "", "", "", "", "", "", "", "", "", "", "", "",
                 st["direct_material"],
                 st["water_power"],

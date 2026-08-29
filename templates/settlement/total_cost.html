@@ -17,7 +17,7 @@
 
 {% if data.pending %}
 <div class="cost-notice">
-  以下车间本期<strong>尚未结算</strong>：{% for code in data.pending %}{{ code }}{% if not forloop.last %}、{% endif %}{% endfor %}。
+  以下车间本期<strong>尚未结算</strong>：{% for code in data.pending %}{{ code|workshop_label }}{% if not forloop.last %}、{% endif %}{% endfor %}。
   其本期投入 / 产成品成本 / 在产品暂显示 <strong>--</strong>（仅有期初在产品），完成车间结算后自动补全。
 </div>
 {% endif %}

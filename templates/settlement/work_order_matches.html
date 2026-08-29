@@ -14,7 +14,7 @@
 <section class="section-card filter-card">
   <form class="filter-grid" method="get">
     <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
-    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 tefang / 染色车间"></label>
+    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 染色车间 / 纺纱车间"></label>
     <label>产品编码<input name="product" value="{{ request.GET.product }}"></label>
     <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_order_matches' period.id %}">清空</a></div>
   </form>
