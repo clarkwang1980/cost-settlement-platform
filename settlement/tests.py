@@ -2782,6 +2782,36 @@ class PulpMaterialImportTests(TestCase):
         self.assertEqual(costs["products"]["21.03"]["material"], Decimal("20000"))
         self.assertEqual(costs["products"]["22.01"]["material"], Decimal("5000"))
 
+    def test_remark_category_splits_by_product_name(self):
+        # "用于芳纶浆粕/微纤" → 名称含芳纶浆粕/芳纶微纤的成品（21.03/22.01）按产量比例摊；腈纶同理
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,3000,领料出库,30000,用于芳纶浆粕/微纤\n"
+            "2026-07-31,R84.101,国产聚丙烯腈丝束,3000,领料出库,21000,用于腈纶浆粕/微纤\n"
+        ).encode("utf-8-sig")
+        batch = self._import_csv(content)
+        self.assertEqual(batch.row_count, 2)
+        for code, name, qty in [
+            ("21.03", "21.03 芳纶浆粕 DFP-103", 2000),
+            ("22.01", "22.01 芳纶微纤 AMF-100", 1000),
+            ("23.06", "23.06 腈纶浆粕 JLP-505", 3000),
+            ("24.01", "24.01 腈纶微纤 JMF-025", 1000),
+        ]:
+            InventoryTransaction.objects.create(
+                period=self.period, batch=batch, material_code=code,
+                material_name=name, business_type="生产入库",
+                txn_date=date(2026, 7, 31),
+                direction=InventoryTransaction.Direction.IN, quantity=qty,
+                unit_price=0, amount=0,
+            )
+        costs = collect_pulp_costs(self.period)
+        # 芳纶 30000 按产量 2000:1000 摊 → 21.03=20000, 22.01=10000
+        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("20000"))
+        self.assertAlmostEqual(float(costs["products"]["22.01"]["material"]), 10000.0, places=2)
+        # 腈纶 21000 按产量 3000:1000 摊 → 23.06=15750, 24.01=5250
+        self.assertEqual(costs["products"]["23.06"]["material"], Decimal("15750"))
+        self.assertEqual(costs["products"]["24.01"]["material"], Decimal("5250"))
+
     def test_remark_unrecognized_falls_back_by_material(self):
         # 备注无法识别（如"浆粕车间7月领用"）→ 按物料名称类别兜底：含"芳纶"→ 芳纶类成品按产量比例摊
         content = (

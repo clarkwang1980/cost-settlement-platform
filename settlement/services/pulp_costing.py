@@ -70,7 +70,7 @@ def _remark_targets(remark, products) -> list:
 
     优先级：
     1) 备注含成品编码/名称（如 21.03、DFP、芳纶浆粕…）→ 全部分给这些成品；
-    2) 备注仅含类别（芳纶/腈纶，如"用于芳纶浆粕/微纤"）→ 该类别全部成品按产量比例分摊；
+    2) 备注仅含类别（如"用于芳纶浆粕/微纤"）→ 对应成品入库名称含「芳纶浆粕」或「芳纶微纤」的成品（21.03/22.01）按产量比例分摊；"用于腈纶浆粕/微纤"→ 名称含「腈纶浆粕」或「腈纶微纤」的成品（23.06/24.01）按产量比例分摊；
     3) 备注为空或两者都识别不到 → 返回 None，由调用方按物料名称类别兜底分配。
     """
     r = str(remark or "")
@@ -89,7 +89,17 @@ def _remark_targets(remark, products) -> list:
     if "腈" in r:
         cats.append("腈纶")
     if len(cats) == 1:
-        return [code for code, info in products.items() if info["category"] == cats[0]]
+        # 按成品入库名称匹配备注类别：芳纶浆粕/芳纶微纤 → 芳纶类；腈纶浆粕/腈纶微纤 → 腈纶类
+        targets = []
+        for code, info in products.items():
+            n = str(info["name"] or "")
+            if cats[0] == "芳纶" and ("芳纶浆粕" in n or "芳纶微纤" in n):
+                targets.append(code)
+            elif cats[0] == "腈纶" and ("腈纶浆粕" in n or "腈纶微纤" in n):
+                targets.append(code)
+        if not targets:
+            raise ValueError(f"浆粕原料备注「{r}」指向的{cats[0]}类成品本月无生产入库。")
+        return targets
     if len(cats) > 1:
         raise ValueError(f"浆粕原料备注「{r}」同时含芳纶与腈，无法确定用途，请只写一个类别。")
     return None
@@ -150,9 +160,9 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
         if not targets:
             # 备注无法识别 → 按物料名称类别兜底分配（芳纶→芳纶类成品、腈→腈纶类成品，按产量比例摊）
             if _is_fanglun(name):
-                targets = [code for code, info in products.items() if info["category"] == "芳纶"]
+                targets = [code for code, info in products.items() if ("芳纶浆粕" in str(info["name"] or "") or "芳纶微纤" in str(info["name"] or ""))]
             elif _is_jinglun(name):
-                targets = [code for code, info in products.items() if info["category"] == "腈纶"]
+                targets = [code for code, info in products.items() if ("腈纶浆粕" in str(info["name"] or "") or "腈纶微纤" in str(info["name"] or ""))]
             if not targets:
                 raise ValueError(
                     f"浆粕原料流水{m.material_code} {name}：备注「{m.remark or ''}」与物料名称"

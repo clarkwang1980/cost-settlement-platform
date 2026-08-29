@@ -993,7 +993,7 @@ def _normalize_priced_production_flows(period: AccountingPeriod):
 def _settle_workshop_core(period, settlement, user=None):
     # 粗纱链处理已改为计算层（build_roving_plan 内置于 calculate_work_order_costs），
     # 不再自动生成任何库存流水/投料记录，原始数据保持干净。
-    # 浆粕车间：特殊车间（无工单/无投料/无报工），成本归集 = 原料领料(库存流水备注7月) + 车间费用，
+    # 浆粕车间：特殊车间（无工单/无投料/无报工），成本归集 = 原料领料(用户上传浆粕流水) + 车间费用，
     # 按产量分摊到 4 种成品，回填生产入库单价（见 pulp_costing）
     if settlement.workshop == "浆粕车间":
         from settlement.services.pulp_costing import (
