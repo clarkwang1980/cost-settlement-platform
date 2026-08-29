@@ -367,83 +367,41 @@ def _persist_ending_by_batch(period, summaries):
     for code in sorted(codes):
         if code in manual_codes:
             continue
-        batches = list(opening_rows.get(code, []))
-        if not batches:
-            # 无期初的物料：本月入库形成新批次行
-            batches = [
-                {
-                    "warehouse": None,
-                    "batch_no": None,
-                    "category_name": "",
-                    "uom": "",
-                    "qty": ZERO,
-                }
-            ]
-        # 仓库/批次索引，用于入库匹配
-        index = {}
-        for row in batches:
-            index.setdefault(
-                (row["warehouse"] or "", row["batch_no"] or ""), []
-            ).append(row)
-
+        # 期末数量按物料汇总：期初（各批号合计）+ 本月全部入库 − 本月全部出库
+        # （含调拨/库存转换等内部流转，成对抵消；浆粕成品已在上方排除）。
+        # 不做批号 FIFO 扣减，避免调拨顺序/批号错位产生假负数。
+        opening_qty = sum(
+            (row["qty"] for row in opening_rows.get(code, [])),
+            ZERO,
+        )
+        in_qty = ZERO
+        out_qty = ZERO
         for txn in txns:
-            if txn.material_code != code:
+            if txn.material_code != code or is_opening_transaction(txn):
                 continue
-            qty = abs(Decimal(txn.quantity or ZERO))
-            if is_opening_transaction(txn):
-                continue
+            q = abs(Decimal(txn.quantity or ZERO))
             if txn.direction == InventoryTransaction.Direction.IN:
-                key = (txn.warehouse or "", txn.batch_no or "")
-                pool = index.get(key)
-                if pool:
-                    row = pool[-1]
-                else:
-                    row = {
-                        "warehouse": txn.warehouse or None,
-                        "batch_no": txn.batch_no or None,
-                        "category_name": txn.category_name or "",
-                        "uom": txn.uom or "",
-                        "qty": ZERO,
-                    }
-                    batches.append(row)
-                    index.setdefault(key, []).append(row)
-                row["qty"] += qty
+                in_qty += q
             else:
-                # 出库：FIFO 从最早批次扣减
-                remaining = qty
-                for row in batches:
-                    if remaining <= 0:
-                        break
-                    take = min(row["qty"], remaining)
-                    row["qty"] -= take
-                    remaining -= take
-                if remaining > 0:
-                    # 出库超出全部批次：记为最早批次负数（负库存）
-                    if batches:
-                        batches[0]["qty"] -= remaining
-
+                out_qty += q
+        end_qty = opening_qty + in_qty - out_qty
+        if end_qty == ZERO:
+            continue
         weighted_price = ZERO
         if code in summaries:
             weighted_price = summaries[code]["weighted_average_price"]
-        for row in batches:
-            if row["qty"] == ZERO:
-                continue
-            ending_by_code.setdefault(code, []).append(
-                {
-                    "material_name": (
-                        summaries[code]["material_name"]
-                        if code in summaries
-                        else ""
-                    ),
-                    "category_name": row["category_name"],
-                    "warehouse": row["warehouse"],
-                    "batch_no": row["batch_no"],
-                    "uom": row["uom"],
-                    "qty": row["qty"],
-                    "amount": money(row["qty"] * weighted_price),
-                    "unit_price": weighted_price,
-                }
-            )
+        ending_by_code[code] = [
+            {
+                "material_name": summaries[code]["material_name"] if code in summaries else "",
+                "category_name": "",
+                "warehouse": None,
+                "batch_no": None,
+                "uom": "",
+                "qty": end_qty,
+                "amount": money(end_qty * weighted_price),
+                "unit_price": weighted_price,
+            }
+        ]
 
     rows_to_create = []
     for code, rows in ending_by_code.items():
