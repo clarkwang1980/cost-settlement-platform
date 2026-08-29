@@ -32,7 +32,7 @@
       <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ledger' %}">浆粕流水（原料+成品通用）</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末成品</a>
-      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水一个模板通用：领料出库行=原料（材料成本来源，按备注分配：备注写具体成品则全部分给该成品，只写类别如「用于芳纶浆粕/微纤」按该类成品产量比例分摊；备注未写用途时按物料名称类别自动分配），生产入库/销售出库行=成品；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算。期初/期末成品分别用期初/期末模板。</div>
+      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水一个模板通用：领料出库行=原料（材料成本来源，按备注分配：备注写具体成品则全部分给该成品，只写类别如「用于芳纶浆粕/微纤」按该类成品产量比例分摊；备注未写用途时按物料名称类别自动分配），生产入库/销售出库行=成品；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算。期初/期末成品分别用期初/期末模板。浆粕流水请统一使用本模板上传，以最近一次上传为准，不要再使用旧的「浆粕成品流水/原料流水」模板。</div>
     </div>    </div>
     {% if carry.previous and carry.ready %}
       <div class="lock-banner">
