@@ -2624,6 +2624,28 @@ class PulpLedgerImportTests(TestCase):
         costs = collect_pulp_costs(self.period)
         self.assertEqual(costs["material_fanglun"], Decimal("30000"))
 
+    def test_ledger_blank_business_type_skipped(self):
+        # 业务类型为空的行（空行/说明行）自动跳过，不算未导入
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,\n"
+            "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,2000,生产入库,\n"
+            ",,,,,合计\n"
+        ).encode("utf-8-sig")
+        uploaded = SimpleUploadedFile("pulp_ledger.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.PULP_LEDGER,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        self.assertEqual(batch.row_count, 2)
+        self.assertEqual(batch.error_count, 0)
+        self.assertEqual(self.period.pulp_materials.count(), 1)
+
     def test_ledger_unsupported_business_type_raises(self):
         content = (
             "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"

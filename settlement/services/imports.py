@@ -1732,6 +1732,8 @@ def _import_pulp_ledger(batch, row):
     ):
         return "skipped"
     business_type = text(row.get("business_type"))
+    if not business_type:
+        return "skipped"  # 空行/说明行（无业务类型）自动跳过
     if "领料出库" in business_type:
         return _import_pulp_material(batch, row)
     if business_type in ("生产入库", "销售出库"):
