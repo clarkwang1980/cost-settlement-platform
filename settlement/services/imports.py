@@ -1678,7 +1678,11 @@ def _import_pulp_material(batch, row):
     """浆粕原料流水：材料成本计算来源。金额缺省时按 数量×单价 计算；两者皆无则报错。"""
     material_code = text(row.get("material_code"))
     material_name = text(row.get("material_name"))
-    if material_code.startswith("示例") or material_name.startswith("示例"):
+    if (
+        (not material_code)
+        or material_code.startswith("示例")
+        or material_name.startswith("示例")
+    ):
         return "skipped"
     quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
     unit_price = to_decimal(row.get("unit_price"))
