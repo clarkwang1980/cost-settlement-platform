@@ -172,13 +172,6 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
 
         for txn in txns:
             if txn.match_mode == MatchingMode.IGNORED:
-                # 内部流转（调拨/库存调整/库存转换/报工调整）不参与计价，
-                # 但回填单价/金额 = 本月加权价 × 数量（仅展示，不影响成本）
-                if txn.unit_price is None:
-                    txn.unit_price = weighted_price
-                    txn.amount = money(abs(txn.quantity) * weighted_price)
-                    txn.price_source = "月末加权平均"
-                    txn.save(update_fields=["unit_price", "amount", "price_source"])
                 continue
             qty = abs(txn.quantity)
             if txn.direction == InventoryTransaction.Direction.OUT:
@@ -370,8 +363,11 @@ def _persist_ending_by_batch(period, summaries):
     codes = set(opening_rows) | {
         t.material_code for t in txns
     }
-    # 浆粕成品期末也按 期初+入库−出库 自动生成
-    # （浆粕期初在期初库存表中，入/出为生产入库与销售出库流水；如有人工上传浆粕期末则以人工为准）
+    # 浆粕成品期末独立核算（浆粕期初/流水/期末模板），不并入通用期末表
+    codes = {
+        c for c in codes
+        if not _is_pulp_finished(c, summaries.get(c, {}).get("material_name", ""))
+    }
     for code in sorted(codes):
         if code in manual_codes:
             continue
