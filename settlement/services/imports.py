@@ -932,7 +932,9 @@ def process_batch(batch: ImportBatch):
     count = 0
     for row in rows:
         try:
-            result = importer(batch, row)
+            # 每行独立 savepoint：某行数据库错误只回滚该行，不拖垮整批
+            with transaction.atomic():
+                result = importer(batch, row)
             if result != "skipped":
                 count += 1
         except Exception as exc:
@@ -1011,7 +1013,7 @@ def _import_inventory(batch, row):
         batch_no=text(row.get("batch_no")),
         quantity=quantity,
         auxiliary_quantity=to_decimal(row.get("auxiliary_quantity")),
-        uom=text(row.get("uom")),
+        uom=_clip_text(row.get("uom"), 30),
         auxiliary_uom=text(row.get("auxiliary_uom")),
         order_no=text(row.get("order_no")),
         workshop=text(row.get("workshop")),
@@ -1161,8 +1163,8 @@ def _import_work_order(batch, row):
 
 
 def _import_material_issue(batch, row):
-    work_order_no = text(row.get("work_order_no"))
-    material_code = text(row.get("material_code"))
+    work_order_no = _required_text(row.get("work_order_no"), 100, "工单编号")
+    material_code = _required_text(row.get("material_code"), 80, "物料编号")
     if not work_order_no:
         raise ValueError("工单编号不能为空。")
     if not material_code:
@@ -1253,7 +1255,7 @@ def _import_work_report(batch, row):
         work_hours=to_decimal(row.get("work_hours")),
         work_hours_uom=text(row.get("work_hours_uom")),
         remark=text(row.get("remark")),
-        department=text(row.get("department")),
+        department=_clip_text(row.get("department"), 100),
         equipment=text(row.get("equipment")),
         work_order_no=work_order_no,
         work_order_material_code=text(row.get("work_order_material_code")),
@@ -1289,7 +1291,7 @@ def _import_bom(batch, row):
         work_order_no=work_order_no,
         material_code=text(row.get("material_code")),
         material_name=text(row.get("material_name")),
-        line_no=text(row.get("line_no")),
+        line_no=_clip_text(row.get("line_no"), 40),
         sub_item_code=sub_item_code,
         sub_item_name=text(row.get("sub_item_name")),
         qty_numerator=numerator,
@@ -1303,9 +1305,22 @@ def _import_bom(batch, row):
     )
 
 
+def _clip_text(value, max_len):
+    """辅助字段超长时截断到 max_len（防 PostgreSQL value too long）。"""
+    return text(value)[:max_len]
+
+
+def _required_text(value, max_len, label):
+    """关键字段超长时显式报错，使用户能看懂并修正。"""
+    v = text(value)
+    if len(v) > max_len:
+        raise ValueError(f"{label}超长（最多 {max_len} 字符，当前 {len(v)} 个）。")
+    return v
+
+
 def _import_issue_progress(batch, row):
-    work_order_no = text(row.get("work_order_no"))
-    material_code = text(row.get("material_code"))
+    work_order_no = _required_text(row.get("work_order_no"), 100, "工单编号")
+    material_code = _required_text(row.get("material_code"), 80, "物料编号")
     if not work_order_no:
         raise ValueError("工单编号不能为空。")
     if not material_code:
@@ -1313,20 +1328,20 @@ def _import_issue_progress(batch, row):
     IssueProgress.objects.create(
         period=batch.period,
         batch=batch,
-        create_date=text(row.get("create_date")),
-        department=text(row.get("department")),
+        create_date=_clip_text(row.get("create_date"), 50),
+        department=_clip_text(row.get("department"), 100),
         work_order_no=work_order_no,
-        line_no=text(row.get("line_no")),
+        line_no=_clip_text(row.get("line_no"), 40),
         material_code=material_code,
         apply_quantity=to_decimal(row.get("apply_quantity"), Decimal("0")),
         issue_quantity=to_decimal(row.get("issue_quantity"), Decimal("0")),
-        issue_batch_mark=text(row.get("issue_batch_mark")),
+        issue_batch_mark=_clip_text(row.get("issue_batch_mark"), 100),
         actual_issue_quantity=to_decimal(
             row.get("actual_issue_quantity"), Decimal("0")
         ),
-        actual_batch_mark=text(row.get("actual_batch_mark")),
-        uom=text(row.get("uom")),
-        issue_status=text(row.get("issue_status")),
+        actual_batch_mark=_clip_text(row.get("actual_batch_mark"), 100),
+        uom=_clip_text(row.get("uom"), 30),
+        issue_status=_clip_text(row.get("issue_status"), 50),
     )
 
 
