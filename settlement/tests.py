@@ -2589,8 +2589,8 @@ class PulpLedgerImportTests(TestCase):
     def test_ledger_splits_by_business_type(self):
         content = (
             "创建时间,物料编号,物料名称,分类名称,物料规格,仓库名称,批次号,操作数量,单位名称,单价,金额,业务类型,车间,备注\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,1000,千克,20,20000,领料出库,浆粕车间,7月领用\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,500,千克,,,领料出库,浆粕车间,7月领用\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,1000,千克,20,20000,领料出库,浆粕车间,用于芳纶浆粕/微纤\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,500,千克,,,领料出库,浆粕车间,用于芳纶浆粕/微纤\n"
             "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,产成品,,成品仓,,2000,千克,,,生产入库,浆粕车间,7月生产入库\n"
             "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,产成品,,成品仓,,300,千克,,,销售出库,浆粕车间,7月销售出库\n"
             "2026-07-31,示例-R99,示例物料,原材料,,,,1,千克,,,领料出库,,示例行\n"
@@ -2628,7 +2628,7 @@ class PulpLedgerImportTests(TestCase):
         # 业务类型为空的行（空行/说明行）自动跳过，不算未导入
         content = (
             "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,用于芳纶浆粕/微纤\n"
             "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,2000,生产入库,\n"
             ",,,,,合计\n"
         ).encode("utf-8-sig")
@@ -2689,9 +2689,9 @@ class PulpMaterialImportTests(TestCase):
         # 用户格式：创建时间/物料编号/物料名称/操作数量/业务类型/（可选）金额
         content = (
             "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,,浆粕车间7月领用\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,500,领料出库,15000,浆粕车间7月领用\n"
-            "2026-07-31,R84.101,国产聚丙烯腈丝束,2000,领料出库,,浆粕车间7月领用\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,,浆粕车间用于芳纶浆粕/微纤\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,500,领料出库,15000,浆粕车间用于芳纶浆粕/微纤\n"
+"2026-07-31,R84.101,国产聚丙烯腈丝束,2000,领料出库,,用于腈纶浆粕/微纤\n"
             "2026-07-31,R84.101,国产聚丙烯腈丝束,3000,生产入库,,浆粕车间成品\n"
             "2026-07-31,示例-R99,示例物料,1,领料出库,,示例行\n"
         ).encode("utf-8-sig")
@@ -2758,11 +2758,45 @@ class PulpMaterialImportTests(TestCase):
         with self.assertRaises(ValueError):
             collect_pulp_costs(self.period)
 
+    def test_remark_exact_product_allocation(self):
+        # 备注指明具体成品 → 材料全部分给该成品（不按产量比例摊）
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,20000,用于21.03芳纶浆粕\n"
+            "2026-07-31,R11.519,对位芳纶长丝,500,领料出库,5000,用于22.01芳纶微纤\n"
+        ).encode("utf-8-sig")
+        batch = self._import_csv(content)
+        self.assertEqual(batch.row_count, 2)
+        for code, name, qty in [
+            ("21.03", "21.03 芳纶浆粕 DFP-103", 2000),
+            ("22.01", "22.01 芳纶微纤 AMF-100", 1000),
+        ]:
+            InventoryTransaction.objects.create(
+                period=self.period, batch=batch, material_code=code,
+                material_name=name, business_type="生产入库",
+                txn_date=date(2026, 7, 31),
+                direction=InventoryTransaction.Direction.IN, quantity=qty,
+                unit_price=0, amount=0,
+            )
+        costs = collect_pulp_costs(self.period)
+        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("20000"))
+        self.assertEqual(costs["products"]["22.01"]["material"], Decimal("5000"))
+
+    def test_remark_unrecognized_raises(self):
+        # 备注不含成品用途（如"浆粕车间7月领用"）→ 报错要求注明用途
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,20000,浆粕车间7月领用\n"
+        ).encode("utf-8-sig")
+        self._import_csv(content)
+        with self.assertRaises(ValueError):
+            collect_pulp_costs(self.period)
+
     def test_no_price_raises(self):
         # 领料出库行既无金额也无历史单价 → 报错提示
         content = (
             "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
-            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,用于芳纶浆粕/微纤\n"
         ).encode("utf-8-sig")
         self._import_csv(content)
         with self.assertRaises(ValueError):

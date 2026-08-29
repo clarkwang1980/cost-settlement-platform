@@ -32,7 +32,7 @@
       <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ledger' %}">浆粕流水（原料+成品通用）</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末成品</a>
-      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水一个模板通用：领料出库行=原料（材料成本来源），生产入库/销售出库行=成品；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算。期初/期末成品分别用期初/期末模板。</div>
+      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水一个模板通用：领料出库行=原料（材料成本来源，按备注分配：备注写具体成品则全部分给该成品，只写类别如「用于芳纶浆粕/微纤」按该类成品产量比例分摊），生产入库/销售出库行=成品；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算。期初/期末成品分别用期初/期末模板。</div>
     </div>    </div>
     {% if carry.previous and carry.ready %}
       <div class="lock-banner">
@@ -278,7 +278,7 @@
         <p><span class="field-chip required">物料编号</span><span class="field-chip required">操作数量</span></p>
         <h3>按模板格式填写</h3>
         <p><span class="field-chip recommended">创建时间</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类名称</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">单位名称</span><span class="field-chip recommended">业务类型</span><span class="field-chip recommended">车间</span><span class="field-chip recommended">备注</span></p>
-        <p class="guide-note">模板格式与你的浆粕流水一致（创建时间、物料编号、物料名称、分类名称、物料规格、仓库名称、批次号、操作数量、单位名称、单价、金额、业务类型、车间、备注），一个文件通用：领料出库行计入材料成本（金额可不填，系统按历史单价 出库价优先、入库价兜底 自动计算；名称须含"芳纶"或"腈"归入芳纶类/腈纶类）；生产入库/销售出库行作为成品流水。浆粕车间材料成本只认本流水的领料出库行，未上传时不能结转浆粕车间。示例行（物料编号"示例-"开头）自动跳过。</p>
+        <p class="guide-note">模板格式与你的浆粕流水一致（创建时间、物料编号、物料名称、分类名称、物料规格、仓库名称、批次号、操作数量、单位名称、单价、金额、业务类型、车间、备注），一个文件通用：领料出库行计入材料成本（金额可不填，系统按历史单价 出库价优先、入库价兜底 自动计算；备注须注明用途（如 用于21.03芳纶浆粕 全部分给该成品；仅写 用于芳纶浆粕/微纤 按该类成品产量比例分摊））；生产入库/销售出库行作为成品流水。浆粕车间材料成本只认本流水的领料出库行，未上传时不能结转浆粕车间。示例行（物料编号"示例-"开头）自动跳过。</p>
       </div>
     </details>
   </div>
