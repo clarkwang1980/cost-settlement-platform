@@ -248,6 +248,27 @@ def period_detail(request, period_id):
 
 
 @login_required
+@login_required
+@require_POST
+def delete_import_batch(request, period_id, batch_id):
+    """删除一个上传批次及其导入的明细数据，并重置本月结算输出（需重新结转）。
+    仅限未锁账期间操作。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    if period.status == AccountingPeriod.Status.LOCKED:
+        messages.error(request, "该期间已锁账，不能删除上传批次。")
+        return redirect("import_batches", period_id=period.id)
+    batch = get_object_or_404(ImportBatch, id=batch_id, period=period)
+    label = f"{batch.get_kind_display()}（{batch.original_name}）"
+    from settlement.services.imports import clear_calculation_outputs
+    clear_calculation_outputs(period)
+    batch.delete()  # CASCADE 删除该批次导入的全部明细
+    messages.success(
+        request,
+        f"已删除上传批次：{label}。相关结算结果已重置，请按顺序重新结转。",
+    )
+    return redirect("import_batches", period_id=period.id)
+
+
 def import_batches(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     batches = period.import_batches.select_related("uploaded_by")

@@ -60,7 +60,7 @@
           <td>{{ batch.uploaded_by|default:"—" }}</td>
           <td>{{ batch.created_at|date:"Y-m-d H:i" }}</td>
           <td>
-            <a class="mini-button" href="{% url 'download_import_file' period.id batch.id %}">下载原始文件</a>
+            <a class="mini-button" href="{% url 'download_import_file' period.id batch.id %}">下载原始文件</a>            <form method="post" action="{% url 'delete_import_batch' period.id batch.id %}" style="display:inline" onsubmit="return confirm('确定删除批次「{{ batch.get_kind_display }}（{{ batch.original_name }}）」吗？将同时删除该批次导入的全部数据并重置本月结算结果。');">              {% csrf_token %}              <button class="mini-button danger" type="submit">删除</button>            </form>
           </td>
         </tr>
       {% empty %}<tr><td colspan="8" class="empty-cell">本期间还没有上传过文件。</td></tr>{% endfor %}

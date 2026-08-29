@@ -22,6 +22,11 @@ urlpatterns = [
         views.download_import_file,
         name="download_import_file",
     ),
+    path(
+        "periods/<int:period_id>/import-batches/<int:batch_id>/delete/",
+        views.delete_import_batch,
+        name="delete_import_batch",
+    ),
     path("periods/<int:period_id>/run/", views.run_period, name="run_period"),
     path("periods/<int:period_id>/rematch/", views.rematch_period, name="rematch_period"),
     path(

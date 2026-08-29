@@ -1007,6 +1007,7 @@ def _settle_workshop_core(period, settlement, user=None):
         for _ in range(2, 4):
             max_change = price_pulp_receipts(period)
             iteration += 1
+            converged = max_change <= CONVERGENCE_TOLERANCE
             if max_change <= CONVERGENCE_TOLERANCE:
                 break
         settlement.status = (
@@ -1162,6 +1163,8 @@ def _global_cost_finalize(period: AccountingPeriod):
 
     # 同步车间结转汇总数字
     for settlement in period.workshop_settlements.all():
+        if settlement.workshop == "浆粕车间":
+            continue  # 浆粕无工单：成本已在浆粕分支回填，不覆盖
         settlement.order_cost = money(
             period.work_order_cost_results.filter(
                 work_order__production_dept_code=settlement.workshop
