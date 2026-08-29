@@ -46,7 +46,11 @@ from settlement.services.workorder_costing import (
     is_baogong_receipt,
     price_baogong_receipts,
 )
-from settlement.services.imports import WORKSHOP_ORDER, WORKSHOP_LABELS
+from settlement.services.imports import (
+    WORKSHOP_ORDER,
+    WORKSHOP_LABELS,
+    normalize_workshop,
+)
 
 
 ZERO = Decimal("0")
@@ -818,13 +822,17 @@ def _build_reconciliations(period):
 
 def ensure_workshop_settlements(period: AccountingPeriod):
     workshops = set(
-        period.work_orders.exclude(production_dept_code="")
+        normalize_workshop(code)
+        for code in period.work_orders.exclude(production_dept_code="")
         .values_list("production_dept_code", flat=True)
+        if normalize_workshop(code)
     )
     workshops.update(
-        period.workshop_cost_pools.exclude(workshop="").values_list(
+        normalize_workshop(ws)
+        for ws in period.workshop_cost_pools.exclude(workshop="").values_list(
             "workshop", flat=True
         )
+        if normalize_workshop(ws)
     )
     existing = {
         item.workshop: item

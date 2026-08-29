@@ -794,6 +794,9 @@ WORKSHOP_LABELS = {
     "BaoFu": "包覆车间",
     "ZhenZhi": "针织车间",
     "JiZhi": "机织车间",
+    # 旧编码兜底显示（数据已归并，仅防历史残留显英文）
+    "RanZhengShaXian": "染色车间",
+    "RanZhengXianWei": "染色车间",
 }
 
 
@@ -1135,7 +1138,7 @@ def _import_work_order(batch, row):
             "priority": text(row.get("priority")),
             "line_equipment": text(row.get("line_equipment")),
             "shift": text(row.get("shift")),
-            "production_dept_code": text(row.get("production_dept_code")),
+            "production_dept_code": normalize_workshop(text(row.get("production_dept_code"))),
             "production_supervisor_code": text(
                 row.get("production_supervisor_code")
             ),
