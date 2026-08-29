@@ -1340,6 +1340,13 @@ class PulpMaterial(models.Model):
         max_digits=20, decimal_places=2, default=ZERO, verbose_name="金额"
     )
     remark = models.CharField(max_length=255, blank=True, verbose_name="备注")
+    business_type = models.CharField(max_length=80, blank=True, verbose_name="业务类型")
+    category_name = models.CharField(max_length=255, blank=True, verbose_name="分类名称")
+    specification = models.CharField(max_length=255, blank=True, verbose_name="物料规格")
+    warehouse = models.CharField(max_length=100, blank=True, verbose_name="仓库名称")
+    batch_no = models.CharField(max_length=100, blank=True, verbose_name="批次号")
+    uom = models.CharField(max_length=30, blank=True, verbose_name="单位名称")
+    workshop = models.CharField(max_length=100, blank=True, verbose_name="车间")
 
     class Meta:
         ordering = ["id"]

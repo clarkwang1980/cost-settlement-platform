@@ -33,7 +33,7 @@
       <a class="button small secondary" href="{% url 'download_template' 'pulp_flow' %}">浆粕成品流水</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末成品</a>
       <a class="button small secondary" href="{% url 'download_template' 'pulp_material' %}">浆粕原料流水</a>
-      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕成品模板只传成品（生产入库/销售出库）；材料成本以「浆粕原料流水」为准（名称含"芳纶"归芳纶类、含"腈"归腈纶类），未上传时浆粕车间不能结转。</div>
+      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕成品模板只传成品（生产入库/销售出库）；材料成本以「浆粕原料流水」为准（按你的流水格式：创建时间/物料编号/物料名称/分类名称/物料规格/仓库名称/批次号/操作数量/单位名称/业务类型/车间/备注；只统计业务类型为"领料出库"的行；金额无需填写，系统按历史单价 出库价优先、入库价兜底 自动计算），未上传时浆粕车间不能结转。</div>
     </div>    </div>
     {% if carry.previous and carry.ready %}
       <div class="lock-banner">
@@ -276,10 +276,10 @@
       <summary><span>浆粕原料流水</span><small>浆粕车间材料成本的计算来源</small></summary>
       <div class="guide-body">
         <h3>最低必填</h3>
-        <p><span class="field-chip required">物料编码</span><span class="field-chip required">数量</span></p>
+        <p><span class="field-chip required">物料编号</span><span class="field-chip required">操作数量</span></p>
         <h3>按模板格式填写</h3>
-        <p><span class="field-chip recommended">日期</span><span class="field-chip recommended">单据号</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">单价</span><span class="field-chip recommended">金额</span><span class="field-chip recommended">备注</span></p>
-        <p class="guide-note">金额缺省时按 数量×单价 自动计算；单价和金额都没有的行不能导入。物料名称须含"芳纶"或"腈"以归入芳纶类/腈纶类原料，否则会提示修正。浆粕车间材料成本只认本流水，未上传时不能结转浆粕车间。示例行（物料编码"示例-"开头）自动跳过。</p>
+        <p><span class="field-chip recommended">创建时间</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类名称</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">单位名称</span><span class="field-chip recommended">业务类型</span><span class="field-chip recommended">车间</span><span class="field-chip recommended">备注</span></p>
+        <p class="guide-note">模板格式与你的浆粕流水一致（创建时间、物料编号、物料名称、分类名称、物料规格、仓库名称、批次号、操作数量、单位名称、业务类型、车间、备注）。材料成本只统计业务类型为"领料出库"的行；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算，如单价也没有会提示先上传历史单价。物料名称须含"芳纶"或"腈"以归入芳纶类/腈纶类原料。浆粕车间材料成本只认本流水，未上传时不能结转浆粕车间。示例行（物料编号"示例-"开头）自动跳过。</p>
       </div>
     </details>
   </div>

@@ -16,6 +16,7 @@ from openpyxl import load_workbook
 from settlement.models import (
     AccountingPeriod,
     EndingInventoryBalance,
+    HistoricalPrice,
     ImportBatch,
     InventoryTransaction,
     MatchAllocation,
@@ -2597,19 +2598,35 @@ class PulpMaterialImportTests(TestCase):
         return batch
 
     def test_import_and_material_allocation(self):
+        # 用户格式：创建时间/物料编号/物料名称/操作数量/业务类型/（可选）金额
         content = (
-            "日期,单据号,物料编码,物料名称,数量,单价,金额,备注\n"
-            "2026-07-31,OUT-1,R82.101,对位芳纶回收料-乱丝,1000,20,20000,浆粕车间7月领用\n"
-            "2026-07-31,OUT-2,R82.101,对位芳纶回收料-乱丝,500,20,,浆粕车间7月领用\n"
-            "2026-07-31,OUT-3,R84.101,国产聚丙烯腈丝束,2000,10.5,21000,浆粕车间7月领用\n"
-            "2026-07-31,OUT-X,示例-R99,示例物料,1,1,1,示例行\n"
+            "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,,浆粕车间7月领用\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,500,领料出库,15000,浆粕车间7月领用\n"
+            "2026-07-31,R84.101,国产聚丙烯腈丝束,2000,领料出库,,浆粕车间7月领用\n"
+            "2026-07-31,R84.101,国产聚丙烯腈丝束,3000,生产入库,,浆粕车间成品\n"
+            "2026-07-31,示例-R99,示例物料,1,领料出库,,示例行\n"
         ).encode("utf-8-sig")
         batch = self._import_csv(content)
-        self.assertEqual(batch.row_count, 3)
+        self.assertEqual(batch.row_count, 4)
         mats = list(self.period.pulp_materials.all())
-        self.assertEqual(len(mats), 3)
-        # 金额缺省时按 数量×单价 计算：500×20=10000
-        self.assertEqual(mats[1].amount, Decimal("10000"))
+        self.assertEqual(len(mats), 4)
+        # 用户金额列优先；无金额行 amount=0，结算时按历史单价定价
+        self.assertEqual(mats[1].amount, Decimal("15000"))
+        self.assertEqual(mats[0].amount, Decimal("0"))
+        self.assertEqual(mats[3].business_type, "生产入库")
+
+        # 历史单价：R82.101 出库价 20（优先）；R84.101 只有入库价 10.5（兜底）
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="R82.101",
+            material_name="对位芳纶回收料-乱丝",
+            issue_price=Decimal("20"), receipt_price=Decimal("18"),
+        )
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="R84.101",
+            material_name="国产聚丙烯腈丝束",
+            issue_price=None, receipt_price=Decimal("10.5"),
+        )
 
         WorkshopCostPool.objects.create(
             period=self.period, batch=batch, workshop="浆粕车间",
@@ -2627,10 +2644,12 @@ class PulpMaterialImportTests(TestCase):
                 unit_price=0, amount=0,
             )
         costs = collect_pulp_costs(self.period)
-        self.assertEqual(costs["material_fanglun"], Decimal("30000"))
+        # 芳纶：1000×20（系统出库价）+ 500 行用户金额 15000 = 35000
+        self.assertEqual(costs["material_fanglun"], Decimal("35000"))
+        # 腈纶：2000×10.5（入库价兜底）；生产入库 3000kg 不计入材料
         self.assertEqual(costs["material_jinglun"], Decimal("21000"))
         # 芳纶成品 21.03 得芳纶材料全额；腈纶成品 23.06 得腈纶材料全额
-        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("30000"))
+        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("35000"))
         self.assertEqual(costs["products"]["23.06"]["material"], Decimal("21000"))
         # 费用按产量分摊：21.03 占 2000/5000，工资同理
         self.assertEqual(costs["products"]["21.03"]["fee"], Decimal("400"))
@@ -2644,8 +2663,18 @@ class PulpMaterialImportTests(TestCase):
 
     def test_unclassifiable_row_raises(self):
         content = (
-            "日期,单据号,物料编码,物料名称,数量,单价,金额,备注\n"
-            "2026-07-31,OUT-9,R99.999,未知物料,100,1,100,\n"
+            "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
+            "2026-07-31,R99.999,未知物料,100,领料出库,\n"
+        ).encode("utf-8-sig")
+        self._import_csv(content)
+        with self.assertRaises(ValueError):
+            collect_pulp_costs(self.period)
+
+    def test_no_price_raises(self):
+        # 领料出库行既无金额也无历史单价 → 报错提示
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,\n"
         ).encode("utf-8-sig")
         self._import_csv(content)
         with self.assertRaises(ValueError):

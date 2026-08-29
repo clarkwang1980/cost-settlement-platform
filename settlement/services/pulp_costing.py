@@ -52,11 +52,25 @@ def _is_jinglun(name) -> bool:
     return "腈" in str(name or "")
 
 
+def _material_price(period, code) -> Decimal | None:
+    """浆粕原料出库单价：历史单价出库价优先、入库价兜底（与投料定价口径一致）。"""
+    hp = period.historical_prices.filter(material_code=code).order_by("-id").first()
+    if not hp:
+        return None
+    if hp.issue_price:
+        return Decimal(hp.issue_price)
+    if hp.receipt_price:
+        return Decimal(hp.receipt_price)
+    return None
+
+
+
 def collect_pulp_costs(period: AccountingPeriod) -> dict:
     """浆粕成本归集，返回 {"products": {成品编码: {"name","output","material","fee","wages","total","unit"}},
                                   "material_fanglun": 金额, "material_jinglun": 金额, "fee_total": 金额,
                                   "output_total": 产量合计}"""
     # ---- 1) 原料领料（用户上传的浆粕原料流水，材料成本计算来源）----
+    #      只认业务类型为"领料出库"的行；金额缺省时按历史单价（出库优先、入库兜底）计算
     mat_fanglun = ZERO   # 芳纶类原料金额
     mat_jinglun = ZERO   # 腈纶类原料金额
     issue_detail = []
@@ -66,17 +80,28 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
             "未上传浆粕原料流水：请先在「资料导入」页上传当月浆粕原料流水，再结转浆粕车间。"
         )
     for m in uploaded:
-        amt = Decimal(m.amount or ZERO)
+        if "领料出库" not in (m.business_type or ""):
+            continue  # 非领料出库（如生产入库/销售出库）不计入材料成本
         name = m.material_name or ""
-        if _is_fanglun(name):
-            mat_fanglun += amt
-        elif _is_jinglun(name):
-            mat_jinglun += amt
-        else:
+        if not (_is_fanglun(name) or _is_jinglun(name)):
             raise ValueError(
                 f"浆粕原料流水第{m.id}行（{m.material_code} {name}）无法归类："
                 "物料名称须含「芳纶」或「腈」，请修正文件后重新上传。"
             )
+        amt = Decimal(m.amount or ZERO)
+        if amt <= 0:
+            price = _material_price(period, m.material_code)
+            if price:
+                amt = (Decimal(m.quantity or ZERO) * price).quantize(CENT)
+            else:
+                raise ValueError(
+                    f"浆粕原料流水{m.material_code} {name}没有金额，且查不到历史单价"
+                    "（出库/入库单价），请上传历史单价或在该行填写金额。"
+                )
+        if _is_fanglun(name):
+            mat_fanglun += amt
+        else:
+            mat_jinglun += amt
         issue_detail.append((m.document_no, m.material_code, name, m.quantity, amt))
 
     # ---- 2) 成品与产量（生产入库数量）----
