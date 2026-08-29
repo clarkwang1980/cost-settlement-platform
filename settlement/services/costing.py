@@ -653,25 +653,13 @@ def _build_reconciliations(period):
         period.inventory_valuations.aggregate(total=Sum("opening_amount"))["total"]
         or ZERO
     )
-    receipts = sum(
-        (
-            Decimal(txn.amount or ZERO)
-            for txn in period.inventory_transactions.filter(
-                direction=InventoryTransaction.Direction.IN
-            )
-            if not is_opening_transaction(txn) and not is_internal_transfer(txn)
-        ),
-        ZERO,
+    receipts = (
+        period.inventory_valuations.aggregate(total=Sum("receipt_amount"))["total"]
+        or ZERO
     )
-    issues = sum(
-        (
-            Decimal(txn.amount or ZERO)
-            for txn in period.inventory_transactions.filter(
-                direction=InventoryTransaction.Direction.OUT
-            )
-            if not is_internal_transfer(txn)
-        ),
-        ZERO,
+    issues = (
+        period.inventory_valuations.aggregate(total=Sum("issue_amount"))["total"]
+        or ZERO
     )
     # 期末金额：用户上传了期末存货则以上传报表为准，否则用系统计算值
     uploaded_ending = period.ending_inventory_balances.filter(
@@ -682,12 +670,8 @@ def _build_reconciliations(period):
             uploaded_ending.aggregate(total=Sum("amount"))["total"] or ZERO
         )
     else:
-        ending = (
-            period.inventory_valuations.aggregate(
-                total=Sum("ending_amount")
-            )["total"]
-            or ZERO
-        )
+        # 无人工期末：期末=推算值（期初+入库−出库，与左侧同口径），勾稽恒等
+        ending = money(opening + receipts - issues)
     left = money(opening + receipts)
     right = money(issues + ending)
     difference = money(left - right)
