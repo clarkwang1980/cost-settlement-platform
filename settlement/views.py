@@ -2762,12 +2762,79 @@ def _uploaded_inventory_raw(period):
             continue
         header = rows[best[1]]
         data = rows[best[1] + 1:]
+        # 单价/金额列回填：取该批次库存流水（按导入顺序），用结算后的单价/金额覆盖上传原值；
+        # 尚无单价的行（如调拨/库存调整等内部流转、数量为0）按该物料月末加权价兜底回填，确保全表单价/金额有值
+        txns = list(InventoryTransaction.objects.filter(batch=b).order_by("id"))
+        if data and txns and len(txns) == len(data):
+            price_idx = None
+            amount_idx = None
+            for _i, _h in enumerate(header):
+                _f = alias_map.get(normalize_header(_h))
+                if _f == "unit_price":
+                    price_idx = _i
+                elif _f == "amount":
+                    amount_idx = _i
+            if price_idx is not None or amount_idx is not None:
+                val_prices = {
+                    v.material_code: v.weighted_average_price
+                    for v in period.inventory_valuations.all()
+                }
+                filled = []
+                for _i, _row in enumerate(data):
+                    _r = list(_row)
+                    _t = txns[_i]
+                    _up = _t.unit_price
+                    _am = _t.amount
+                    if _up is None:
+                        _vp = val_prices.get(_t.material_code)
+                        if _vp is not None:
+                            _up = _vp
+                            _am = (Decimal(_t.quantity or 0) * Decimal(_vp)).quantize(Decimal("0.01"))
+                    if price_idx is not None:
+                        _r[price_idx] = _up
+                    if amount_idx is not None:
+                        _r[amount_idx] = _am
+                    filled.append(_r)
+                data = filled
         return ("库存流水", header, data)
     return None
 
 
 def _listing_rows(request, period, kind):
     """按 kind 返回 (工作表名, 表头, 数据行) 列表，筛选逻辑与列表页一致。"""
+    def _pulp_mat_price(code):
+        """浆粕原料出库单价：历史单价出库价优先、入库价兜底（与浆粕成本计算口径一致）。"""
+        hp = period.historical_prices.filter(material_code=code).order_by("-id").first()
+        if not hp:
+            return None
+        if hp.issue_price:
+            return Decimal(hp.issue_price)
+        if hp.receipt_price:
+            return Decimal(hp.receipt_price)
+        return None
+
+    def _pulp_unit_price(m):
+        if m.unit_price is not None:
+            return m.unit_price
+        return _pulp_mat_price(m.material_code)
+
+    def _pulp_amount(m, price):
+        if m.amount:
+            return m.amount
+        if price is not None:
+            return (Decimal(m.quantity or 0) * Decimal(price)).quantize(Decimal("0.01"))
+        return m.amount
+
+    def _pulp_product_unit(code):
+        """浆粕成品完工单位成本（用于回填成品流水单价）。"""
+        try:
+            from settlement.services.pulp_costing import collect_pulp_costs
+            costs = collect_pulp_costs(period)
+        except Exception:
+            return None
+        p = costs.get("products", {}).get(code or "")
+        return p.get("unit") if p else None
+
     sheets = []
 
     # ===== 台账公共生成器：投料台账（上传原样+单价）/ 报工台账（上传原样）=====
@@ -4715,13 +4782,22 @@ def _listing_rows(request, period, kind):
         flow_txns = [t for t in period.inventory_transactions.all()
                      if (t.business_type or "").strip() in ("生产入库", "销售出库")
                      and _is_pulp2(t.material_code, t.material_name)]
+        def _fill_txn(t):
+            _tu = t.unit_price
+            _ta = t.amount
+            if _tu is None:
+                _cu = _pulp_product_unit(t.material_code)
+                if _cu is not None:
+                    _tu = _cu
+                    _ta = (Decimal(t.quantity or 0) * Decimal(_cu)).quantize(Decimal("0.01"))
+            return (t.txn_date, t.material_code, t.material_name, t.category_name, t.specification,
+                    t.warehouse, t.batch_no, t.quantity, t.uom, _tu, _ta,
+                    t.business_type, t.workshop or "", t.direction, t.remark or "")
         sheets.append(("浆粕成品流水",
             ["创建时间", "物料编号", "物料名称", "分类名称", "物料规格",
              "仓库名称", "批次号", "操作数量", "单位名称", "单价", "金额",
              "业务类型", "车间", "方向", "备注"],
-            ((t.txn_date, t.material_code, t.material_name, t.category_name, t.specification,
-              t.warehouse, t.batch_no, t.quantity, t.uom, t.unit_price, t.amount,
-              t.business_type, t.workshop or "", t.direction, t.remark or "") for t in flow_txns)))
+            (_fill_txn(t) for t in flow_txns)))
 
     elif kind == "pulp_ending":
         def _is_pulp3(code, name):
@@ -4741,24 +4817,33 @@ def _listing_rows(request, period, kind):
         sheets.append(("浆粕原料流水",
             ["日期", "单据号", "物料编码", "物料名称", "数量", "单价", "金额", "备注"],
             ((m.txn_date, m.document_no, m.material_code, m.material_name,
-              m.quantity, m.unit_price, m.amount, m.remark) for m in mats)))
+              m.quantity, _pulp_unit_price(m), _pulp_amount(m, _pulp_unit_price(m)), m.remark)
+             for m in mats)))
 
     elif kind == "pulp_ledger":
         # 浆粕流水（原料+成品合并导出）：领料出库行（PulpMaterial）+ 生产入库/销售出库行（InventoryTransaction）
         rows = []
         for m in period.pulp_materials.all().order_by("id"):
+            _pu = _pulp_unit_price(m)
             rows.append((m.txn_date, m.document_no, m.material_code, m.material_name,
                          m.category_name, m.specification, m.warehouse, m.batch_no,
-                         m.quantity, m.uom, m.unit_price, m.amount,
+                         m.quantity, m.uom, _pu, _pulp_amount(m, _pu),
                          m.business_type, m.workshop or "", m.remark or ""))
         for t in period.inventory_transactions.filter(
             business_type__in=["生产入库", "销售出库"]
         ).order_by("id"):
             if not (("浆粕" in str(t.material_name or "")) or ("微纤" in str(t.material_name or "")) or str(t.material_code or "").upper().startswith("JP-")):
                 continue
+            _tu = t.unit_price
+            _ta = t.amount
+            if _tu is None:
+                _cu = _pulp_product_unit(t.material_code)
+                if _cu is not None:
+                    _tu = _cu
+                    _ta = (Decimal(t.quantity or 0) * Decimal(_cu)).quantize(Decimal("0.01"))
             rows.append((t.txn_date, t.document_no, t.material_code, t.material_name,
                          t.category_name, t.specification, t.warehouse, t.batch_no,
-                         t.quantity, t.uom, t.unit_price, t.amount,
+                         t.quantity, t.uom, _tu, _ta,
                          t.business_type, t.workshop or "", t.remark or ""))
         sheets.append(("浆粕流水",
             ["创建时间", "单据号", "物料编号", "物料名称", "分类名称", "物料规格", "仓库名称", "批次号",
