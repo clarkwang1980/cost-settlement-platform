@@ -71,7 +71,7 @@ def _remark_targets(remark, products) -> list:
     优先级：
     1) 备注含成品编码/名称（如 21.03、DFP、芳纶浆粕…）→ 全部分给这些成品；
     2) 备注仅含类别（芳纶/腈纶，如"用于芳纶浆粕/微纤"）→ 该类别全部成品按产量比例分摊；
-    3) 备注为空或两者都识别不到 → 报错，要求注明用途。
+    3) 备注为空或两者都识别不到 → 返回 None，由调用方按物料名称类别兜底分配。
     """
     r = str(remark or "")
     # 1) 具体成品：编码或完整名称出现在备注中
@@ -92,11 +92,7 @@ def _remark_targets(remark, products) -> list:
         return [code for code, info in products.items() if info["category"] == cats[0]]
     if len(cats) > 1:
         raise ValueError(f"浆粕原料备注「{r}」同时含芳纶与腈，无法确定用途，请只写一个类别。")
-    raise ValueError(
-        f"浆粕原料备注「{r}」无法识别用途：请注明用于哪个成品"
-        "（如 21.03 芳纶浆粕 / 22.01 芳纶微纤 / 23.06 腈纶浆粕 / 24.01 腈纶微纤，"
-        "或至少含「芳纶」/「腈」）。"
-    )
+    return None
 
 
 def collect_pulp_costs(period: AccountingPeriod) -> dict:
@@ -105,7 +101,7 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
                                   "output_total": 产量合计}
 
     材料成本按「浆粕原料流水的备注」分配到成品：备注指明具体成品则全部分给该成品，
-    仅写类别（芳纶/腈纶）则按该类成品产量比例分摊。"""
+    仅写类别（芳纶/腈纶）则按该类成品产量比例分摊；备注与物料名称均无法确定用途时才会报错。"""
     # ---- 1) 成品与产量（生产入库数量）----
     products = {}  # code -> {"name", "category", "output"}
     prod_qty = defaultdict(Decimal)
@@ -151,6 +147,17 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
                     "（出库/入库单价），请上传历史单价或在该行填写金额。"
                 )
         targets = _remark_targets(m.remark, products)
+        if not targets:
+            # 备注无法识别 → 按物料名称类别兜底分配（芳纶→芳纶类成品、腈→腈纶类成品，按产量比例摊）
+            if _is_fanglun(name):
+                targets = [code for code, info in products.items() if info["category"] == "芳纶"]
+            elif _is_jinglun(name):
+                targets = [code for code, info in products.items() if info["category"] == "腈纶"]
+            if not targets:
+                raise ValueError(
+                    f"浆粕原料流水{m.material_code} {name}：备注「{m.remark or ''}」与物料名称"
+                    "均无法确定用途（备注请注明用于哪个成品，或至少含「芳纶」/「腈」）。"
+                )
         if not targets:
             raise ValueError(f"浆粕原料{m.material_code} {name}备注未指向任何成品。")
         if len(targets) == 1:

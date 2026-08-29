@@ -2782,15 +2782,30 @@ class PulpMaterialImportTests(TestCase):
         self.assertEqual(costs["products"]["21.03"]["material"], Decimal("20000"))
         self.assertEqual(costs["products"]["22.01"]["material"], Decimal("5000"))
 
-    def test_remark_unrecognized_raises(self):
-        # 备注不含成品用途（如"浆粕车间7月领用"）→ 报错要求注明用途
+    def test_remark_unrecognized_falls_back_by_material(self):
+        # 备注无法识别（如"浆粕车间7月领用"）→ 按物料名称类别兜底：含"芳纶"→ 芳纶类成品按产量比例摊
         content = (
             "创建时间,物料编号,物料名称,操作数量,业务类型,金额,备注\n"
             "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,领料出库,20000,浆粕车间7月领用\n"
+            "2026-07-31,R84.101,国产聚丙烯腈丝束,500,领料出库,10500,浆粕车间7月领用\n"
         ).encode("utf-8-sig")
-        self._import_csv(content)
-        with self.assertRaises(ValueError):
-            collect_pulp_costs(self.period)
+        batch = self._import_csv(content)
+        self.assertEqual(batch.row_count, 2)
+        for code, name, qty in [
+            ("21.03", "21.03 芳纶浆粕 DFP-103", 2000),
+            ("23.06", "23.06 腈纶浆粕 JLP-505", 3000),
+        ]:
+            InventoryTransaction.objects.create(
+                period=self.period, batch=batch, material_code=code,
+                material_name=name, business_type="生产入库",
+                txn_date=date(2026, 7, 31),
+                direction=InventoryTransaction.Direction.IN, quantity=qty,
+                unit_price=0, amount=0,
+            )
+        # 不报错：芳纶材料兜底给芳纶类 21.03，腈纶材料兜底给腈纶类 23.06
+        costs = collect_pulp_costs(self.period)
+        self.assertEqual(costs["products"]["21.03"]["material"], Decimal("20000"))
+        self.assertEqual(costs["products"]["23.06"]["material"], Decimal("10500"))
 
     def test_no_price_raises(self):
         # 领料出库行既无金额也无历史单价 → 报错提示
