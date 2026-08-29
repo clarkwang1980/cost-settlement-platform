@@ -9,6 +9,10 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+import logging
+
+logger = logging.getLogger(__name__)
+
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -362,7 +366,11 @@ def run_period(request, period_id):
             f"{'已经收敛' if run.converged else '尚未收敛'}。",
         )
     except Exception as exc:
-        messages.error(request, f"结算失败：{exc}")
+        logger.exception("完整结算失败 period=%s", period.id)
+        messages.error(
+            request,
+            "结算失败：" + str(exc) + "。如持续出现，请把本提示内容发给管理员。",
+        )
     return redirect("period_detail", period_id=period.id)
 
 
@@ -445,7 +453,11 @@ def settle_workshop_view(request, period_id, settlement_id):
             ),
         )
     except Exception as exc:
-        messages.error(request, f"车间结转失败：{exc}")
+        logger.exception("车间结转失败 period=%s settlement=%s", period.id, settlement_id)
+        messages.error(
+            request,
+            "车间结转失败：" + str(exc) + "。如持续出现，请把本提示内容发给管理员。",
+        )
     return redirect("workshop_settlements", period_id=period.id)
 
 
