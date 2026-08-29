@@ -268,6 +268,16 @@ def _fill_ending_prices(period, summaries):
         ending.save(update_fields=["unit_price", "amount"])
 
 
+
+
+def _is_pulp_finished(code, name) -> bool:
+    """浆粕成品（浆粕/微纤/JP-）：期末独立核算，不并入通用库存期末表。"""
+    return (
+        ("浆粕" in str(name or ""))
+        or ("微纤" in str(name or ""))
+        or str(code or "").upper().startswith("JP-")
+    )
+
 def _persist_ending_by_batch(period, summaries):
     """按 物料+仓库+批次 生成期末存货（批次级）。
 
@@ -309,10 +319,9 @@ def _persist_ending_by_batch(period, summaries):
         )
 
     # 本月入库/出库流水（排除被忽略的内部流转）
+    # 数量口径按用户上传流水原样（含调拨/库存调整等内部流转，这些也是真实的数量移动）
     txns = list(
-        period.inventory_transactions.exclude(
-            match_mode=MatchingMode.IGNORED
-        ).order_by("txn_date", "id")
+        period.inventory_transactions.all().order_by("txn_date", "id")
     )
 
     # 期初类型流水（业务类型含"期初"的入库）也作为初始批次行
@@ -349,6 +358,11 @@ def _persist_ending_by_batch(period, summaries):
     ending_by_code = {}
     codes = set(opening_rows) | {
         t.material_code for t in txns
+    }
+    # 浆粕成品期末独立核算（浆粕期初/流水/期末模板），不并入通用期末表
+    codes = {
+        c for c in codes
+        if not _is_pulp_finished(c, summaries.get(c, {}).get("material_name", ""))
     }
     for code in sorted(codes):
         if code in manual_codes:
