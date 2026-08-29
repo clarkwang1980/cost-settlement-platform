@@ -2495,6 +2495,34 @@ def reconciliation(request, period_id):
 
 @login_required
 @require_POST
+
+@login_required
+@require_POST
+def confirm_reconciliation(request, period_id, check_id):
+    """确认/取消确认一条勾稽差异：确认后该条 fail 不再阻断锁账。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    if period.status == AccountingPeriod.Status.LOCKED:
+        messages.error(request, "该期间已锁账，不能再调整勾稽确认。")
+        return redirect("reconciliation", period_id=period.id)
+    check = get_object_or_404(ReconciliationResult, id=check_id, period=period)
+    action = request.POST.get("action", "")
+    if action == "confirm":
+        check.confirmed = True
+        check.confirmed_at = timezone.now()
+        check.confirmed_by = request.user
+        check.confirmed_note = (request.POST.get("note", "") or "")[:255]
+        check.save(update_fields=["confirmed", "confirmed_at", "confirmed_by", "confirmed_note"])
+        messages.success(request, f"已确认差异「{check.check_name}」，不再阻断锁账。")
+    elif action == "unconfirm":
+        check.confirmed = False
+        check.confirmed_at = None
+        check.confirmed_by = None
+        check.confirmed_note = ""
+        check.save(update_fields=["confirmed", "confirmed_at", "confirmed_by", "confirmed_note"])
+        messages.success(request, f"已取消确认「{check.check_name}」。")
+    return redirect("reconciliation", period_id=period.id)
+
+
 def resolve_exception(request, period_id, exception_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     item = get_object_or_404(ExceptionItem, id=exception_id, period=period)

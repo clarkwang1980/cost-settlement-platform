@@ -186,6 +186,11 @@ urlpatterns = [
         name="reconciliation",
     ),
     path(
+        "periods/<int:period_id>/reconciliation/<int:check_id>/confirm/",
+        views.confirm_reconciliation,
+        name="confirm_reconciliation",
+    ),
+    path(
         "periods/<int:period_id>/exceptions/<int:exception_id>/resolve/",
         views.resolve_exception,
         name="resolve_exception",

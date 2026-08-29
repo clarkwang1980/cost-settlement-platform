@@ -619,6 +619,12 @@ def _reconciliation_status(difference, tolerance=Decimal("0.10")):
 
 
 def _build_reconciliations(period):
+    # 保留已确认的勾稽（用户确认过的差异，重建后自动恢复，避免重复确认）
+    confirmed_codes = set(
+        ReconciliationResult.objects.filter(
+            period=period, confirmed=True
+        ).values_list("check_code", flat=True)
+    )
     ReconciliationResult.objects.filter(period=period).delete()
 
     opening = (
@@ -801,6 +807,13 @@ def _build_reconciliations(period):
             "ending_amount": str(goods_issued["ending_amount"]),
         },
     )
+
+
+    # 恢复已确认的勾稽
+    if confirmed_codes:
+        ReconciliationResult.objects.filter(
+            period=period, check_code__in=confirmed_codes
+        ).update(confirmed=True)
 
 
 def ensure_workshop_settlements(period: AccountingPeriod):
@@ -1356,7 +1369,8 @@ def can_lock(period: AccountingPeriod):
     ).exists():
         return False, "仍有未处理的阻断异常。"
     if period.reconciliations.filter(
-        status=ReconciliationResult.Status.FAIL
+        status=ReconciliationResult.Status.FAIL,
+        confirmed=False,
     ).exists():
-        return False, "仍有未通过的勾稽项目。"
+        return False, "仍有未通过的勾稽项目（已确认差异的除外）。"
     return True, ""

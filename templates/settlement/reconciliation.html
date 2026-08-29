@@ -27,6 +27,20 @@
           <dt>期末发出商品</dt><dd>{{ item.details.ending_amount|default:"0"|floatformat:2|thousands }}</dd>
         </dl>
       {% endif %}
+      {% if item.status == 'fail' and period.status != 'locked' %}
+        <form method="post" action="{% url 'confirm_reconciliation' period.id item.id %}" class="action-pair" style="margin-top:0.6rem">
+          {% csrf_token %}
+          {% if item.confirmed %}
+            <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
+            <button class="mini-button muted" name="action" value="unconfirm">取消确认</button>
+          {% else %}
+            <input type="text" name="note" placeholder="确认说明（可选）" style="max-width:12rem">
+            <button class="mini-button" name="action" value="confirm">确认差异（允许锁账）</button>
+          {% endif %}
+        </form>
+      {% elif item.status == 'fail' and item.confirmed %}
+        <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
+      {% endif %}
     </article>
   {% empty %}<div class="empty-state"><strong>尚未生成勾稽结果</strong><p>执行完整结算后自动生成。</p></div>{% endfor %}
 </section>
