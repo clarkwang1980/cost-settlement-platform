@@ -2575,6 +2575,72 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                     )
 
 
+
+
+class PulpLedgerImportTests(TestCase):
+    """浆粕流水（原料+成品通用模板）：按业务类型分流导入。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="ledger-user", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+
+    def test_ledger_splits_by_business_type(self):
+        content = (
+            "创建时间,物料编号,物料名称,分类名称,物料规格,仓库名称,批次号,操作数量,单位名称,单价,金额,业务类型,车间,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,1000,千克,20,20000,领料出库,浆粕车间,7月领用\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,原材料,,原料仓,,500,千克,,,领料出库,浆粕车间,7月领用\n"
+            "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,产成品,,成品仓,,2000,千克,,,生产入库,浆粕车间,7月生产入库\n"
+            "2026-07-31,21.03,21.03 芳纶浆粕 DFP-103,产成品,,成品仓,,300,千克,,,销售出库,浆粕车间,7月销售出库\n"
+            "2026-07-31,示例-R99,示例物料,原材料,,,,1,千克,,,领料出库,,示例行\n"
+        ).encode("utf-8-sig")
+        uploaded = SimpleUploadedFile("pulp_ledger.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.PULP_LEDGER,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                process_batch(batch)
+        self.assertEqual(batch.row_count, 4)
+        # 领料出库 2 行 → PulpMaterial；生产入库/销售出库 2 行 → InventoryTransaction
+        self.assertEqual(self.period.pulp_materials.count(), 2)
+        self.assertEqual(
+            self.period.inventory_transactions.filter(
+                business_type__in=["生产入库", "销售出库"]
+            ).count(),
+            2,
+        )
+        HistoricalPrice.objects.create(
+            period=self.period, material_code="R82.101",
+            material_name="对位芳纶回收料-乱丝",
+            issue_price=Decimal("20"), receipt_price=Decimal("18"),
+        )
+
+        # 材料成本只统计领料出库行：金额用用户值 + 无金额行（金额=0，结算时按历史单价）
+        costs = collect_pulp_costs(self.period)
+        self.assertEqual(costs["material_fanglun"], Decimal("30000"))
+
+    def test_ledger_unsupported_business_type_raises(self):
+        content = (
+            "创建时间,物料编号,物料名称,操作数量,业务类型,备注\n"
+            "2026-07-31,R82.101,对位芳纶回收料-乱丝,1000,采购入库,\n"
+        ).encode("utf-8-sig")
+        uploaded = SimpleUploadedFile("pulp_ledger.csv", content, "text/csv")
+        with TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                batch = create_import_batch(
+                    period=self.period,
+                    kind=ImportBatch.Kind.PULP_LEDGER,
+                    uploaded_file=uploaded,
+                    user=self.user,
+                )
+                with self.assertRaises(ValueError):
+                    process_batch(batch)
+
 class PulpMaterialImportTests(TestCase):
     """浆粕原料流水：上传即材料成本来源；未上传时浆粕车间不能结转。"""
 

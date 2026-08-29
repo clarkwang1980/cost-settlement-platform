@@ -340,6 +340,7 @@ ALIASES = {
 # 浆粕专用资料类型：期初成品=期初存货格式，成品流水=库存流水格式，期末成品=期末存货格式
 ALIASES["pulp_opening"] = ALIASES["opening_inventory"]
 ALIASES["pulp_flow"] = ALIASES["inventory"]
+ALIASES["pulp_ledger"] = ALIASES["inventory"]
 ALIASES["pulp_ending"] = ALIASES["ending_inventory"]
 ALIASES["pulp_material"] = {
     "txn_date": ["创建时间", "日期", "领料日期"],
@@ -423,6 +424,7 @@ REQUIRED_FIELDS = {
     "pulp_flow": {"txn_date", "business_type", "material_code", "quantity"},
     "pulp_ending": {"material_code", "quantity"},
     "pulp_material": {"material_code", "quantity"},
+    "pulp_ledger": {"txn_date", "business_type", "material_code", "quantity"},
     "bom": {"work_order_no", "sub_item_code"},
     "issue_progress": {"work_order_no", "material_code"},
     "historical_price": {"period", "material_code"},
@@ -917,6 +919,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.PULP_FLOW: _import_inventory,
         ImportBatch.Kind.PULP_ENDING: _import_ending_inventory,
         ImportBatch.Kind.PULP_MATERIAL: _import_pulp_material,
+        ImportBatch.Kind.PULP_LEDGER: _import_pulp_ledger,
         ImportBatch.Kind.BOM: _import_bom,
         ImportBatch.Kind.ISSUE_PROGRESS: _import_issue_progress,
         ImportBatch.Kind.HISTORICAL_PRICE: _import_historical_price,
@@ -1714,4 +1717,25 @@ def _import_pulp_material(batch, row):
         unit_price=unit_price,
         amount=amount if amount is not None else Decimal("0"),
         remark=text(row.get("remark")),
+    )
+
+
+def _import_pulp_ledger(batch, row):
+    """浆粕流水（原料+成品通用模板）：按业务类型分流。
+    领料出库 → 浆粕原料流水（材料成本来源）；生产入库/销售出库 → 库存流水（成品）。"""
+    material_code = text(row.get("material_code"))
+    material_name = text(row.get("material_name"))
+    if (
+        (not material_code)
+        or material_code.startswith("示例")
+        or material_name.startswith("示例")
+    ):
+        return "skipped"
+    business_type = text(row.get("business_type"))
+    if "领料出库" in business_type:
+        return _import_pulp_material(batch, row)
+    if business_type in ("生产入库", "销售出库"):
+        return _import_inventory(batch, row)
+    raise ValueError(
+        f"浆粕流水业务类型「{business_type}」不支持：请用 领料出库/生产入库/销售出库。"
     )

@@ -23,7 +23,7 @@ class PeriodForm(forms.ModelForm):
 
 
 class UploadForm(forms.Form):
-    kind = forms.ChoiceField(label="资料类型", choices=ImportBatch.Kind.choices)
+    kind = forms.ChoiceField(label="资料类型", choices=[c for c in ImportBatch.Kind.choices if c[0] not in ("pulp_flow", "pulp_material")])
     file = forms.FileField(
         label="选择文件",
         help_text="支持CSV、XLSX和XLSM；同一文件不会重复导入。",

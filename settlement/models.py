@@ -92,6 +92,10 @@ class ImportBatch(models.Model):
             "pulp_ending",
             "浆粕期末成品",
         )
+        PULP_LEDGER = (
+            "pulp_ledger",
+            "浆粕流水（原料+成品通用）",
+        )
         PULP_MATERIAL = (
             "pulp_material",
             "浆粕原料流水",
