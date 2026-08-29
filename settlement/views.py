@@ -2676,6 +2676,67 @@ def _uploaded_ledger_rows(period, kind, queryset):
     return header, rows_out, best_count
 
 
+
+
+def _uploaded_inventory_raw(period):
+    """读该期间用户上传的库存流水原始文件，按上传原样返回 (sheet名, 表头, 数据行)。
+
+    数据直接取自上传文件（不经过数据库），因此单价/金额保持用户上传的原值，
+    不受结算回填影响；兼容 xlsx 与 csv。无上传文件时返回 None。"""
+    import csv as _csv
+    import io as _io
+    from pathlib import Path
+
+    def _read(path):
+        suffix = path.suffix.lower()
+        if suffix in (".xlsx", ".xlsm"):
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True, data_only=True)
+            try:
+                return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+            finally:
+                wb.close()
+        if suffix == ".csv":
+            raw = path.read_bytes()
+            for enc in ("utf-8-sig", "gb18030", "utf-8"):
+                try:
+                    return [list(r) for r in _csv.reader(_io.StringIO(raw.decode(enc)))]
+                except UnicodeDecodeError:
+                    continue
+        return []
+
+    batches = list(
+        period.import_batches.filter(kind="inventory")
+        .exclude(file="")
+        .order_by("created_at", "id")
+    )
+    if not batches:
+        return None
+    main_header = None
+    main_count = -1
+    all_data = []
+    for b in batches:
+        fp = Path(b.file.path)
+        if not fp.is_file():
+            continue
+        rows = _read(fp)
+        if not rows:
+            continue
+        header, data = rows[0], rows[1:]
+        if len(data) > main_count:
+            main_count = len(data)
+            main_header = header
+        all_data.extend(data)
+    if main_header is None:
+        return None
+    n = len(main_header)
+    aligned = [
+        (row[:n] + [None] * (n - len(row))) if len(row) < n else row[:n]
+        for row in all_data
+    ]
+    return ("库存流水", main_header, aligned)
+
+
 def _listing_rows(request, period, kind):
     """按 kind 返回 (工作表名, 表头, 数据行) 列表，筛选逻辑与列表页一致。"""
     sheets = []
@@ -2802,6 +2863,12 @@ def _listing_rows(request, period, kind):
         )
 
     if kind == "inventory_ledger":
+        raw_sheet = _uploaded_inventory_raw(period)
+        if raw_sheet is not None:
+            # 按用户上传原样导出（数据取原始文件，不经数据库回填）
+            sheets.append(raw_sheet)
+            return sheets
+
         txns = period.inventory_transactions.select_related("batch", "material")
         txns = _date_filter(request, txns, "txn_date", "txn_date")
         txns = _text_filters(
@@ -4704,7 +4771,7 @@ def export_center(request, period_id):
                 {"kind": "ending_inventory", "name": "期末存货",
                  "desc": "期末库存余额台账（物料、结存数量、单价、金额，系统自动计算）"},
                 {"kind": "inventory_ledger", "name": "库存流水",
-                 "desc": "本期间全部库存出入库流水（单据、物料、数量、单价、金额）"},
+                 "desc": "本月期间全部库存出入库流水，按你上传的原始文件原样导出（单价/金额保持上传原值，不含系统回填）"},
                 {"kind": "inventory_valuation", "name": "库存金额结转",
                  "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
                 {"kind": "price_table", "name": "单价表（历史单价·跨月对比）",
