@@ -2707,10 +2707,12 @@ def _uploaded_ledger_rows(period, kind, queryset):
 
 
 def _uploaded_inventory_raw(period):
-    """读该期间用户上传的库存流水原始文件，按上传原样返回 (sheet名, 表头, 数据行)。
+    """读最近一次成功上传的库存流水原始文件，按上传原样返回 (sheet名, 表头, 数据行)。
 
-    数据直接取自上传文件（不经过数据库），因此单价/金额保持用户上传的原值，
-    不受结算回填影响；兼容 xlsx 与 csv。无上传文件时返回 None。"""
+    以最近一次上传的批次为准（不拼接多个批次，避免表头列顺序差异导致导出与上传不一致），
+    表头通过 ALIASES 匹配定位；数据取该文件全部数据行，
+    单价/金额保持用户上传的原值，不受结算回填影响；兼容 xlsx 与 csv。
+    无上传文件时返回 None。"""
     import csv as _csv
     import io as _io
     from pathlib import Path
@@ -2733,16 +2735,16 @@ def _uploaded_inventory_raw(period):
                     continue
         return []
 
+    alias_map = {}
+    for _f, _names in ALIASES["inventory"].items():
+        for _n in _names:
+            alias_map[normalize_header(_n)] = _f
+
     batches = list(
         period.import_batches.filter(kind="inventory")
         .exclude(file="")
-        .order_by("created_at", "id")
+        .order_by("-created_at", "-id")
     )
-    if not batches:
-        return None
-    main_header = None
-    main_count = -1
-    all_data = []
     for b in batches:
         fp = Path(b.file.path)
         if not fp.is_file():
@@ -2750,19 +2752,18 @@ def _uploaded_inventory_raw(period):
         rows = _read(fp)
         if not rows:
             continue
-        header, data = rows[0], rows[1:]
-        if len(data) > main_count:
-            main_count = len(data)
-            main_header = header
-        all_data.extend(data)
-    if main_header is None:
-        return None
-    n = len(main_header)
-    aligned = [
-        (row[:n] + [None] * (n - len(row))) if len(row) < n else row[:n]
-        for row in all_data
-    ]
-    return ("库存流水", main_header, aligned)
+        # 定位真正表头行（跳过标题/说明行）
+        best = None
+        for idx, row in enumerate(rows[:15]):
+            hits = sum(1 for v in row if normalize_header(v) in alias_map)
+            if best is None or hits > best[0]:
+                best = (hits, idx)
+        if best is None or best[0] < 2:
+            continue
+        header = rows[best[1]]
+        data = rows[best[1] + 1:]
+        return ("库存流水", header, data)
+    return None
 
 
 def _listing_rows(request, period, kind):
