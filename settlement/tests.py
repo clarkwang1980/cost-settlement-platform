@@ -65,6 +65,7 @@ from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     HEADERS,
     build_profit_statement,
+    build_summary,
 )
 
 
@@ -2882,16 +2883,20 @@ class PulpMaterialImportTests(TestCase):
             collect_pulp_costs(self.period)
 
 
+
 class ProfitStatementTests(SettlementFixtureMixin, TestCase):
-    """损益表：逐行取销售台账、当月费用按终端收入占比分摊、导出 32 列。
+    """损益表：台账逐行 + 费用按【出库月份】分别录入并按该月收入占比分摊 + 月×渠道×大类汇总。
 
     口径（用户 2026-09-14 确认）：
     - 收入只取「终端销售收入」；射阳兰邦销售收入只作列展示；
     - 销售毛利 = 终端销售收入 − 销售成本；
-    - 税金及附加 / 管理费用 / 销售费用 / 财务费用 / 营业外收入 / 营业外支出 / 所得税费用
-      为用户录入的【当月发生额】，按「本行终端收入 ÷ 当月终端收入合计」分摊，尾差计入收入最大行；
+    - 7 项费用（税金及附加/管理费用/销售费用/财务费用/营业外收入/营业外支出/所得税费用）
+      按出库月份分别录入，每行按「本行终端收入 ÷ 该行所属出库月份终端收入合计」分摊，
+      尾差计入该月收入最大行 ⇒ 每月各项分摊合计 = 该月录入金额；
     - 营业利润 = 毛利 − 税及附加 − 三费；利润总额 = 营业利润 + 营业外收入 − 营业外支出；
-      净利润 = 利润总额 − 所得税费用。
+      净利润 = 利润总额 − 所得税费用；
+    - 汇总层级：月份 → 销售渠道（国内销售/国外销售/未分类）→ 销售大类，
+      月份可按出库期间或开票期间切换。
     """
 
     def setUp(self):
@@ -2902,21 +2907,39 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         self.batch = self.create_batch(
             self.period, ImportBatch.Kind.SALES_LEDGER, "pl"
         )
+        self.june = date(2026, 6, 1)
 
-    def _line(self, row_no, *, revenue, cost=None, quantity=Decimal("10"), lb=None):
+    _UNSET = object()
+
+    def _line(
+        self,
+        row_no,
+        *,
+        revenue,
+        cost=None,
+        quantity=Decimal("10"),
+        lb=None,
+        out_month=None,
+        invoice_month=_UNSET,
+        channel="国内销售",
+        category="纱线",
+        customer="测试客户",
+    ):
         return SalesLedgerLine.objects.create(
             period=self.period,
             batch=self.batch,
             row_no=row_no,
-            out_month=date(2026, 7, 1),
+            out_month=out_month or self.period.month,
             invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
-            invoice_month=date(2026, 7, 1),
-            channel="直销",
-            company="射阳兰邦",
+            invoice_month=(
+                self.period.month if invoice_month is self._UNSET else invoice_month
+            ),
+            channel=channel,
+            company="江苏盐城兰邦特种纺织集团有限责任公司",
             order_no="SO2026070001",
             customer_code="C001",
-            customer_name="测试客户",
-            sales_category="浆粕",
+            customer_name=customer,
+            sales_category=category,
             material_code="21.03",
             material_name="21.03 芳纶浆粕 DFP-103",
             specification="DFP-103",
@@ -2928,59 +2951,60 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             cost_amount=cost,
         )
 
-    def _expense(self, **kwargs):
-        return ProfitStatementExpense.objects.create(period=self.period, **kwargs)
-
-    def test_expenses_allocated_by_terminal_revenue_share(self):
-        self._line(1, revenue=Decimal("100"), cost=Decimal("10"))
-        self._line(2, revenue=Decimal("300"), cost=Decimal("30"))
-        self._line(3, revenue=Decimal("600"), cost=Decimal("60"))
-        self._expense(
-            tax_surcharge=Decimal("100"),
-            admin_expense=Decimal("200"),
-            selling_expense=Decimal("300"),
-            finance_expense=Decimal("400"),
-            non_operating_income=Decimal("50"),
-            non_operating_expense=Decimal("60"),
-            income_tax=Decimal("70"),
+    def _expense(self, month, **kwargs):
+        return ProfitStatementExpense.objects.create(
+            period=self.period, month=month, **kwargs
         )
 
-        rows = build_profit_statement(self.period)["rows"]
+    # —————————————— 分摊 ——————————————
 
+    def test_expenses_allocated_within_own_month(self):
+        # 6 月两行、7 月两行；两个月的费用各自分摊，互不串月
+        self._line(1, revenue=Decimal("100"), cost=Decimal("10"), out_month=self.june)
+        self._line(2, revenue=Decimal("300"), cost=Decimal("30"), out_month=self.june)
+        self._line(3, revenue=Decimal("200"), cost=Decimal("20"))
+        self._line(4, revenue=Decimal("600"), cost=Decimal("60"))
+        self._expense(self.june, tax_surcharge=Decimal("40"), admin_expense=Decimal("80"))
+        self._expense(self.period.month, tax_surcharge=Decimal("800"),
+                      admin_expense=Decimal("1600"))
+
+        rows = build_profit_statement(self.period)["rows"]
         self.assertEqual(
             [row["tax_surcharge"] for row in rows],
-            [Decimal("10.00"), Decimal("30.00"), Decimal("60.00")],
+            [Decimal("10.00"), Decimal("30.00"), Decimal("200.00"), Decimal("600.00")],
         )
         self.assertEqual(
             [row["admin_expense"] for row in rows],
-            [Decimal("20.00"), Decimal("60.00"), Decimal("120.00")],
+            [Decimal("20.00"), Decimal("60.00"), Decimal("400.00"), Decimal("1200.00")],
+        )
+        # 各月分摊合计 = 该月录入金额
+        self.assertEqual(
+            sum(row["tax_surcharge"] for row in rows if row["out_month"] == "2026-06"),
+            Decimal("40.00"),
         )
         self.assertEqual(
-            [row["selling_expense"] for row in rows],
-            [Decimal("30.00"), Decimal("90.00"), Decimal("180.00")],
+            sum(row["tax_surcharge"] for row in rows if row["out_month"] == "2026-07"),
+            Decimal("800.00"),
         )
-        self.assertEqual(
-            [row["finance_expense"] for row in rows],
-            [Decimal("40.00"), Decimal("120.00"), Decimal("240.00")],
-        )
-        self.assertEqual(
-            [row["non_operating_income"] for row in rows],
-            [Decimal("5.00"), Decimal("15.00"), Decimal("30.00")],
-        )
-        self.assertEqual(
-            [row["non_operating_expense"] for row in rows],
-            [Decimal("6.00"), Decimal("18.00"), Decimal("36.00")],
-        )
-        self.assertEqual(
-            [row["income_tax"] for row in rows],
-            [Decimal("7.00"), Decimal("21.00"), Decimal("42.00")],
-        )
+
+    def test_month_without_entry_gets_no_allocation(self):
+        # 没录费用的月份：分摊全为 0，营业利润 = 毛利
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), out_month=self.june)
+        self._line(2, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._expense(self.period.month, admin_expense=Decimal("100"))
+
+        rows = build_profit_statement(self.period)["rows"]
+        self.assertEqual(rows[0]["admin_expense"], Decimal("0.00"))
+        self.assertEqual(rows[0]["operating_profit"], Decimal("400.00"))
+        self.assertEqual(rows[1]["admin_expense"], Decimal("100.00"))
+        self.assertEqual(rows[1]["operating_profit"], Decimal("300.00"))
 
     def test_each_allocation_column_totals_to_entered_amount(self):
         # 三行收入不能被整除 → 每列分摊合计仍必须等于录入金额（尾差计入收入最大行）
         for row_no in (1, 2, 3):
             self._line(row_no, revenue=Decimal("333.33"), cost=Decimal("100"))
         expense = self._expense(
+            self.period.month,
             tax_surcharge=Decimal("100"),
             admin_expense=Decimal("200"),
             selling_expense=Decimal("300"),
@@ -3007,6 +3031,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
     def test_gross_to_net_formulas(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
         self._expense(
+            self.period.month,
             tax_surcharge=Decimal("10"),
             admin_expense=Decimal("20"),
             selling_expense=Decimal("30"),
@@ -3038,7 +3063,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
     def test_zero_terminal_revenue_rows_are_not_allocated(self):
         # 只填了射阳兰邦收入的行：收入为 0，不分摊费用，毛利率/净利润率显示为空
         self._line(1, revenue=Decimal("0"), cost=None, lb=Decimal("500"))
-        self._expense(admin_expense=Decimal("100"))
+        self._expense(self.period.month, admin_expense=Decimal("100"))
 
         data = build_profit_statement(self.period)
         self.assertEqual(data["lb_only_rows"], 1)
@@ -3048,8 +3073,95 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         self.assertIsNone(row["gross_margin"])
         self.assertIsNone(row["net_margin"])
 
-    def test_expense_entry_page_saves_and_exports(self):
-        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+    # —————————————— 汇总（月 → 渠道 → 大类）——————————————
+
+    def _summary(self, basis):
+        data = build_profit_statement(self.period)
+        return build_summary(data["rows"], basis)
+
+    def test_summary_by_month_channel_and_category(self):
+        # 7 月：国内-纱线 1000、国内-面料 500、国外-纱线 2000；6 月：国外-面料 100
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="面料")
+        self._line(3, revenue=Decimal("2000"), cost=Decimal("1000"),
+                   category="纱线", channel="国外销售")
+        self._line(4, revenue=Decimal("100"), cost=Decimal("60"),
+                   category="面料", channel="国外销售", out_month=self.june)
+
+        summary = self._summary("out")
+        by_key = {(r["month"], r["channel"], r["category"]): r for r in summary["rows"]}
+
+        domestic_yarn = by_key[("2026-07", "国内销售", "纱线")]
+        self.assertEqual(domestic_yarn["revenue"], Decimal("1000.00"))
+        self.assertEqual(domestic_yarn["gross"], Decimal("400.00"))
+
+        # 国内渠道小计 = 纱线 + 面料
+        domestic_total = by_key[("2026-07", "国内销售", "小计")]
+        self.assertEqual(domestic_total["revenue"], Decimal("1500.00"))
+        self.assertEqual(domestic_total["cost"], Decimal("850.00"))
+        self.assertEqual(domestic_total["gross"], Decimal("650.00"))
+
+        # 7 月月度小计
+        july_total = by_key[("2026-07", "小计", "")]
+        self.assertEqual(july_total["revenue"], Decimal("3500.00"))
+
+        # 总计
+        self.assertEqual(summary["grand_total"]["revenue"], Decimal("3600.00"))
+        self.assertEqual(summary["grand_total"]["cost"], Decimal("1910.00"))
+
+        # 渠道顺序：国内销售 → 国外销售；大类按收入倒序
+        channel_order = [r["channel"] for r in summary["rows"] if r["month"] == "2026-07"]
+        self.assertEqual(channel_order[0], "国内销售")
+        self.assertIn("国外销售", channel_order)
+        categories = [r["category"] for r in summary["rows"]
+                      if r["month"] == "2026-07" and r["channel"] == "国内销售"]
+        self.assertEqual(categories, ["纱线", "面料", "小计"])
+
+    def test_summary_puts_blank_channel_into_unclassified(self):
+        self._line(1, revenue=Decimal("100"), cost=Decimal("50"), channel="")
+        summary = self._summary("out")
+        self.assertIn(("2026-07", "未分类", "纱线"),
+                      {(r["month"], r["channel"], r["category"]) for r in summary["rows"]})
+
+    def test_summary_basis_invoice_month(self):
+        # 6 月发货、7 月开票 → 出库期间视图算 6 月；开票期间视图算 7 月；未开票归入「(未开票)」
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"),
+                   out_month=self.june, invoice_month=date(2026, 7, 1))
+        self._line(2, revenue=Decimal("200"), cost=Decimal("100"), invoice_month=None)
+
+        by_out = self._summary("out")
+        out_keys = {(r["month"]) for r in by_out["rows"] if r["level"] == "category"}
+        self.assertEqual(out_keys, {"2026-06", "2026-07"})
+
+        by_invoice = self._summary("invoice")
+        invoice_keys = {(r["month"]) for r in by_invoice["rows"] if r["level"] == "category"}
+        self.assertEqual(invoice_keys, {"2026-07", "(未开票)"})
+        # 合计不受口径影响
+        self.assertEqual(by_out["grand_total"]["revenue"], by_invoice["grand_total"]["revenue"])
+        self.assertEqual(by_out["grand_total"]["revenue"], Decimal("1200.00"))
+
+    def test_summary_expenses_follow_row_month(self):
+        # 费用按行所属出库月取数：6 月行用 6 月录的费用
+        self._line(1, revenue=Decimal("100"), cost=Decimal("10"), out_month=self.june)
+        self._line(2, revenue=Decimal("100"), cost=Decimal("10"))
+        self._expense(self.june, admin_expense=Decimal("30"))
+        self._expense(self.period.month, admin_expense=Decimal("70"))
+
+        summary = self._summary("out")
+        by_key = {(r["month"], r["channel"], r["category"]): r for r in summary["rows"]}
+        self.assertEqual(
+            by_key[("2026-06", "国内销售", "小计")]["admin_expense"], Decimal("30.00")
+        )
+        self.assertEqual(
+            by_key[("2026-07", "国内销售", "小计")]["admin_expense"], Decimal("70.00")
+        )
+        self.assertEqual(summary["grand_total"]["admin_expense"], Decimal("100.00"))
+
+    # —————————————— 页面与导出 ——————————————
+
+    def test_expense_entry_page_saves_each_month_and_exports(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), out_month=self.june)
+        self._line(2, revenue=Decimal("1000"), cost=Decimal("600"))
         client = self.client
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
@@ -3057,55 +3169,75 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         response = client.get(url)
         self.assertEqual(response.status_code, 200)
         for text in (
-            "当月费用录入", "税金及附加", "管理费用", "销售费用", "财务费用",
+            "按月费用录入", "税金及附加", "管理费用", "销售费用", "财务费用",
             "营业外收入", "营业外支出", "所得税费用",
             "销售毛利", "营业利润", "利润总额", "净利润", "净利润率",
+            "月度 × 销售渠道", "月份 × 销售渠道 × 销售大类",
         ):
             self.assertContains(response, text)
+        # 两个月份各一套输入框
+        self.assertContains(response, "exp_2026-06_admin_expense")
+        self.assertContains(response, "exp_2026-07_admin_expense")
 
         response = client.post(
             url,
             {
-                "tax_surcharge": "1,000",
-                "admin_expense": "2000",
-                "selling_expense": "3000",
-                "finance_expense": "4000",
-                "non_operating_income": "500",
-                "non_operating_expense": "600",
-                "income_tax": "700",
+                "basis": "out",
+                "exp_2026-06_admin_expense": "600",
+                "exp_2026-06_tax_surcharge": "1,000",
+                "exp_2026-07_admin_expense": "1000",
+                "exp_2026-07_income_tax": "700",
             },
         )
-        self.assertRedirects(response, url)
-        expense = ProfitStatementExpense.objects.get(period=self.period)
-        # 允许千分位输入
-        self.assertEqual(expense.tax_surcharge, Decimal("1000.00"))
-        self.assertEqual(expense.income_tax, Decimal("700.00"))
+        self.assertRedirects(response, url + "?basis=out")
+
+        june = ProfitStatementExpense.objects.get(period=self.period, month=self.june)
+        self.assertEqual(june.tax_surcharge, Decimal("1000.00"))  # 千分位可识别
+        self.assertEqual(june.admin_expense, Decimal("600.00"))
+        self.assertEqual(june.selling_expense, Decimal("0.00"))
+        july = ProfitStatementExpense.objects.get(period=self.period, month=self.period.month)
+        self.assertEqual(july.admin_expense, Decimal("1000.00"))
+        self.assertEqual(july.income_tax, Decimal("700.00"))
+
+        # 开票期间视图可切换
+        self.assertEqual(client.get(url + "?basis=invoice").status_code, 200)
+        self.assertEqual(client.get(url + "?basis=zzz").status_code, 200)
 
         export = client.get(reverse("profit_statement_export", args=[self.period.id]))
         self.assertEqual(export.status_code, 200)
         workbook = load_workbook(BytesIO(export.content))
-        sheet = workbook.active
-        self.assertEqual(sheet.title, "损益表")
         self.assertEqual(
-            [sheet.cell(1, column).value for column in range(1, len(HEADERS) + 1)],
+            workbook.sheetnames, ["损益表", "汇总-按出库期间", "汇总-按开票期间"]
+        )
+        detail = workbook["损益表"]
+        self.assertEqual(
+            [detail.cell(1, column).value for column in range(1, len(HEADERS) + 1)],
             list(HEADERS),
         )
-        # 表头 + 1 数据行 + 合计行
-        self.assertEqual(sheet.max_row, 3)
-        self.assertEqual(float(sheet.cell(2, 13).value), 1000.0)
+        self.assertEqual(detail.max_row, 4)  # 表头 + 2 行 + 合计
+        summary_sheet = workbook["汇总-按出库期间"]
+        self.assertEqual(
+            [summary_sheet.cell(1, column).value for column in range(1, 4)],
+            ["月份", "销售渠道", "销售大类"],
+        )
+        # 汇总表最后一行是合计，收入 = 2000
+        self.assertEqual(summary_sheet.cell(summary_sheet.max_row, 1).value, "合计")
+        self.assertEqual(float(summary_sheet.cell(summary_sheet.max_row, 5).value), 2000.0)
 
     def test_locked_period_keeps_expenses_unchanged(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
-        self._expense(admin_expense=Decimal("100"))
+        self._expense(self.period.month, admin_expense=Decimal("100"))
         self.period.status = AccountingPeriod.Status.LOCKED
         self.period.save(update_fields=["status"])
 
         client = self.client
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
-        response = client.post(url, {"admin_expense": "999"})
-        self.assertRedirects(response, url)
+        response = client.post(url, {"exp_2026-07_admin_expense": "999"})
+        self.assertRedirects(response, url + "?basis=out")
         self.assertEqual(
-            ProfitStatementExpense.objects.get(period=self.period).admin_expense,
+            ProfitStatementExpense.objects.get(
+                period=self.period, month=self.period.month
+            ).admin_expense,
             Decimal("100.00"),
         )

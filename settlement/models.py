@@ -1453,18 +1453,20 @@ class PulpMaterial(models.Model):
         return f"{self.period} {self.material_code} {self.material_name}"
 
 class ProfitStatementExpense(models.Model):
-    """损益表：当月发生的税项与费用（在「损益表」页面录入）。
+    """损益表：某个月份发生的税项与费用（在「损益表」页面按月录入）。
 
-    这些金额是【当月总额】，页面按「本行终端销售收入 ÷ 当月终端销售收入合计」
-    的比例分摊到销售台账的每一行，再逐行算营业利润、利润总额、净利润。
+    这些金额是该月【当月发生额】，页面按「本行终端销售收入 ÷ 该行所属出库月份的
+    终端销售收入合计」的比例分摊到销售台账的每一行，再逐行算营业利润、利润总额、净利润。
+    月份按台账行的【出库月份】归属：4 月、5 月…… 各录一套，互不串月。
     """
 
-    period = models.OneToOneField(
+    period = models.ForeignKey(
         AccountingPeriod,
         on_delete=models.CASCADE,
-        related_name="profit_expense",
+        related_name="profit_expenses",
         verbose_name="核算期间",
     )
+    month = models.DateField(verbose_name="费用所属月份(月首，按出库月份)")
     tax_surcharge = models.DecimalField(
         max_digits=20, decimal_places=2, default=ZERO, verbose_name="税金及附加"
     )
@@ -1497,8 +1499,14 @@ class ProfitStatementExpense(models.Model):
     )
 
     class Meta:
+        ordering = ["month"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "month"], name="unique_profit_expense_period_month"
+            )
+        ]
         verbose_name = "损益表费用录入"
         verbose_name_plural = "损益表费用录入"
 
     def __str__(self):
-        return f"{self.period} 损益表费用"
+        return f"{self.period} {self.month:%Y-%m} 损益表费用"

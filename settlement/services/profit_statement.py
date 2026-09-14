@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
-"""损益表：销售台账逐行 + 当月费用按「终端销售收入占比」分摊。
+"""损益表：销售台账逐行 + 按月录入的当月费用，按「当月终端收入占比」分摊。
 
 口径（2026-09-14 与用户确认）：
 - 收入 = 终端销售收入（射阳兰邦销售收入只作列展示，不参与计算）；
 - 销售成本 = 平台按月末加权平均价算出的成本（台账行 cost_amount，结算后回填）；
 - 销售毛利 = 终端销售收入 − 销售成本；销售毛利率 = 销售毛利 ÷ 终端销售收入；
-- 用户录入的 7 项【当月发生额】按「本行终端销售收入 ÷ 当月终端销售收入合计」分摊到每一行
-  （四舍五入到分，尾差调整到收入最大的一行，保证各列合计 = 录入金额）：
-  税金及附加 / 管理费用 / 销售费用 / 财务费用 / 营业外收入 / 营业外支出 / 所得税费用；
+- 税金及附加 / 管理费用 / 销售费用 / 财务费用 / 营业外收入 / 营业外支出 / 所得税费用
+  按【出库月份】分别录入（4 月、5 月…… 各录一套），每行按
+  「本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计」分摊，
+  四舍五入到分、尾差计入该月收入最大的一行 ⇒ 每月各项分摊合计 = 该月录入金额；
 - 营业利润 = 销售毛利 − 税金及附加 − 管理费用 − 销售费用 − 财务费用；
 - 利润总额 = 营业利润 + 营业外收入 − 营业外支出；
-- 净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入。
+- 净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入；
+- 汇总可按【出库期间】或【开票期间】分组（只改分组口径，每行数字不变），
+  分组层级：月份 → 销售渠道（国内销售/国外销售/未分类）→ 销售大类。
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
 from settlement.models import ProfitStatementExpense
@@ -56,7 +60,7 @@ ROW_KEYS = (
     "income_tax", "net_profit", "net_margin",
 )
 
-#: 需要求和的键（合计行）
+#: 需要求和的键（合计行 / 汇总行）
 TOTAL_KEYS = (
     "revenue", "lb_amount", "quantity", "cost", "gross",
     "tax_surcharge", "admin_expense", "selling_expense", "finance_expense",
@@ -65,6 +69,53 @@ TOTAL_KEYS = (
 )
 
 EXPENSE_TOTAL_FIELDS = tuple(field for field, _label in ALLOCATION_FIELDS)
+
+#: 渠道归集：台账留空的一律进「未分类」，保证行数不丢
+UNCLASSIFIED_CHANNEL = "未分类"
+CHANNEL_ORDER = ("国内销售", "国外销售", UNCLASSIFIED_CHANNEL)
+UNINVOICED_LABEL = "(未开票)"
+
+#: 汇总口径：按出库期间 / 按开票期间
+BASIS_OUT = "out"
+BASIS_INVOICE = "invoice"
+BASIS_CHOICES = ((BASIS_OUT, "按出库期间"), (BASIS_INVOICE, "按开票期间"))
+BASIS_LABELS = dict(BASIS_CHOICES)
+
+#: 汇总表指标（键 -> 表头）
+SUMMARY_METRICS = (
+    ("quantity", "销售数量"),
+    ("revenue", "终端销售收入"),
+    ("lb_amount", "射阳兰邦销售收入"),
+    ("cost", "销售成本"),
+    ("gross", "销售毛利"),
+    ("gross_margin", "销售毛利率(%)"),
+    ("tax_surcharge", "税金及附加"),
+    ("admin_expense", "管理费用"),
+    ("selling_expense", "销售费用"),
+    ("finance_expense", "财务费用"),
+    ("operating_profit", "营业利润"),
+    ("non_operating_income", "营业外收入"),
+    ("non_operating_expense", "营业外支出"),
+    ("total_profit", "利润总额"),
+    ("income_tax", "所得税费用"),
+    ("net_profit", "净利润"),
+    ("net_margin", "净利润率(%)"),
+)
+SUMMARY_HEADERS = ("月份", "销售渠道", "销售大类") + tuple(
+    label for _key, label in SUMMARY_METRICS
+)
+SUMMARY_KEYS = ("month", "channel", "category") + tuple(
+    key for key, _label in SUMMARY_METRICS
+)
+
+#: 月度 × 渠道 总览的指标
+PIVOT_METRICS = (
+    "revenue", "cost", "gross", "gross_margin",
+    "operating_profit", "net_profit", "net_margin",
+)
+PIVOT_HEADERS = ("月份", "销售渠道") + tuple(
+    label for key, label in SUMMARY_METRICS if key in PIVOT_METRICS
+)
 
 
 def _dec(value) -> Decimal:
@@ -86,14 +137,56 @@ def _pct(numerator: Decimal, denominator: Decimal):
     )
 
 
+def month_label(value) -> str:
+    return value.strftime("%Y-%m") if value else ""
+
+
 def row_values(row: dict) -> list:
     """按 HEADERS 顺序取值（用于导出）。"""
     return [row.get(key) for key in ROW_KEYS]
 
 
-def get_expense(period) -> ProfitStatementExpense:
-    expense, _created = ProfitStatementExpense.objects.get_or_create(period=period)
+def summary_row_values(row: dict) -> list:
+    """按 SUMMARY_HEADERS 顺序取值（用于导出）。"""
+    return [row.get(key) for key in SUMMARY_KEYS]
+
+
+# ———————————————————————— 费用录入 ————————————————————————
+
+
+def get_expense(period, month) -> ProfitStatementExpense:
+    expense, _created = ProfitStatementExpense.objects.get_or_create(
+        period=period, month=month
+    )
     return expense
+
+
+def expense_models(period) -> dict:
+    """{月首日期: ProfitStatementExpense}。"""
+    return {
+        expense.month: expense
+        for expense in ProfitStatementExpense.objects.filter(period=period)
+    }
+
+
+def expense_entries(period) -> dict:
+    """{月首日期: {字段: Decimal}}（只含已录入的月份，未录入的按 0 处理）。"""
+    return {
+        month: {
+            field: _dec(getattr(expense, field)) for field, _label in ALLOCATION_FIELDS
+        }
+        for month, expense in expense_models(period).items()
+    }
+
+
+def ledger_months(period) -> list:
+    """台账里出现过的【出库月份】（月首日期，升序）——费用按月录入的依据。"""
+    months = {
+        value.replace(day=1)
+        for value in period.sales_ledger_lines.values_list("out_month", flat=True)
+        if value
+    }
+    return sorted(months)
 
 
 def ensure_ledger_costs(period) -> int:
@@ -106,38 +199,68 @@ def ensure_ledger_costs(period) -> int:
     return 0
 
 
-def build_profit_statement(period, expense=None) -> dict:
-    """组装损益表：返回 {headers, rows, totals, 以及若干提示标志}。"""
-    backfilled = ensure_ledger_costs(period)
-    expense = expense or get_expense(period)
-    lines = list(period.sales_ledger_lines.order_by("row_no"))
+# ———————————————————————— 明细 ————————————————————————
 
-    revenues = [_dec(line.terminal_amount) for line in lines]
-    revenue_total = sum(revenues, ZERO)
 
-    # —— 当月费用按「行终端收入 ÷ 当月终端收入合计」分摊（尾差给收入最大的行）——
-    allocated = {field: [ZERO] * len(lines) for field in EXPENSE_TOTAL_FIELDS}
-    if lines and revenue_total > ZERO:
-        max_index = max(range(len(lines)), key=lambda i: revenues[i])
+def _allocate(month_of_row, revenues, expenses) -> dict:
+    """按「本行收入 ÷ 所属出库月收入合计 × 该月录入金额」逐行分摊。
+
+    尾差计入该月收入最大的一行，保证每月各项分摊合计 = 该月录入金额；
+    没有录入该月费用时，该月所有行分摊额为 0。
+    """
+    allocated = {field: [ZERO] * len(revenues) for field in EXPENSE_TOTAL_FIELDS}
+    by_month = defaultdict(list)
+    for index, month in enumerate(month_of_row):
+        by_month[month].append(index)
+
+    for month, indexes in by_month.items():
+        entry = expenses.get(month)
+        if not entry:
+            continue
+        month_revenue = sum((revenues[i] for i in indexes), ZERO)
+        if month_revenue <= ZERO:
+            continue
+        biggest = max(indexes, key=lambda i: revenues[i])
         for field in EXPENSE_TOTAL_FIELDS:
-            total = _dec(getattr(expense, field))
+            total = _q(_dec(entry.get(field)))
             if total == ZERO:
                 continue
             used = ZERO
-            for index, revenue in enumerate(revenues):
+            for index in indexes:
+                revenue = revenues[index]
                 if revenue <= ZERO:
                     continue
-                amount = _q(revenue * total / revenue_total)
+                amount = _q(revenue * total / month_revenue)
                 allocated[field][index] = amount
                 used += amount
             residual = total - used
-            if residual != ZERO and revenues[max_index] > ZERO:
-                allocated[field][max_index] += residual
+            if residual != ZERO and revenues[biggest] > ZERO:
+                allocated[field][biggest] += residual
+    return allocated
+
+
+def build_profit_statement(period, expenses=None) -> dict:
+    """组装损益表：返回 {headers, rows, totals, months(按月录入信息), 若干提示标志}。"""
+    backfilled = ensure_ledger_costs(period)
+    if expenses is None:
+        expenses = expense_entries(period)
+    models = expense_models(period)
+    lines = list(period.sales_ledger_lines.order_by("row_no"))
+
+    revenues = [_dec(line.terminal_amount) for line in lines]
+    month_of_row = [
+        line.out_month.replace(day=1) if line.out_month else None for line in lines
+    ]
+    revenue_total = sum(revenues, ZERO)
+
+    allocated = _allocate(month_of_row, revenues, expenses)
 
     rows = []
     sums = {key: ZERO for key in TOTAL_KEYS}
     missing_cost_rows = 0
     lb_only_rows = 0
+    month_stats = defaultdict(lambda: {"row_count": 0, "revenue": ZERO})
+
     for index, line in enumerate(lines):
         revenue = revenues[index]
         lb_amount = _dec(line.lb_amount)
@@ -161,12 +284,15 @@ def build_profit_statement(period, expense=None) -> dict:
         if revenue > ZERO and line.cost_amount is None:
             missing_cost_rows += 1
 
+        out_month = month_of_row[index]
+        if out_month:
+            month_stats[out_month]["row_count"] += 1
+            month_stats[out_month]["revenue"] += revenue
+
         row = {
             "seq": line.row_no,
-            "out_month": line.out_month.strftime("%Y-%m") if line.out_month else "",
-            "invoice_month": (
-                line.invoice_month.strftime("%Y-%m") if line.invoice_month else ""
-            ),
+            "out_month": month_label(line.out_month),
+            "invoice_month": month_label(line.invoice_month),
             "channel": line.channel,
             "company": line.company,
             "order_no": line.order_no,
@@ -196,6 +322,11 @@ def build_profit_statement(period, expense=None) -> dict:
             "income_tax": income_tax,
             "net_profit": net_profit,
             "net_margin": _pct(net_profit, revenue),
+            # 汇总用维度（明细表不显示）
+            "month_out_key": month_label(out_month),
+            "month_invoice_key": month_label(line.invoice_month) or UNINVOICED_LABEL,
+            "channel_key": (line.channel or "").strip() or UNCLASSIFIED_CHANNEL,
+            "category_key": (line.sales_category or "").strip() or UNCLASSIFIED_CHANNEL,
         }
         for key in TOTAL_KEYS:
             sums[key] += row[key]
@@ -209,27 +340,192 @@ def build_profit_statement(period, expense=None) -> dict:
     totals["gross_margin"] = _pct(sums["gross"], sums["revenue"])
     totals["net_margin"] = _pct(sums["net_profit"], sums["revenue"])
 
+    months = []
+    for month in sorted(month_stats):
+        stats = month_stats[month]
+        expense = models.get(month)
+        entered = expenses.get(month)
+        months.append(
+            {
+                "month": month,
+                "key": month_label(month),
+                "row_count": stats["row_count"],
+                "revenue": _q(stats["revenue"]),
+                "has_revenue": stats["revenue"] > ZERO,
+                "entered": entered is not None,
+                "has_values": bool(
+                    entered
+                    and any(_dec(entered.get(field)) != ZERO for field, _label in ALLOCATION_FIELDS)
+                ),
+                "values": {
+                    field: _q(_dec((entered or {}).get(field)))
+                    for field, _label in ALLOCATION_FIELDS
+                },
+                "updated_at": expense.updated_at if expense else None,
+                "updated_by": expense.updated_by if expense else None,
+            }
+        )
+
     return {
         "period": period,
-        "expense": expense,
         "headers": HEADERS,
         "rows": rows,
         "totals": totals,
+        "months": months,
         "revenue_total": revenue_total,
-        "entered_totals": {
-            field: _dec(getattr(expense, field)) for field in EXPENSE_TOTAL_FIELDS
+        "expense_totals": {
+            field: _q(
+                sum((_dec(entry.get(field)) for entry in expenses.values()), ZERO)
+            )
+            for field, _label in ALLOCATION_FIELDS
         },
         "missing_cost_rows": missing_cost_rows,
         "lb_only_rows": lb_only_rows,
         "backfilled": backfilled,
         "has_valuation": period.inventory_valuations.exists(),
         "row_count": len(rows),
+        "no_revenue_months": [
+            item["key"] for item in months if item["entered"] and not item["has_revenue"]
+        ],
+        "months_without_expense": [
+            item["key"] for item in months if not item["entered"]
+        ],
     }
 
 
-def build_profit_statement_sheet(period):
-    """导出用：(sheet 列表, 数据)。sheet = (工作表名, 表头, 数据行)。"""
-    data = build_profit_statement(period)
-    rows = [row_values(row) for row in data["rows"]]
-    rows.append(row_values(data["totals"]))
-    return [("损益表", list(HEADERS), rows)], data
+# ———————————————————————— 汇总（月 → 渠道 → 大类）————————————————————————
+
+
+def _accumulate(rows) -> dict:
+    acc = {key: ZERO for key in TOTAL_KEYS}
+    for row in rows:
+        for key in TOTAL_KEYS:
+            acc[key] += row[key]
+    metrics = {key: _q(value) for key, value in acc.items()}
+    metrics["gross_margin"] = _pct(metrics["gross"], metrics["revenue"])
+    metrics["net_margin"] = _pct(metrics["net_profit"], metrics["revenue"])
+    return metrics
+
+
+def _channel_sort_key(channel: str):
+    if channel in CHANNEL_ORDER:
+        return (0, CHANNEL_ORDER.index(channel), "")
+    return (1, len(CHANNEL_ORDER), channel)
+
+
+def _month_sort_key(label: str):
+    # “(未开票)”固定排在最后
+    return (label == UNINVOICED_LABEL, label)
+
+
+def build_summary(rows, basis: str = BASIS_OUT) -> dict:
+    """按 月份 → 销售渠道 → 销售大类 汇总；含渠道小计、月度小计与总计。"""
+    key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
+    tree = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    for row in rows:
+        tree[row[key_field]][row["channel_key"]][row["category_key"]].append(row)
+
+    flat = []
+    grand_rows = []
+    month_blocks = []
+
+    for month in sorted(tree, key=_month_sort_key):
+        channels = tree[month]
+        month_rows = []
+        channel_blocks = []
+        for channel in sorted(channels, key=_channel_sort_key):
+            categories = channels[channel]
+            channel_items = []
+            channel_rows = []
+
+            def _category_sort_key(name, _categories=categories):
+                total = sum((item["revenue"] for item in _categories[name]), ZERO)
+                return (-total, name)
+
+            for category in sorted(categories, key=_category_sort_key):
+                items = categories[category]
+                channel_items.extend(items)
+                row = {
+                    "level": "category",
+                    "month": month,
+                    "channel": channel,
+                    "category": category,
+                    **_accumulate(items),
+                }
+                flat.append(row)
+                channel_rows.append(row)
+
+            channel_total = _accumulate(channel_items)
+            channel_total_row = {
+                "level": "channel",
+                "month": month,
+                "channel": channel,
+                "category": "小计",
+                **channel_total,
+            }
+            flat.append(channel_total_row)
+            channel_blocks.append(
+                {"channel": channel, "total": channel_total_row, "rows": channel_rows}
+            )
+            month_rows.extend(channel_items)
+
+        month_total_row = {
+            "level": "month",
+            "month": month,
+            "channel": "小计",
+            "category": "",
+            **_accumulate(month_rows),
+        }
+        flat.append(month_total_row)
+        month_blocks.append(
+            {"month": month, "total": month_total_row, "channels": channel_blocks}
+        )
+        grand_rows.extend(month_rows)
+
+    grand_total = _accumulate(grand_rows)
+    grand_total_row = {
+        "level": "grand",
+        "month": "合计",
+        "channel": "",
+        "category": "",
+        **grand_total,
+    }
+    flat.append(grand_total_row)
+
+    return {
+        "basis": basis,
+        "basis_label": BASIS_LABELS.get(basis, BASIS_LABELS[BASIS_OUT]),
+        "months": month_blocks,
+        "grand_total": grand_total,
+        "grand_total_row": grand_total_row,
+        "rows": flat,
+        "headers": SUMMARY_HEADERS,
+        "keys": SUMMARY_KEYS,
+        "pivot_rows": [row for row in flat if row["level"] in ("channel", "month", "grand")],
+        "pivot_headers": PIVOT_HEADERS,
+        "pivot_keys": ("month", "channel") + PIVOT_METRICS,
+    }
+
+
+def build_profit_statement_sheet(period, expenses=None):
+    """导出用：(sheet 列表, 数据)。
+
+    sheet = (工作表名, 表头, 数据行)。工作表：损益表明细 + 两张汇总（出库期间/开票期间）。
+    """
+    data = build_profit_statement(period, expenses=expenses)
+    detail_rows = [row_values(row) for row in data["rows"]]
+    detail_rows.append(row_values(data["totals"]))
+    sheets = [("损益表", list(HEADERS), detail_rows)]
+    for basis, title in (
+        (BASIS_OUT, "汇总-按出库期间"),
+        (BASIS_INVOICE, "汇总-按开票期间"),
+    ):
+        summary = build_summary(data["rows"], basis)
+        sheets.append(
+            (
+                title,
+                list(SUMMARY_HEADERS),
+                [summary_row_values(row) for row in summary["rows"]],
+            )
+        )
+    return sheets, data

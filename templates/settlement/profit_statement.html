@@ -7,8 +7,8 @@
     <p class="eyebrow">PROFIT &amp; LOSS</p>
     <h1>损益表</h1>
     <p>
-      销售台账逐行 + 当月费用按「本行终端销售收入 ÷ 当月终端销售收入合计」分摊；
-      销售毛利 = 终端销售收入 − 销售成本。
+      销售台账逐行 + 按月录入的当月费用，按「本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计」分摊；
+      销售毛利 = 终端销售收入 − 销售成本；汇总层级：月份 → 销售渠道（国内/国外）→ 销售大类。
     </p>
   </div>
   <div class="heading-actions">
@@ -39,6 +39,11 @@
   这些行收入为 0、毛利为负、也不参与费用分摊。
 </div>
 {% endif %}
+{% if data.no_revenue_months %}
+<div class="message message-error">
+  这些月份录了费用但该月终端销售收入为 0，费用无法分摊：{{ data.no_revenue_months|join:"、" }}。
+</div>
+{% endif %}
 {% if not data.revenue_total %}
 <div class="message message-error">本月终端销售收入合计为 0，费用无法分摊。</div>
 {% endif %}
@@ -47,33 +52,141 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">MONTHLY COSTS</p>
-      <h2>当月费用录入</h2>
+      <h2>按月费用录入</h2>
     </div>
-    <span class="pill">填当月发生额 → 保存后自动分摊到每一行</span>
+    <span class="pill">每个月各填一套当月发生额 → 保存后按该月收入占比摊到该月每一行</span>
   </div>
+  {% if months %}
   <form method="post" class="stack-form">
     {% csrf_token %}
-    <div class="filter-grid wide">
-      {% for field in fields %}
-      <label>{{ field.label }}
-        <input name="{{ field.name }}" type="number" step="0.01"
-               value="{{ field.value|floatformat:2 }}">
-      </label>
-      {% endfor %}
+    <input type="hidden" name="basis" value="{{ basis }}">
+    {% for item in months %}
+    <div class="month-expense-block" style="border:1px solid #dbe3ec;border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <strong>{{ item.key }}</strong>
+        <span class="muted-text">
+          该月终端销售收入 {{ item.revenue|thousands }}；台账 {{ item.row_count }} 行。
+          {% if item.has_values %}已录入{% if item.updated_at %}（{{ item.updated_at|date:"Y-m-d H:i" }}{% if item.updated_by %} {{ item.updated_by }}{% endif %}）{% endif %}{% else %}未录入（按 0 处理）{% endif %}
+        </span>
+      </div>
+      <div class="filter-grid wide">
+        {% for field in item.fields %}
+        <label>{{ field.label }}
+          <input name="{{ field.name }}" type="number" step="0.01" value="{{ field.value|floatformat:2 }}">
+        </label>
+        {% endfor %}
+      </div>
     </div>
+    {% endfor %}
     <div class="filter-actions">
       <button class="button primary" type="submit">保存并重新计算</button>
       <span class="muted-text">
-        分摊规则：本行分摊额 = 本行终端销售收入 ÷ 当月终端销售收入合计 × 当月金额；
-        四舍五入到分，尾差计入收入最大的那一行（保证每列合计 = 你录入的金额）。
+        分摊规则：本行分摊额 = 本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计 × 该月金额；
+        四舍五入到分，尾差计入该月收入最大的那一行（保证每月每列合计 = 你录入的金额）。
+        月份按台账行的「出库期间」归属。
       </span>
     </div>
   </form>
-  {% if expense.updated_at %}
-  <p class="muted-text">
-    最近保存：{{ expense.updated_at|date:"Y-m-d H:i" }}{% if expense.updated_by %}（{{ expense.updated_by }}）{% endif %}
-  </p>
+  {% else %}
+  <p class="muted-text">本期还没有销售台账，请先在「资料导入」上传销售台账（出库+开票）。</p>
   {% endif %}
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">SUMMARY</p>
+      <h2>汇总（{{ summary.basis_label }}）</h2>
+    </div>
+    <div class="heading-actions">
+      {% for value, label in basis_choices %}
+        {% if value == basis %}
+        <span class="button primary" style="pointer-events:none;">{{ label }}</span>
+        {% else %}
+        <a class="button secondary" href="?basis={{ value }}">{{ label }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <h3 style="margin-top:6px;">月度 × 销售渠道</h3>
+  <div class="table-scroll" style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>月份</th>
+          <th>销售渠道</th>
+          <th>终端销售收入</th>
+          <th>销售成本</th>
+          <th>销售毛利</th>
+          <th>销售毛利率</th>
+          <th>营业利润</th>
+          <th>净利润</th>
+          <th>净利润率</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summary.pivot_rows %}
+        <tr{% if row.level == 'month' %} class="total-row" style="font-weight:600;background:#eef5ff;"{% elif row.level == 'channel' %} style="background:#f7fafd;"{% elif row.level == 'grand' %} class="total-row" style="font-weight:700;background:#e6f0fb;"{% endif %}>
+          <td>{{ row.month }}</td>
+          <td>{{ row.channel }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9">暂无数据。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:18px;">月份 × 销售渠道 × 销售大类</h3>
+  <div class="table-scroll" style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          {% for header in summary.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summary.rows %}
+        <tr{% if row.level == 'month' %} class="total-row" style="font-weight:600;background:#eef5ff;"{% elif row.level == 'channel' %} style="background:#f7fafd;font-weight:600;"{% elif row.level == 'grand' %} class="total-row" style="font-weight:700;background:#e6f0fb;"{% endif %}>
+          <td>{{ row.month }}</td>
+          <td>{{ row.channel }}</td>
+          <td>{{ row.category }}</td>
+          <td style="text-align:right;">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{{ row.lb_amount|thousands }}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ row.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="20">本期还没有销售台账。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">
+    「小计」= 该渠道小计；月份行的渠道列显示「小计」= 该月合计；最后一行是全部合计。
+    销售渠道取自台账「销售渠道」列（国内销售 / 国外销售），该列留空的行归入「未分类」。
+  </p>
 </section>
 
 <section class="summary-strip">
@@ -143,7 +256,7 @@
         {% endfor %}
         {% if page.object_list %}
         <tr class="total-row" style="font-weight:600;background:#f2f7fd;">
-          <td colspan="12">合计（全月）</td>
+          <td colspan="12">合计（全部月份）</td>
           <td style="text-align:right;">{{ data.totals.revenue|thousands }}</td>
           <td style="text-align:right;">—</td>
           <td style="text-align:right;">{{ data.totals.lb_amount|thousands }}</td>
@@ -178,10 +291,12 @@
     <li>收入口径：只取「终端销售收入」；射阳兰邦销售收入只作列展示，不参与毛利与分摊。</li>
     <li>销售成本 = 销售数量 × 该产品月末加权平均价（由平台在结算后回填，与库存账一致）。</li>
     <li>销售毛利 = 终端销售收入 − 销售成本；销售毛利率 = 销售毛利 ÷ 终端销售收入（百分数，2位小数）。</li>
-    <li>税金及附加、管理费用、销售费用、财务费用、营业外收入、营业外支出、所得税费用：你填当月发生额，按本行收入占比分摊。</li>
+    <li>费用按【出库月份】分别录入（例：4 月、5 月各录一套），每行按「本行收入 ÷ 该行所属出库月份收入合计」分摊到行。</li>
     <li>营业利润 = 销售毛利 − 税金及附加 − 管理费用 − 销售费用 − 财务费用。</li>
     <li>利润总额 = 营业利润 + 营业外收入 − 营业外支出；净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入。</li>
-    <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致。</li>
+    <li>汇总可切换【按出库期间】/【按开票期间】：只改分组口径，每行的金额不变；未开票的行在开票期间视图里归入「(未开票)」。</li>
+    <li>销售渠道直接取台账「销售渠道」列（国内销售 / 国外销售，由你的台账按终端客户口径给出）；该列留空的行归入「未分类」。</li>
+    <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>
   </ul>
 </section>
 {% endblock %}
