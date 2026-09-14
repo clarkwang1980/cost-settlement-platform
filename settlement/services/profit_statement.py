@@ -117,6 +117,24 @@ PIVOT_HEADERS = ("月份", "销售渠道") + tuple(
     label for key, label in SUMMARY_METRICS if key in PIVOT_METRICS
 )
 
+#: 页面顶端「期间 × 销售类别」汇总表的指标（按用户 2026-09-14 指定的 8 列）
+CATEGORY_SUMMARY_METRICS = (
+    ("revenue", "销售收入"),
+    ("cost", "销售成本"),
+    ("gross", "销售毛利"),
+    ("gross_margin", "销售毛利率(%)"),
+    ("operating_profit", "营业利润"),
+    ("total_profit", "利润总额"),
+    ("net_profit", "净利润"),
+    ("net_margin", "净利润率(%)"),
+)
+CATEGORY_SUMMARY_HEADERS = ("期间", "销售类别") + tuple(
+    label for _key, label in CATEGORY_SUMMARY_METRICS
+)
+CATEGORY_SUMMARY_KEYS = ("month", "category") + tuple(
+    key for key, _label in CATEGORY_SUMMARY_METRICS
+)
+
 
 def _dec(value) -> Decimal:
     if value is None or value == "":
@@ -149,6 +167,11 @@ def row_values(row: dict) -> list:
 def summary_row_values(row: dict) -> list:
     """按 SUMMARY_HEADERS 顺序取值（用于导出）。"""
     return [row.get(key) for key in SUMMARY_KEYS]
+
+
+def category_summary_row_values(row: dict) -> list:
+    """按 CATEGORY_SUMMARY_HEADERS 顺序取值。"""
+    return [row.get(key) for key in CATEGORY_SUMMARY_KEYS]
 
 
 # ———————————————————————— 费用录入 ————————————————————————
@@ -504,6 +527,71 @@ def build_summary(rows, basis: str = BASIS_OUT) -> dict:
         "pivot_rows": [row for row in flat if row["level"] in ("channel", "month", "grand")],
         "pivot_headers": PIVOT_HEADERS,
         "pivot_keys": ("month", "channel") + PIVOT_METRICS,
+    }
+
+
+def build_category_summary(rows, basis: str = BASIS_OUT) -> dict:
+    """页面顶端汇总表：期间 → 销售类别（销售大类），每个期间一个小计，末尾全部合计。
+
+    列固定为用户指定的 8 个指标：销售收入、销售成本、销售毛利、销售毛利率、
+    营业利润、利润总额、净利润、净利润率。期间口径随「按出库期间 / 按开票期间」切换。
+    """
+    key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
+    tree = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        tree[row[key_field]][row["category_key"]].append(row)
+
+    flat = []
+    month_blocks = []
+    grand_items = []
+
+    for month in sorted(tree, key=_month_sort_key):
+        categories = tree[month]
+
+        def _category_sort_key(name, _categories=categories):
+            total = sum((item["revenue"] for item in _categories[name]), ZERO)
+            return (-total, name)
+
+        month_items = []
+        month_rows = []
+        for category in sorted(categories, key=_category_sort_key):
+            items = categories[category]
+            month_items.extend(items)
+            row = {
+                "level": "category",
+                "month": month,
+                "category": category,
+                **_accumulate(items),
+            }
+            flat.append(row)
+            month_rows.append(row)
+
+        subtotal = {
+            "level": "month",
+            "month": month,
+            "category": "小计",
+            **_accumulate(month_items),
+        }
+        flat.append(subtotal)
+        month_blocks.append({"month": month, "total": subtotal, "rows": month_rows})
+        grand_items.extend(month_items)
+
+    grand_total_row = {
+        "level": "grand",
+        "month": "合计",
+        "category": "",
+        **_accumulate(grand_items),
+    }
+    flat.append(grand_total_row)
+
+    return {
+        "basis": basis,
+        "basis_label": BASIS_LABELS.get(basis, BASIS_LABELS[BASIS_OUT]),
+        "rows": flat,
+        "headers": CATEGORY_SUMMARY_HEADERS,
+        "keys": CATEGORY_SUMMARY_KEYS,
+        "months": month_blocks,
+        "grand_total_row": grand_total_row,
     }
 
 

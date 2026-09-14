@@ -51,6 +51,56 @@
 <section class="section-card">
   <div class="section-heading">
     <div>
+      <p class="eyebrow">SUMMARY BY PERIOD</p>
+      <h2>汇总：期间 × 销售类别</h2>
+    </div>
+    <div class="heading-actions">
+      {% for value, label in basis_choices %}
+        {% if value == basis %}
+        <span class="button primary" style="pointer-events:none;">{{ label }}</span>
+        {% else %}
+        <a class="button secondary" href="?basis={{ value }}">{{ label }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  <div class="table-scroll" style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          {% for header in category_summary.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in category_summary.rows %}
+        <tr{% if row.level == 'month' %} class="total-row" style="font-weight:600;background:#eef5ff;"{% elif row.level == 'grand' %} class="total-row" style="font-weight:700;background:#e6f0fb;"{% endif %}>
+          <td>{{ row.month }}</td>
+          <td>{{ row.category }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10">本期还没有销售台账。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">
+    期间口径：{{ category_summary.basis_label }}（右上角可切换）。销售收入 = 终端销售收入（口径同明细表）；
+    销售类别取台账「销售大类」；「小计」= 该期间合计；末行「合计」= 全部期间；
+    营业利润 / 利润总额 / 净利润 已按按月录入的费用计算（该月未录费用则为 0）。
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
       <p class="eyebrow">MONTHLY COSTS</p>
       <h2>按月费用录入</h2>
     </div>
@@ -97,15 +147,6 @@
     <div>
       <p class="eyebrow">SUMMARY</p>
       <h2>汇总（{{ summary.basis_label }}）</h2>
-    </div>
-    <div class="heading-actions">
-      {% for value, label in basis_choices %}
-        {% if value == basis %}
-        <span class="button primary" style="pointer-events:none;">{{ label }}</span>
-        {% else %}
-        <a class="button secondary" href="?basis={{ value }}">{{ label }}</a>
-        {% endif %}
-      {% endfor %}
     </div>
   </div>
 
@@ -187,17 +228,6 @@
     「小计」= 该渠道小计；月份行的渠道列显示「小计」= 该月合计；最后一行是全部合计。
     销售渠道取自台账「销售渠道」列（国内销售 / 国外销售），该列留空的行归入「未分类」。
   </p>
-</section>
-
-<section class="summary-strip">
-  <article><span>终端销售收入</span><strong>{{ data.totals.revenue|thousands }}</strong></article>
-  <article><span>销售成本</span><strong>{{ data.totals.cost|thousands }}</strong></article>
-  <article><span>销售毛利</span><strong>{{ data.totals.gross|thousands }}</strong></article>
-  <article><span>销售毛利率</span><strong>{% if data.totals.gross_margin is None %}—{% else %}{{ data.totals.gross_margin|floatformat:2 }}%{% endif %}</strong></article>
-  <article><span>营业利润</span><strong>{{ data.totals.operating_profit|thousands }}</strong></article>
-  <article><span>利润总额</span><strong>{{ data.totals.total_profit|thousands }}</strong></article>
-  <article><span>净利润</span><strong>{{ data.totals.net_profit|thousands }}</strong></article>
-  <article><span>净利润率</span><strong>{% if data.totals.net_margin is None %}—{% else %}{{ data.totals.net_margin|floatformat:2 }}%{% endif %}</strong></article>
 </section>
 
 <section class="section-card">
@@ -295,6 +325,7 @@
     <li>营业利润 = 销售毛利 − 税金及附加 − 管理费用 − 销售费用 − 财务费用。</li>
     <li>利润总额 = 营业利润 + 营业外收入 − 营业外支出；净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入。</li>
     <li>汇总可切换【按出库期间】/【按开票期间】：只改分组口径，每行的金额不变；未开票的行在开票期间视图里归入「(未开票)」。</li>
+    <li>页面顶端「期间 × 销售类别」汇总：销售收入=终端销售收入，销售类别取台账「销售大类」，费用按行所属出库月份取该月录入额（未录则为 0）。</li>
     <li>销售渠道直接取台账「销售渠道」列（国内销售 / 国外销售，由你的台账按终端客户口径给出）；该列留空的行归入「未分类」。</li>
     <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>
   </ul>

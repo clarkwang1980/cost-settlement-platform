@@ -23,6 +23,7 @@ from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     BASIS_CHOICES,
     BASIS_OUT,
+    build_category_summary,
     build_profit_statement,
     build_profit_statement_sheet,
     build_summary,
@@ -121,6 +122,7 @@ def profit_statement_view(request, period_id):
 
     data = build_profit_statement(period)
     summary = build_summary(data["rows"], basis)
+    category_summary = build_category_summary(data["rows"], basis)
 
     page = Paginator(data["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
     query = request.GET.copy()
@@ -134,6 +136,7 @@ def profit_statement_view(request, period_id):
             "period": period,
             "data": data,
             "summary": summary,
+            "category_summary": category_summary,
             "months": _month_forms(data["months"]),
             "basis": basis,
             "basis_choices": BASIS_CHOICES,

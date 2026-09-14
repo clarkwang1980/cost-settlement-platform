@@ -64,6 +64,7 @@ from settlement.services.sales_uninvoiced import (
 from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     HEADERS,
+    build_category_summary,
     build_profit_statement,
     build_summary,
 )
@@ -3223,6 +3224,107 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         # 汇总表最后一行是合计，收入 = 2000
         self.assertEqual(summary_sheet.cell(summary_sheet.max_row, 1).value, "合计")
         self.assertEqual(float(summary_sheet.cell(summary_sheet.max_row, 5).value), 2000.0)
+
+    def test_category_summary_columns_and_totals(self):
+        # 页面顶端汇总：期间 → 销售类别，8 个指标列，含期间小计与全部合计
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="面料")
+        self._line(3, revenue=Decimal("200"), cost=Decimal("120"),
+                   category="纱线", channel="国外销售")
+        self._line(4, revenue=Decimal("100"), cost=Decimal("60"),
+                   category="面料", channel="国外销售", out_month=self.june)
+        self._expense(self.period.month, admin_expense=Decimal("300"))
+        self._expense(self.june, admin_expense=Decimal("100"))
+
+        data = build_profit_statement(self.period)
+        summary = build_category_summary(data["rows"], "out")
+
+        self.assertEqual(
+            list(summary["headers"]),
+            ["期间", "销售类别", "销售收入", "销售成本", "销售毛利", "销售毛利率(%)",
+             "营业利润", "利润总额", "净利润", "净利润率(%)"],
+        )
+
+        by_key = {(r["month"], r["category"]): r for r in summary["rows"]}
+        # 7 月纱线 = 两行（国内 1000 + 国外 200）合起来
+        yarn = by_key[("2026-07", "纱线")]
+        self.assertEqual(yarn["revenue"], Decimal("1200.00"))
+        self.assertEqual(yarn["cost"], Decimal("720.00"))
+        self.assertEqual(yarn["gross"], Decimal("480.00"))
+        self.assertEqual(yarn["gross_margin"], Decimal("40.00"))
+        # 7 月管理费用 300 按该月收入占比摊 → 该月合计扣 300
+        july = by_key[("2026-07", "小计")]
+        self.assertEqual(july["revenue"], Decimal("1700.00"))
+        self.assertEqual(july["gross"], Decimal("730.00"))
+        self.assertEqual(july["operating_profit"], Decimal("430.00"))
+        self.assertEqual(july["total_profit"], Decimal("430.00"))
+        self.assertEqual(july["net_profit"], Decimal("430.00"))
+        # 6 月
+        june = by_key[("2026-06", "小计")]
+        self.assertEqual(june["revenue"], Decimal("100.00"))
+        self.assertEqual(june["gross"], Decimal("40.00"))
+        self.assertEqual(june["operating_profit"], Decimal("-60.00"))
+
+        # 合计 = 全部行合计（含费用），与明细合计一致
+        grand = summary["grand_total_row"]
+        self.assertEqual(grand["month"], "合计")
+        self.assertEqual(grand["revenue"], data["totals"]["revenue"])
+        self.assertEqual(grand["cost"], data["totals"]["cost"])
+        self.assertEqual(grand["gross"], data["totals"]["gross"])
+        self.assertEqual(grand["operating_profit"], data["totals"]["operating_profit"])
+        self.assertEqual(grand["net_profit"], data["totals"]["net_profit"])
+        # 期间小计之和 = 合计
+        month_totals = [r for r in summary["rows"] if r["level"] == "month"]
+        self.assertEqual(
+            sum((r["revenue"] for r in month_totals), Decimal("0")),
+            grand["revenue"],
+        )
+        # 每期类别行之和 = 该期小计
+        for block in summary["months"]:
+            self.assertEqual(
+                sum((r["revenue"] for r in block["rows"]), Decimal("0")),
+                block["total"]["revenue"],
+            )
+        # 7 月大类按收入倒序：纱线(1200) → 面料(500)
+        self.assertEqual(
+            [r["category"] for r in summary["rows"]
+             if r["level"] == "category" and r["month"] == "2026-07"],
+            ["纱线", "面料"],
+        )
+
+    def test_category_summary_follows_basis_and_unclassified(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"),
+                   out_month=self.june, invoice_month=date(2026, 7, 1))
+        self._line(2, revenue=Decimal("200"), cost=Decimal("100"),
+                   invoice_month=None, category="")
+        data = build_profit_statement(self.period)
+
+        by_invoice = build_category_summary(data["rows"], "invoice")
+        keys = {(r["month"], r["category"]) for r in by_invoice["rows"]}
+        self.assertIn(("2026-07", "纱线"), keys)
+        self.assertIn(("(未开票)", "未分类"), keys)
+        # 合计不随口径变化
+        by_out = build_category_summary(data["rows"], "out")
+        self.assertEqual(
+            by_out["grand_total_row"]["revenue"], by_invoice["grand_total_row"]["revenue"]
+        )
+        self.assertEqual(
+            by_invoice["grand_total_row"]["revenue"], Decimal("1200.00")
+        )
+
+    def test_expense_entry_page_has_top_summary_table(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertContains(response, "汇总：期间 × 销售类别")
+        for text in ("销售类别", "销售毛利率(%)", "净利润率(%)"):
+            self.assertContains(response, text)
+        # 顶端汇总表出现在「按月费用录入」之前
+        self.assertLess(html.index("汇总：期间 × 销售类别"), html.index("按月费用录入"))
 
     def test_locked_period_keeps_expenses_unchanged(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
