@@ -153,29 +153,35 @@
     {% csrf_token %}
     <input type="hidden" name="basis" value="{{ basis }}">
     {% for item in months %}
-    <div class="month-expense-block" style="border:1px solid #dbe3ec;border-radius:8px;padding:10px 12px;margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+    <details class="month-block"{% if not item.has_values %} open{% endif %}>
+      <summary>
         <strong>{{ item.key }}</strong>
-        <span class="muted-text">
-          该月终端销售收入 {{ item.revenue|thousands }}；台账 {{ item.row_count }} 行。
-          {% if item.has_values %}已录入{% if item.updated_at %}（{{ item.updated_at|date:"Y-m-d H:i" }}{% if item.updated_by %} {{ item.updated_by }}{% endif %}）{% endif %}{% else %}未录入（按 0 处理）{% endif %}
+        <span class="month-block-meta">
+          <span class="muted-text">终端销售收入 {{ item.revenue|thousands }} · 台账 {{ item.row_count }} 行</span>
+          {% if item.has_values %}
+          <span class="pill pill-ok">已录入{% if item.updated_at %} · {{ item.updated_at|date:"Y-m-d H:i" }}{% endif %}</span>
+          {% else %}
+          <span class="pill">未录入（按 0 处理）</span>
+          {% endif %}
         </span>
+      </summary>
+      <div class="month-block-body">
+        <div class="filter-grid wide">
+          {% for field in item.fields %}
+          <label>{{ field.label }}
+            <input name="{{ field.name }}" type="number" step="0.01" value="{{ field.value|floatformat:2 }}">
+          </label>
+          {% endfor %}
+        </div>
       </div>
-      <div class="filter-grid wide">
-        {% for field in item.fields %}
-        <label>{{ field.label }}
-          <input name="{{ field.name }}" type="number" step="0.01" value="{{ field.value|floatformat:2 }}">
-        </label>
-        {% endfor %}
-      </div>
-    </div>
+    </details>
     {% endfor %}
     <div class="filter-actions">
       <button class="button primary" type="submit">保存并重新计算</button>
+      <a class="button secondary" href="#" id="toggle-all-months">全部展开 / 收起</a>
       <span class="muted-text">
-        分摊规则：本行分摊额 = 本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计 × 该月金额；
-        四舍五入到分，尾差计入该月收入最大的那一行（保证每月每列合计 = 你录入的金额）。
-        月份按台账行的「出库期间」归属。
+        收起状态下填过的金额同样会保存（7 项都在同一个表单里）；分摊规则：本行分摊额 = 本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计 × 该月金额；
+        四舍五入到分，尾差计入该月收入最大的那一行（保证每月每列合计 = 你录入的金额）。月份按台账行的「出库期间」归属。
       </span>
     </div>
   </form>
@@ -384,5 +390,16 @@
       }
     });
   });
+
+  // 按月费用录入：一键展开/收起所有月份
+  var toggleAll = document.getElementById("toggle-all-months");
+  if (toggleAll) {
+    toggleAll.addEventListener("click", function (event) {
+      event.preventDefault();
+      var blocks = document.querySelectorAll("details.month-block");
+      var anyClosed = Array.prototype.some.call(blocks, function (b) { return !b.open; });
+      blocks.forEach(function (b) { b.open = anyClosed; });
+    });
+  }
 </script>
 {% endblock %}

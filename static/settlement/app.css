@@ -303,3 +303,21 @@ td small { margin-top: 3px; color: var(--muted); }
 .filter-grid .filter-field { display: grid; gap: 6px; color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field > span { color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field .multi-select > summary { font-size: 14px; font-weight: 400; color: var(--ink); }
+
+/* 按月费用录入：每个月一个可收起块（与筛选下拉同一视觉语言） */
+.month-block {
+  border: 1px solid #dbe3ec; border-radius: 8px; background: #fff; margin-bottom: 8px;
+}
+.month-block > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; cursor: pointer; list-style: none;
+}
+.month-block > summary::-webkit-details-marker { display: none; }
+.month-block > summary::after { content: "\25BE"; color: var(--muted); font-size: 12px; margin-left: 4px; }
+.month-block[open] > summary { border-bottom: 1px solid #eef2f6; background: #f8fbfd; border-radius: 8px 8px 0 0; }
+.month-block > summary:hover { background: #f8fbfd; }
+.month-block > summary strong { font-size: 15px; color: var(--navy); }
+.month-block .month-block-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.month-block .month-block-body { padding: 12px 12px 4px; }
+.month-block .month-block-body .filter-grid { gap: 10px 12px; }
+.pill-ok { background: var(--green-soft); color: var(--green); }
