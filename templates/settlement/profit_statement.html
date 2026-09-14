@@ -52,14 +52,14 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">SUMMARY BY PERIOD</p>
-      <h2>汇总：期间 × 销售类别{% if category_summary.has_range %}（{{ category_summary.period_from|default:"最早" }} ~ {{ category_summary.period_to|default:"最新" }}）{% endif %}</h2>
+      <h2>汇总：期间 × 销售类别{% if category_summary.has_range %}（{{ category_summary.period_from|default:"最早" }} ~ {{ category_summary.period_to|default:"最新" }}）{% endif %}{% if category_summary.has_category_filter %}［{{ category_summary.categories|join:"、" }}］{% endif %}</h2>
     </div>
     <div class="heading-actions">
       {% for value, label in basis_choices %}
         {% if value == basis %}
         <span class="button primary" style="pointer-events:none;">{{ label }}</span>
         {% else %}
-        <a class="button secondary" href="?basis={{ value }}{% if period_from %}&pfrom={{ period_from }}{% endif %}{% if period_to %}&pto={{ period_to }}{% endif %}">{{ label }}</a>
+        <a class="button secondary" href="?basis={{ value }}{% if period_from %}&pfrom={{ period_from|urlencode }}{% endif %}{% if period_to %}&pto={{ period_to|urlencode }}{% endif %}{% for cat in selected_categories %}&cat={{ cat|urlencode }}{% endfor %}">{{ label }}</a>
         {% endif %}
       {% endfor %}
     </div>
@@ -84,11 +84,21 @@
         {% endfor %}
       </select>
     </label>
+    <label>类别
+      <select name="cat" multiple size="1" style="min-width:150px;">
+        {% for item in category_options %}
+        <option value="{{ item.value }}"{% if item.value in selected_categories %} selected{% endif %}>{{ item.label }}（{{ item.revenue|thousands }}）</option>
+        {% endfor %}
+      </select>
+    </label>
     <button class="button primary" type="submit">确定</button>
-    {% if period_from or period_to %}
-    <a class="button secondary" href="?basis={{ basis }}">显示全部期间</a>
+    {% if period_from or period_to or selected_categories %}
+    <a class="button secondary" href="?basis={{ basis }}">显示全部</a>
     {% endif %}
-    <span class="muted-text">按当前口径（{{ category_summary.basis_label }}）的期间列表选择；只影响上方这张汇总表。</span>
+    <span class="muted-text">
+      「类别」按住 Ctrl 可多选（不选 = 全部类别）；期间按当前口径（{{ category_summary.basis_label }}）的列表选择。
+      两个条件都只影响上方这张汇总表。
+    </span>
   </form>
   {% endif %}
 
@@ -114,14 +124,14 @@
           <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="10">该区间内没有数据，请调整「从 / 到」。</td></tr>
+        <tr><td colspan="10">当前筛选条件下没有数据，请调整「从 / 到 / 类别」。</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   <p class="muted-text">
     期间口径：{{ category_summary.basis_label }}（右上角可切换）。销售收入 = 终端销售收入（口径同明细表）；
-    销售类别取台账「销售大类」；「小计」= 该期间合计；末行「合计」= {{ category_summary.has_range|yesno:"所选区间合计,全部期间合计" }}；
+    销售类别取台账「销售大类」；「小计」= 该期间合计；末行「合计」= {% if category_summary.has_range or category_summary.has_category_filter %}当前筛选条件下合计{% else %}全部期间合计{% endif %}；
     营业利润 / 利润总额 / 净利润 已按按月录入的费用计算（该月未录费用则为 0）。
   </p>
 </section>

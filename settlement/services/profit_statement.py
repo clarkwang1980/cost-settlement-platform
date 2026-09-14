@@ -574,13 +574,38 @@ def _period_in_range(label: str, period_from, period_to, order) -> bool:
     return True
 
 
+def summary_category_options(rows) -> list:
+    """销售类别选项（按收入从大到小，与表内排序一致），供页面「类别」筛选使用。"""
+    stats = defaultdict(lambda: {"row_count": 0, "revenue": ZERO})
+    for row in rows:
+        item = stats[row["category_key"]]
+        item["row_count"] += 1
+        item["revenue"] += row["revenue"]
+    return [
+        {
+            "value": name,
+            "label": name,
+            "row_count": stats[name]["row_count"],
+            "revenue": _q(stats[name]["revenue"]),
+        }
+        for name in sorted(stats, key=lambda name: (-stats[name]["revenue"], name))
+    ]
+
+
+def _category_in_selection(category: str, selected) -> bool:
+    """类别是否属于所选集合；集合为空 = 不限制（全部类别）。"""
+    if not selected:
+        return True
+    return category in set(selected)
+
+
 def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
-                           period_to=None) -> dict:
+                           period_to=None, categories=None) -> dict:
     """页面顶端汇总表：期间 → 销售类别（销售大类），每个期间一个小计，末尾合计。
 
     列固定为用户指定的 8 个指标：销售收入、销售成本、销售毛利、销售毛利率、
     营业利润、利润总额、净利润、净利润率。期间口径随「按出库期间 / 按开票期间」切换；
-    period_from / period_to 用于只显示选定区间内的期间（不含费用录入或明细表）。
+    period_from / period_to 限制期间区间；categories 限制销售类别（都只影响这张表）。
     """
     key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
     order = {
@@ -592,6 +617,8 @@ def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
         label = row[key_field]
         if not _period_in_range(label, period_from, period_to, order):
             continue
+        if not _category_in_selection(row["category_key"], categories):
+            continue
         tree[label][row["category_key"]].append(row)
 
     flat = []
@@ -599,16 +626,16 @@ def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
     grand_items = []
 
     for month in sorted(tree, key=_month_sort_key):
-        categories = tree[month]
+        month_categories = tree[month]
 
-        def _category_sort_key(name, _categories=categories):
+        def _category_sort_key(name, _categories=month_categories):
             total = sum((item["revenue"] for item in _categories[name]), ZERO)
             return (-total, name)
 
         month_items = []
         month_rows = []
-        for category in sorted(categories, key=_category_sort_key):
-            items = categories[category]
+        for category in sorted(month_categories, key=_category_sort_key):
+            items = month_categories[category]
             month_items.extend(items)
             row = {
                 "level": "category",
@@ -648,6 +675,8 @@ def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
         "period_from": period_from or "",
         "period_to": period_to or "",
         "has_range": bool(period_from or period_to),
+        "categories": list(categories or []),
+        "has_category_filter": bool(categories),
         "empty": not month_blocks,
     }
 

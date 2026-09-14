@@ -67,6 +67,7 @@ from settlement.services.profit_statement import (
     build_category_summary,
     build_profit_statement,
     build_summary,
+    summary_category_options,
     summary_period_options,
 )
 
@@ -3388,6 +3389,78 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         # 切换口径的链接保留区间参数
         html = response.content.decode("utf-8")
         self.assertIn("pfrom=2026-05", html)
+
+    def test_category_summary_category_filter(self):
+        # 类别筛选：单选、多选、不选（全部）；与期间条件叠加；合计随之变化
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="面料")
+        self._line(3, revenue=Decimal("200"), cost=Decimal("120"), category="纤维",
+                   out_month=date(2026, 5, 1))
+        data = build_profit_statement(self.period)
+
+        options = [item["value"] for item in summary_category_options(data["rows"])]
+        self.assertEqual(options, ["纱线", "面料", "纤维"])  # 按收入倒序
+
+        # 单选
+        only_yarn = build_category_summary(data["rows"], "out", categories=["纱线"])
+        self.assertEqual([r["category"] for r in only_yarn["rows"] if r["level"] == "category"],
+                         ["纱线"])
+        self.assertEqual(only_yarn["grand_total_row"]["revenue"], Decimal("1000.00"))
+        self.assertTrue(only_yarn["has_category_filter"])
+
+        # 多选
+        two = build_category_summary(data["rows"], "out", categories=["纱线", "纤维"])
+        self.assertEqual(two["grand_total_row"]["revenue"], Decimal("1200.00"))
+        self.assertEqual({r["category"] for r in two["rows"] if r["level"] == "category"},
+                         {"纱线", "纤维"})
+
+        # 不选 = 全部
+        all_cats = build_category_summary(data["rows"], "out")
+        self.assertEqual(all_cats["grand_total_row"]["revenue"], Decimal("1700.00"))
+        self.assertFalse(all_cats["has_category_filter"])
+
+        # 与期间叠加：5 月只有纤维
+        combo = build_category_summary(data["rows"], "out", "2026-05", "2026-05", ["纤维"])
+        self.assertEqual(combo["grand_total_row"]["revenue"], Decimal("200.00"))
+        # 叠加后无交集 → 空表
+        empty = build_category_summary(data["rows"], "out", "2026-05", "2026-05", ["纱线"])
+        self.assertTrue(empty["empty"])
+
+    def test_category_filter_on_page_and_isolation(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="面料")
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        # 页面有类别多选与选项（含金额）
+        response = client.get(url + "?basis=out")
+        self.assertContains(response, 'name="cat"')
+        self.assertContains(response, "类别")
+
+        # 多选参数生效
+        response = client.get(url + "?basis=out&cat=纱线&cat=面料")
+        self.assertEqual(response.context["selected_categories"], ["纱线", "面料"])
+        cats = {r["category"] for r in response.context["category_summary"]["rows"]
+                if r["level"] == "category"}
+        self.assertEqual(cats, {"纱线", "面料"})
+
+        # 不存在的类别被忽略 → 视为不筛选
+        response = client.get(url + "?basis=out&cat=不存在")
+        self.assertEqual(response.context["selected_categories"], [])
+        self.assertFalse(response.context["category_summary"]["has_category_filter"])
+
+        # 只影响顶端表：下方「月×渠道」汇总的合计仍含全部类别
+        response = client.get(url + "?basis=out&cat=纱线")
+        top = response.context["category_summary"]["grand_total_row"]["revenue"]
+        low = response.context["summary"]["grand_total"]["revenue"]
+        self.assertEqual(top, Decimal("1000.00"))
+        self.assertEqual(low, Decimal("1500.00"))
+
+        # 口径切换链接保留类别参数（URL 编码）
+        html = response.content.decode("utf-8")
+        self.assertIn("cat=%E7%BA%B1%E7%BA%BF", html)  # “纱线”的 URL 编码
+        self.assertIn("显示全部", html)
 
     def test_expense_entry_page_has_top_summary_table(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")

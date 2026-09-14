@@ -9,7 +9,7 @@
 """
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -29,6 +29,7 @@ from settlement.services.profit_statement import (
     build_summary,
     ledger_months,
     month_label,
+    summary_category_options,
     summary_period_options,
 )
 
@@ -84,14 +85,20 @@ def _normalise_range(period_options, period_from, period_to):
     return period_from, period_to
 
 
-def _range_query(request):
-    """「从/到」两个参数拼成跳转用的查询串（保留口径与区间）。"""
-    pairs = []
-    for key in ("basis", "pfrom", "pto"):
-        value = request.GET.get(key)
-        if value:
-            pairs.append((key, value))
-    return "&".join("%s=%s" % pair for pair in pairs)
+def _normalise_categories(options, selected):
+    """只保留确实存在的类别；去重且按选项顺序（收入从大到小）。"""
+    wanted = {value for value in (selected or []) if value}
+    return [item["value"] for item in options if item["value"] in wanted]
+
+
+def _filter_query(request):
+    """把「口径 + 期间区间 + 类别」拼成跳转用的查询串（正确 URL 编码）。"""
+    pairs = [("basis", request.GET.get("basis") or "")]
+    pairs.append(("pfrom", request.GET.get("pfrom") or ""))
+    pairs.append(("pto", request.GET.get("pto") or ""))
+    for value in request.GET.getlist("cat"):
+        pairs.append(("cat", value))
+    return urlencode([(key, value) for key, value in pairs if value])
 
 
 @login_required
@@ -102,7 +109,7 @@ def profit_statement_view(request, period_id):
     basis = request.POST.get("basis") or request.GET.get("basis") or BASIS_OUT
     if basis not in BASIS_VALUES:
         basis = BASIS_OUT
-    querystring = _range_query(request)
+    querystring = _filter_query(request)
     back_url = f"{request.path}?{querystring}" if querystring else request.path
 
     if request.method == "POST":
@@ -148,13 +155,15 @@ def profit_statement_view(request, period_id):
     data = build_profit_statement(period)
     summary = build_summary(data["rows"], basis)
 
-    # 顶端汇总表：只显示「从…到…」选定的期间
+    # 顶端汇总表：只显示「从…到…」选定的期间 与 选定的销售类别
     period_options = summary_period_options(data["rows"], basis)
     period_from, period_to = _normalise_range(
         period_options, request.GET.get("pfrom"), request.GET.get("pto")
     )
+    category_options = summary_category_options(data["rows"])
+    categories = _normalise_categories(category_options, request.GET.getlist("cat"))
     category_summary = build_category_summary(
-        data["rows"], basis, period_from or None, period_to or None
+        data["rows"], basis, period_from or None, period_to or None, categories or None
     )
 
     page = Paginator(data["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
@@ -173,6 +182,8 @@ def profit_statement_view(request, period_id):
             "period_options": period_options,
             "period_from": period_from,
             "period_to": period_to,
+            "category_options": category_options,
+            "selected_categories": categories,
             "months": _month_forms(data["months"]),
             "basis": basis,
             "basis_choices": BASIS_CHOICES,
