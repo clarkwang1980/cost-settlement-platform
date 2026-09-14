@@ -84,19 +84,22 @@
         {% endfor %}
       </select>
     </label>
-    <label>类别
-      <select name="cat" multiple size="1" style="min-width:150px;">
+    <div>类别（可单选也可多选，都不勾 = 全部）
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px;">
         {% for item in category_options %}
-        <option value="{{ item.value }}"{% if item.value in selected_categories %} selected{% endif %}>{{ item.label }}（{{ item.revenue|thousands }}）</option>
+        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+          <input type="checkbox" name="cat" value="{{ item.value }}"{% if item.value in selected_categories %} checked{% endif %}>
+          {{ item.label }}
+        </label>
         {% endfor %}
-      </select>
-    </label>
+      </div>
+    </div>
     <button class="button primary" type="submit">确定</button>
     {% if period_from or period_to or selected_categories %}
     <a class="button secondary" href="?basis={{ basis }}">显示全部</a>
     {% endif %}
     <span class="muted-text">
-      「类别」按住 Ctrl 可多选（不选 = 全部类别）；期间按当前口径（{{ category_summary.basis_label }}）的列表选择。
+      期间按当前口径（{{ category_summary.basis_label }}）的列表选择；勾一个 = 只看该类（单选），勾多个 = 看这几类（多选）。
       两个条件都只影响上方这张汇总表。
     </span>
   </form>

@@ -3433,10 +3433,25 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
 
-        # 页面有类别多选与选项（含金额）
+        # 页面：类别是复选框（单选/多选都用它），且选项里不再带金额
         response = client.get(url + "?basis=out")
-        self.assertContains(response, 'name="cat"')
-        self.assertContains(response, "类别")
+        html = response.content.decode("utf-8")
+        self.assertIn('type="checkbox" name="cat"', html)
+        self.assertIn('value="纱线"', html)
+        self.assertIn('value="面料"', html)
+        self.assertIsNone(re.search(r"（[\d,]+\.\d\d）", html), "类别选项不应再显示金额")
+        # 已勾选项回显为 checked
+        response = client.get(url + "?basis=out&cat=纱线")
+        self.assertIn('value="纱线" checked', response.content.decode("utf-8"))
+
+        # 单选：只勾一个类别
+        response = client.get(url + "?basis=out&cat=纱线")
+        self.assertEqual(response.context["selected_categories"], ["纱线"])
+        self.assertEqual(
+            {r["category"] for r in response.context["category_summary"]["rows"]
+             if r["level"] == "category"},
+            {"纱线"},
+        )
 
         # 多选参数生效
         response = client.get(url + "?basis=out&cat=纱线&cat=面料")
