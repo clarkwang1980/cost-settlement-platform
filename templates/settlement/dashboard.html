@@ -2,6 +2,7 @@
 {% load workshop_tags %}
 {% block title %}结算月份 · 月度成本结算平台{% endblock %}
 {% block content %}
+
 <section class="hero">
   <div>
     <p class="eyebrow">MONTH-END COST CLOSE</p>
@@ -41,6 +42,7 @@
           <dt>生产工单</dt><dd>{{ item.work_orders.count }}</dd>
         </dl>
         <span class="card-link">进入月结 →</span>
+        <span class="card-link" style="color:#4a7ca8;" onclick="event.preventDefault();event.stopPropagation();location.href='{% url 'purchase_summary' item.id %}';">采购暂估汇总 →</span>
       </a>
     {% empty %}
       <div class="empty-state">

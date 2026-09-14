@@ -68,6 +68,16 @@ def provisional_basis(txn: InventoryTransaction):
             "source": txn.price_source,
             "contract_nos": "",
         }
+    if txn.unit_price is not None and Decimal(txn.unit_price) > ZERO:
+        # 兜底：流水已带系统单价（如结算回填的“月末加权平均”）时直接采用，
+        # 避免“缺少暂估价格”导致暂估金额空白。
+        unit_price = price(txn.unit_price)
+        return {
+            "unit_price": unit_price,
+            "amount": money(Decimal(txn.quantity) * unit_price),
+            "source": txn.price_source or "系统月末加权价",
+            "contract_nos": "",
+        }
     return {
         "unit_price": None,
         "amount": None,
@@ -127,6 +137,29 @@ def _contract_price_fallback(txn):
         "source": "合同暂估（价格参考）",
         "contract_nos": latest.contract_no,
     }
+
+
+def _supplier_from_contracts(txn):
+    """流水未填供应商时，从已匹配到的采购合同反查供应商，保证暂估应付可按供应商挂账。"""
+    contract_ids = txn.allocations.filter(
+        kind=MatchAllocation.Kind.PURCHASE_CONTRACT,
+        contract_line__isnull=False,
+    ).values_list("contract_line_id", flat=True)
+    lines = list(PurchaseContractLine.objects.filter(id__in=contract_ids))
+    for c in lines:
+        if c.supplier_code or c.supplier_name:
+            return c.supplier_code or "", c.supplier_name or ""
+    contract_nos = [c.contract_no for c in lines if c.contract_no]
+    if contract_nos:
+        cands = PurchaseContractLine.objects.filter(
+            period__month__lte=txn.period.month,
+            material_code=txn.material_code,
+            contract_no__in=contract_nos,
+        )
+        for c in cands:
+            if c.supplier_code or c.supplier_name:
+                return c.supplier_code or "", c.supplier_name or ""
+    return "", ""
 
 
 @dataclass
@@ -226,6 +259,10 @@ def build_purchase_accrual_rows(period, include_closed=False):
             status = "部分到票"
         else:
             status = "全部暂估"
+        supplier_code = txn.supplier_code or ""
+        supplier_name = txn.supplier_name or ""
+        if not supplier_code and not supplier_name:
+            supplier_code, supplier_name = _supplier_from_contracts(txn)
         rows.append(
             PurchaseAccrualRow(
                 transaction=txn,
@@ -234,8 +271,8 @@ def build_purchase_accrual_rows(period, include_closed=False):
                 receipt_month=txn.period.month,
                 document_date=txn.txn_date,
                 document_no=txn.document_no,
-                supplier_code=txn.supplier_code,
-                supplier_name=txn.supplier_name,
+                supplier_code=supplier_code,
+                supplier_name=supplier_name,
                 material_code=txn.material_code,
                 material_name=txn.material_name,
                 contract_nos=basis["contract_nos"],

@@ -116,6 +116,10 @@ class ImportBatch(models.Model):
             "work_order_detail",
             "工单明细",
         )
+        SALES_LEDGER = (
+            "sales_ledger",
+            "销售台账（出库+开票）",
+        )
 
     class Status(models.TextChoices):
         PENDING = "pending", "等待处理"
@@ -346,6 +350,83 @@ class SalesInvoiceLine(models.Model):
 
     class Meta:
         ordering = ["invoice_date", "invoice_no", "id"]
+
+
+class SalesLedgerLine(models.Model):
+    """销售台账（出库+开票）明细行：用户每月上传的销售台账，翻译成出库核销/结转/发出商品/样品动作。
+
+    本行只记录台账口径（期间、开票状态、数量、收入等），销售出库成本金额由平台按
+    月末加权平均价在库存流水层面计算，本表 cost_price/cost_amount 仅留存用户填写值（通常留空）。
+    """
+
+    class InvoiceStatus(models.TextChoices):
+        INVOICED = "invoiced", "已开票"
+        UNINVOICED = "uninvoiced", "未开票"
+        SAMPLE_FREE = "sample_free", "样品免费"
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="sales_ledger_lines"
+    )
+    batch = models.ForeignKey(
+        ImportBatch, on_delete=models.CASCADE, related_name="sales_ledger_lines"
+    )
+    row_no = models.PositiveIntegerField(verbose_name="台账行号")
+    out_month = models.DateField(verbose_name="出库期间(月首)")
+    invoice_status = models.CharField(
+        max_length=20, choices=InvoiceStatus.choices, verbose_name="开票状态"
+    )
+    invoice_month = models.DateField(null=True, blank=True, verbose_name="开票期间(月首)")
+    channel = models.CharField(max_length=120, blank=True, verbose_name="销售渠道")
+    company = models.CharField(max_length=120, blank=True, verbose_name="销售公司")
+    order_no = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="订单单号")
+    customer_code = models.CharField(max_length=80, blank=True)
+    customer_name = models.CharField(max_length=255, blank=True, verbose_name="客户名称")
+    sales_category = models.CharField(max_length=120, blank=True, verbose_name="销售大类")
+    material = models.ForeignKey(
+        Material, null=True, on_delete=models.SET_NULL, related_name="sales_ledger_lines"
+    )
+    material_code = models.CharField(max_length=80, db_index=True)
+    material_name = models.CharField(max_length=255, blank=True)
+    specification = models.CharField(max_length=255, blank=True)
+    uom = models.CharField(max_length=30, blank=True)
+    terminal_amount = models.DecimalField(
+        max_digits=20, decimal_places=2, null=True, blank=True, verbose_name="终端销售收入"
+    )
+    terminal_unit_price = models.DecimalField(
+        max_digits=20, decimal_places=8, null=True, blank=True, verbose_name="终端销售单价"
+    )
+    lb_amount = models.DecimalField(
+        max_digits=20, decimal_places=2, null=True, blank=True, verbose_name="射阳兰邦销售收入"
+    )
+    lb_unit_price = models.DecimalField(
+        max_digits=20, decimal_places=8, null=True, blank=True, verbose_name="射阳兰邦销售单价"
+    )
+    quantity = models.DecimalField(max_digits=20, decimal_places=6, verbose_name="销售数量")
+    cost_price = models.DecimalField(
+        max_digits=20, decimal_places=8, null=True, blank=True, verbose_name="销售成本单价(用户填,通常留空)"
+    )
+    cost_amount = models.DecimalField(
+        max_digits=20, decimal_places=2, null=True, blank=True, verbose_name="销售成本(用户填,通常留空)"
+    )
+    gross_profit = models.DecimalField(
+        max_digits=20, decimal_places=2, null=True, blank=True, verbose_name="销售毛利"
+    )
+    gross_margin = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True, verbose_name="销售毛利率"
+    )
+    carry_type = models.CharField(max_length=120, blank=True, verbose_name="结转类型")
+    # apply 结果留痕：生成的发票行/标记的样品/说明
+    has_invoice = models.BooleanField(default=False)
+    sample_marked = models.BooleanField(default=False)
+    apply_note = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["batch_id", "row_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["batch", "row_no"], name="unique_sales_ledger_batch_row"
+            )
+        ]
 
 
 class WorkOrder(models.Model):
@@ -935,6 +1016,7 @@ class OpeningGoodsIssued(models.Model):
     sales_order_no = models.CharField(max_length=100, blank=True, db_index=True)
     customer_code = models.CharField(max_length=80, blank=True)
     customer_name = models.CharField(max_length=255, blank=True)
+    sales_category = models.CharField(max_length=120, blank=True, verbose_name="销售大类")
     material_code = models.CharField(max_length=80, db_index=True)
     material_name = models.CharField(max_length=255, blank=True)
     uom = models.CharField(max_length=30, blank=True)
@@ -1369,3 +1451,54 @@ class PulpMaterial(models.Model):
 
     def __str__(self):
         return f"{self.period} {self.material_code} {self.material_name}"
+
+class ProfitStatementExpense(models.Model):
+    """损益表：当月发生的税项与费用（在「损益表」页面录入）。
+
+    这些金额是【当月总额】，页面按「本行终端销售收入 ÷ 当月终端销售收入合计」
+    的比例分摊到销售台账的每一行，再逐行算营业利润、利润总额、净利润。
+    """
+
+    period = models.OneToOneField(
+        AccountingPeriod,
+        on_delete=models.CASCADE,
+        related_name="profit_expense",
+        verbose_name="核算期间",
+    )
+    tax_surcharge = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="税金及附加"
+    )
+    admin_expense = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="管理费用"
+    )
+    selling_expense = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="销售费用"
+    )
+    finance_expense = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="财务费用"
+    )
+    non_operating_income = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="营业外收入"
+    )
+    non_operating_expense = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="营业外支出"
+    )
+    income_tax = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="所得税费用"
+    )
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="profit_statement_expenses",
+        verbose_name="录入人",
+    )
+
+    class Meta:
+        verbose_name = "损益表费用录入"
+        verbose_name_plural = "损益表费用录入"
+
+    def __str__(self):
+        return f"{self.period} 损益表费用"

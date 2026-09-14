@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% load workshop_tags %}
-{% block title %}销售匹配 · {{ period }}{% endblock %}
+{% block title %}销售核销核对 · {{ period }}{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
-    <p class="eyebrow">SALES DOCUMENT MATCHING</p>
-    <h1>销售发票匹配</h1>
-    <p>销售发票可核销系统启用前的期初发出商品，以及本月和以前月份尚未开票的销售出库；自动匹配要求销售订单、客户和产品完全一致。</p>
+    <p class="eyebrow">SALES CLEARING CHECK</p>
+    <h1>销售核销核对</h1>
+    <p>本页显示每张销售发票核销到了哪些出库流水 / 期初发出商品，用来核对台账的匹配结果。</p>
+    <p class="guide-note">这些发票由「销售台账（出库+开票）」上传后<strong>平台自动生成</strong>（发票号 LEDGER-*、样品为 LEDGER-SAMPLE-*），
+      <strong>不需要你再上传销售发票批次</strong>。台账未覆盖到的例外情况（期初发出商品不够、订单号写错、样品数量凑不成整行），
+      可点发票号进详情页人工核销、核销期初台账，或把某条流水设为“忽略匹配”。</p>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'export_listing' period.id 'sales_invoice' %}?{{ request.GET.urlencode }}">导出Excel</a>

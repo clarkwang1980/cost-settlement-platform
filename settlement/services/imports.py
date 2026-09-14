@@ -35,6 +35,7 @@ from settlement.models import (
     PulpMaterial,
     ReconciliationResult,
     SalesInvoiceLine,
+    SalesLedgerLine,
     SettlementRun,
     WorkOrder,
     WorkOrderCostResult,
@@ -124,6 +125,31 @@ ALIASES = {
         "quantity": ["开票数量", "发票数量", "数量"],
         "unit_price_excl_tax": ["不含税单价", "销售单价", "单价"],
         "amount_excl_tax": ["不含税金额", "金额"],
+    },
+    "sales_ledger": {
+        "out_month": ["出库期间"],
+        "invoice_status": ["开票状态"],
+        "invoice_month": ["开票期间"],
+        "channel": ["销售渠道"],
+        "company": ["销售公司"],
+        "order_no": ["订单单号", "订单号", "销售订单号"],
+        "customer_code": ["客户编码"],
+        "customer_name": ["客户名称", "客户"],
+        "sales_category": ["销售大类"],
+        "material_code": ["产品编码", "物料编码", "物料编号", "存货编码", "产品编号"],
+        "material_name": ["产品名称", "物料名称"],
+        "specification": ["规格型号", "规格"],
+        "uom": ["计量单位", "单位"],
+        "terminal_amount": ["终端销售收入"],
+        "terminal_unit_price": ["终端销售单价"],
+        "lb_amount": ["射阳兰邦销售收入"],
+        "lb_unit_price": ["射阳兰邦销售单价"],
+        "quantity": ["销售数量", "数量"],
+        "cost_price": ["销售成本单价"],
+        "cost_amount": ["销售成本"],
+        "gross_profit": ["销售毛利"],
+        "gross_margin": ["销售毛利率"],
+        "carry_type": ["结转类型"],
     },
     "work_order": {
         "order_no": ["工单编号", "生产工单号", "工单号"],
@@ -274,37 +300,23 @@ ALIASES = {
         "remark": ["备注", "摘要"],
     },
     "opening_goods_issued": {
-        "original_period": ["原出库月份", "出库月份", "所属月份"],
-        "document_date": ["原出库日期", "出库日期", "单据日期"],
-        "document_no": ["原出库单号", "出库单号", "单据号"],
-        "line_no": ["行号", "序号", "明细行"],
-        "sales_order_no": ["销售订单号", "订单号", "销售合同号"],
-        "customer_code": ["客户编码", "客户代码"],
-        "customer_name": ["客户", "客户名称"],
-        "material_code": ["产品编码", "物料编码", "存货编码"],
-        "material_name": ["产品名称", "物料名称", "存货名称"],
-        "uom": ["单位", "计量单位"],
-        "original_quantity": ["原出库数量", "累计出库数量"],
-        "prior_invoiced_quantity": [
-            "以前累计开票数量",
-            "以前开票数量",
-            "期前开票数量",
-        ],
-        "opening_quantity": [
-            "月初未开票数量",
-            "期初发出商品数量",
-            "期初未开票数量",
-        ],
-        "unit_cost": [
-            "原出库单位成本",
-            "发出商品单位成本",
-            "单位成本",
-        ],
-        "opening_amount": [
-            "月初发出商品成本",
-            "期初发出商品成本",
-            "未开票成本",
-        ],
+        # 与“销售台账（出库+开票）”完全一致的格式；仅用于系统首个核算月份之前的“已发货未开票”存量
+        "row_no": ["序号"],
+        "out_month": ["出库期间"],
+        "invoice_status": ["开票状态"],
+        "channel": ["销售渠道"],
+        "company": ["销售公司"],
+        "sales_order_no": ["订单单号", "订单号", "销售订单号"],
+        "customer_code": ["客户编码", "客户编号"],
+        "customer_name": ["客户名称", "客户"],
+        "sales_category": ["销售大类"],
+        "material_code": ["产品编码", "物料编码", "物料编号", "产品编号", "存货编码"],
+        "material_name": ["产品名称", "物料名称"],
+        "specification": ["规格型号", "规格"],
+        "uom": ["计量单位", "单位"],
+        "quantity": ["销售数量", "未开票数量", "数量"],
+        "cost_price": ["销售成本单价", "原出库单位成本"],
+        "cost_amount": ["销售成本", "月初发出商品成本"],
         "remark": ["备注", "摘要"],
     },
     "opening_inventory": {
@@ -447,6 +459,12 @@ REQUIRED_FIELDS = {
         "material_code",
         "quantity",
     },
+    "sales_ledger": {
+        "out_month",
+        "invoice_status",
+        "material_code",
+        "quantity",
+    },
     "workshop_cost": {"workshop"},
     "opening_wip": {"order_no"},
     "opening_purchase_accrual": {
@@ -457,12 +475,10 @@ REQUIRED_FIELDS = {
         "provisional_unit_price",
     },
     "opening_goods_issued": {
-        "original_period",
-        "document_date",
-        "document_no",
+        "out_month",
+        "invoice_status",
         "material_code",
-        "opening_quantity",
-        "unit_cost",
+        "quantity",
     },
     "opening_inventory": {
         "material_code",
@@ -671,11 +687,161 @@ def _locate_header(rows, kind: str):
     return header_index, mapping
 
 
+_PRICE_SHEET_IN = ("入库", "收货")
+_PRICE_SHEET_OUT = ("出库", "发货")
+_PRICE_CODE_HEADERS = {
+    "品名编码", "物料编码", "物料编号", "产品编码", "存货编码", "产品编号",
+}
+_PRICE_NAME_HEADERS = {"品名名称", "物料名称", "产品名称"}
+_MONTH_HEADER_RE = re.compile(r"(20\d{2})[^0-9]{0,3}(\d{1,2})")
+
+
+def _wide_price_month(value):
+    """表头「2026年7月 / 2026-07 / 202607」→ (年, 月)；解析不到返回 None。"""
+    normalized = normalize_header(value)
+    if not normalized:
+        return None
+    match = _MONTH_HEADER_RE.search(normalized)
+    if not match:
+        return None
+    year, month = int(match.group(1)), int(match.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return year, month
+
+
+def _read_wide_price_sheets(path: Path):
+    """读取「单价表」双表格式（工作表名含 入库/出库，列=序号/品类/品名编码/品名名称 + 各月）。
+
+    转成历史单价行；不是该格式时返回 None（由调用方按原格式处理）。
+    只填了月份的物料才会出行；两个工作表同一物料同月会合并成一行。
+    """
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        book_sheets = []
+        for worksheet in workbook.worksheets:
+            title = worksheet.title or ""
+            if any(token in title for token in _PRICE_SHEET_IN):
+                side = "in"
+            elif any(token in title for token in _PRICE_SHEET_OUT):
+                side = "out"
+            else:
+                continue
+            book_sheets.append(
+                (side, [list(r) for r in worksheet.iter_rows(values_only=True)])
+            )
+    finally:
+        workbook.close()
+    if not book_sheets:
+        return None
+
+    existing_periods = set(
+        AccountingPeriod.objects.values_list("month", flat=True)
+    )
+    merged = {}
+    order = []
+    skipped_months = set()
+    for side, rows in book_sheets:
+        header_index = None
+        code_col = name_col = None
+        month_cols = {}
+        for index, row in enumerate(rows[:10]):
+            local_code = local_name = None
+            cols = {}
+            for col_index, value in enumerate(row):
+                normalized = normalize_header(value)
+                if not normalized:
+                    continue
+                if local_code is None and normalized in _PRICE_CODE_HEADERS:
+                    local_code = col_index
+                elif local_name is None and normalized in _PRICE_NAME_HEADERS:
+                    local_name = col_index
+                else:
+                    parsed = _wide_price_month(value)
+                    if parsed is not None:
+                        cols[col_index] = parsed
+            if local_code is not None and cols:
+                header_index = index
+                code_col = local_code
+                name_col = local_name
+                month_cols = cols
+                break
+        if header_index is None:
+            continue
+        for row in rows[header_index + 1 :]:
+            if not any(value not in (None, "") for value in row):
+                continue
+            code = text(row[code_col] if code_col < len(row) else None)
+            if not code or code.startswith("示例"):
+                continue
+            name = (
+                text(row[name_col])
+                if name_col is not None and name_col < len(row)
+                else ""
+            )
+            for col_index, (year, month) in sorted(month_cols.items()):
+                value = row[col_index] if col_index < len(row) else None
+                try:
+                    price = to_decimal(value)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{code} 的 {year}年{month}月 单价无法识别：{value!r}"
+                    ) from exc
+                if price is None or price == 0:
+                    continue
+                month_date = date(year, month, 1)
+                if month_date not in existing_periods:
+                    skipped_months.add(f"{year}年{month}月")
+                    continue
+                key = (month_date, code)
+                item = merged.get(key)
+                if item is None:
+                    item = {
+                        "_row_number": len(order) + 1,
+                        "period": f"{year}-{month:02d}",
+                        "material_code": code,
+                        "material_name": name,
+                        "_price_fields": set(),
+                    }
+                    merged[key] = item
+                    order.append(key)
+                if name and not item["material_name"]:
+                    item["material_name"] = name
+                if side == "in":
+                    item["receipt_price"] = price
+                    item["_price_fields"].add("receipt_price")
+                else:
+                    item["issue_price"] = price
+                    item["_price_fields"].add("issue_price")
+
+    emitted = [merged[key] for key in order]
+    if not emitted:
+        if skipped_months:
+            raise ValueError(
+                "这些月份还没有对应的核算期间，单价无法导入："
+                + "、".join(sorted(skipped_months))
+                + "。请先在系统里建立这些核算期间，或清除这些列的单价后重传。"
+            )
+        return None
+    if skipped_months:
+        emitted[0]["_note"] = (
+            "⚠ 以下月份没有对应的核算期间，已跳过未导入："
+            + "、".join(sorted(skipped_months))
+        )
+    return emitted
+
+
 def read_rows(path: Path, kind: str):
     suffix = path.suffix.lower()
     if suffix == ".csv":
         rows_list = [_read_csv(path)]
     elif suffix in {".xlsx", ".xlsm"}:
+        if kind == "historical_price":
+            wide_rows = _read_wide_price_sheets(path)
+            if wide_rows is not None:
+                return wide_rows
         rows_list = _read_xlsx(path, kind)
     else:
         raise ValueError("只支持CSV、XLSX和XLSM文件。")
@@ -907,6 +1073,7 @@ def process_batch(batch: ImportBatch):
         ImportBatch.Kind.PURCHASE_CONTRACT: _import_purchase_contract,
         ImportBatch.Kind.PURCHASE_INVOICE: _import_purchase_invoice,
         ImportBatch.Kind.SALES_INVOICE: _import_sales_invoice,
+        ImportBatch.Kind.SALES_LEDGER: _import_sales_ledger,
         ImportBatch.Kind.WORKSHOP_COST: _import_workshop_cost,
         ImportBatch.Kind.OPENING_WIP: _import_opening_wip,
         ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: (
@@ -942,6 +1109,11 @@ def process_batch(batch: ImportBatch):
     batch.row_count = count
     batch.error_count = len(errors)
     batch.message = "\n".join(errors[:100])
+    notes = [str(row.get("_note")) for row in rows if row.get("_note")]
+    if notes:
+        batch.message = (
+            (batch.message + "\n") if batch.message else ""
+        ) + "\n".join(notes)
     if count == 0 and not errors:
         # 全部为模板示例行（跳过）或空数据：视为成功导入 0 行，不报错
         batch.status = ImportBatch.Status.SUCCESS
@@ -953,6 +1125,17 @@ def process_batch(batch: ImportBatch):
     batch.save(update_fields=["row_count", "error_count", "message", "status"])
     if count == 0:
         raise ValueError(batch.message or "没有成功导入任何数据。")
+    if (
+        batch.kind == ImportBatch.Kind.SALES_LEDGER
+        and batch.status == ImportBatch.Status.SUCCESS
+        and batch.error_count == 0
+    ):
+        # 台账整批成功后应用账务动作（生成开票记录/标记样品/核销），并把摘要附到消息
+        from settlement.services.sales_ledger import apply_sales_ledger
+
+        summary = apply_sales_ledger(batch)
+        batch.message = ((batch.message + "\n") if batch.message else "") + summary
+        batch.save(update_fields=["message"])
     return batch
 
 
@@ -1120,6 +1303,85 @@ def _import_sales_invoice(batch, row):
         unit_price_excl_tax=unit_price,
         amount_excl_tax=amount,
         remaining_quantity=quantity,
+    )
+
+
+def _import_sales_ledger(batch, row):
+    """销售台账（出库+开票）行导入：只校验并保存台账行，账务动作由 apply_sales_ledger 批量执行。"""
+    # 模板示例行（订单单号或产品编码以“示例”开头）自动跳过，不导入也不计数
+    if text(row.get("order_no")).startswith("示例") or text(
+        row.get("material_code")
+    ).startswith("示例"):
+        return "skipped"
+    status_text = text(row.get("invoice_status"))
+    if not status_text:
+        raise ValueError("开票状态不能为空（已开票/未开票/样品免费）。")
+    if ("已开票" in status_text) or ("已开发票" in status_text):
+        status = SalesLedgerLine.InvoiceStatus.INVOICED
+    elif ("未开票" in status_text) or ("未开发票" in status_text):
+        status = SalesLedgerLine.InvoiceStatus.UNINVOICED
+    elif "样品" in status_text:
+        status = SalesLedgerLine.InvoiceStatus.SAMPLE_FREE
+    else:
+        raise ValueError(
+            f"开票状态无法识别：{status_text}"
+            "（应为 已开票/未开票/样品免费，或 已开发票/未开发票）"
+        )
+    out_month = month_start(row.get("out_month"), None)
+    if out_month is None:
+        raise ValueError("出库期间不能为空或无法识别（格式如 2026-07）。")
+    invoice_month = month_start(row.get("invoice_month"), None)
+    if status == SalesLedgerLine.InvoiceStatus.INVOICED and invoice_month is None:
+        raise ValueError("开票状态=已开票 时，开票期间必填（格式如 2026-07）。")
+    if status != SalesLedgerLine.InvoiceStatus.INVOICED and invoice_month is not None:
+        # 非“已开票”行多填了开票期间：以开票状态为准，忽略所填期间，仅在导入结果里提示
+        row["_note"] = (
+            f"第{row['_row_number']}行：开票状态={status_text}，"
+            f"已忽略所填开票期间（{invoice_month:%Y-%m}）。"
+        )
+        invoice_month = None
+    quantity = to_decimal(row.get("quantity"))
+    if quantity is None or quantity <= 0:
+        # 数量为空/0 的行没有金额可结转：跳过该行并提示，不影响其余行入账
+        row["_note"] = (
+            f"第{row['_row_number']}行：销售数量为空或0，已跳过（不参与结转）；"
+            "如确属实际出货，请补数量后重新上传。"
+        )
+        return "skipped"
+    code = text(row.get("material_code"))
+    if not code:
+        raise ValueError("产品编码不能为空。")
+    material = get_or_create_material(
+        code, row.get("material_name"), row.get("specification"), row.get("uom")
+    )
+    SalesLedgerLine.objects.create(
+        period=batch.period,
+        batch=batch,
+        row_no=row["_row_number"],
+        out_month=out_month,
+        invoice_status=status,
+        invoice_month=invoice_month,
+        channel=text(row.get("channel"))[:120],
+        company=text(row.get("company"))[:120],
+        order_no=text(row.get("order_no")),
+        customer_code=text(row.get("customer_code")),
+        customer_name=text(row.get("customer_name")),
+        sales_category=text(row.get("sales_category"))[:120],
+        material=material,
+        material_code=code,
+        material_name=text(row.get("material_name"))[:255],
+        specification=text(row.get("specification"))[:255],
+        uom=text(row.get("uom"))[:30],
+        terminal_amount=to_decimal(row.get("terminal_amount")),
+        terminal_unit_price=to_decimal(row.get("terminal_unit_price")),
+        lb_amount=to_decimal(row.get("lb_amount")),
+        lb_unit_price=to_decimal(row.get("lb_unit_price")),
+        quantity=quantity,
+        cost_price=to_decimal(row.get("cost_price")),
+        cost_amount=to_decimal(row.get("cost_amount")),
+        gross_profit=to_decimal(row.get("gross_profit")),
+        gross_margin=to_decimal(row.get("gross_margin")),
+        carry_type=text(row.get("carry_type"))[:120],
     )
 
 
@@ -1367,23 +1629,38 @@ def _parse_period(value) -> AccountingPeriod:
 
 
 def _import_historical_price(batch, row):
+    """历史单价（月度）：模板示例行跳过。
+
+    只更新本次填写的方向（入库/出库），未填的一侧保持原值不清空
+    —— 避免"只填出库单价"的表格把已有入库单价抹掉。
+    """
     material_code = text(row.get("material_code"))
+    if material_code.startswith("示例"):
+        return "skipped"
     if not material_code:
         raise ValueError("物料编码不能为空。")
     period = _parse_period(row.get("period"))
     receipt_price = to_decimal(row.get("receipt_price")) or None
     issue_price = to_decimal(row.get("issue_price")) or None
-    if receipt_price is None and issue_price is None:
+    provided = set(row.get("_price_fields") or ())
+    if not provided:
+        if receipt_price is not None:
+            provided.add("receipt_price")
+        if issue_price is not None:
+            provided.add("issue_price")
+    if not provided:
         raise ValueError("入库单价和出库单价至少填写一项。")
-    HistoricalPrice.objects.update_or_create(
-        period=period,
-        material_code=material_code,
-        defaults={
-            "material_name": text(row.get("material_name")),
-            "receipt_price": receipt_price,
-            "issue_price": issue_price,
-        },
+    target, _created = HistoricalPrice.objects.get_or_create(
+        period=period, material_code=material_code
     )
+    material_name = text(row.get("material_name"))
+    if material_name:
+        target.material_name = material_name
+    if "receipt_price" in provided:
+        target.receipt_price = receipt_price
+    if "issue_price" in provided:
+        target.issue_price = issue_price
+    target.save()
 
 
 def _import_work_order_detail(batch, row):
@@ -1507,8 +1784,13 @@ def _opening_ledger_values(batch, row, *, price_field, ledger_name):
         )
 
     unit_price = to_decimal(row.get(price_field))
-    if unit_price is None or unit_price < 0:
-        raise ValueError("期初单价或单位成本不能小于0。")
+    if unit_price is None:
+        raise ValueError(
+            f"{ledger_name}的单价/单位成本未填写：请在模板的"
+            f"“原出库单位成本”（或“暂估单价”）列填写该行金额，金额为0也请填0。"
+        )
+    if unit_price < 0:
+        raise ValueError(f"{ledger_name}的单价/单位成本不能小于0。")
     opening_amount = to_decimal(row.get("opening_amount"))
     if opening_amount is None:
         opening_amount = (opening_quantity * unit_price).quantize(
@@ -1558,23 +1840,84 @@ def _import_opening_purchase_accrual(batch, row):
 
 
 def _import_opening_goods_issued(batch, row):
-    values, unit_cost = _opening_ledger_values(
-        batch,
-        row,
-        price_field="unit_cost",
-        ledger_name="期初发出商品",
+    """期初发出商品明细（与销售台账同格式）：首期前的“已发货未开票”存量。
+
+    与销售台账的差异：
+    - 只接受 开票状态=未开票 的行（已开票/样品免费请放在对应月份的销售台账里结转）；
+    - 出库期间必须早于系统首个核算月份；
+    - 销售成本单价/销售成本 必填其一——期初行没有对应库存流水，成本无法按月末加权算，
+      以你上传的历史成本为准（当月销售台账才允许成本留空）。
+    """
+    if text(row.get("sales_order_no")).startswith("示例") or text(
+        row.get("material_code")
+    ).startswith("示例"):
+        return "skipped"
+    status_text = text(row.get("invoice_status"))
+    if status_text and "未开票" not in status_text:
+        raise ValueError(
+            f"期初发出商品明细只能填“未开票”行，当前为：{status_text}；"
+            "已开票/样品免费的行请放到对应出库月份的销售台账里。"
+        )
+    if text(row.get("invoice_month")):
+        raise ValueError("期初发出商品明细行不应填写开票期间（全部为已发货未开票）。")
+    out_month = month_start(row.get("out_month"), None)
+    if out_month is None:
+        raise ValueError("出库期间不能为空或无法识别（格式如 2026-06）。")
+    if out_month >= batch.period.month:
+        raise ValueError(
+            "期初发出商品明细的出库期间必须早于系统首个核算月份（后续月份由台账自动滚动）。"
+        )
+    code = text(row.get("material_code"))
+    if not code:
+        raise ValueError("产品编码不能为空。")
+    quantity = to_decimal(row.get("quantity"))
+    if quantity is None or quantity <= 0:
+        raise ValueError("销售数量（未开票数量）必须大于0。")
+    get_or_create_material(
+        code, row.get("material_name"), row.get("specification"), row.get("uom")
+    )
+    cost_price = to_decimal(row.get("cost_price"))
+    cost_amount = to_decimal(row.get("cost_amount"))
+    if cost_price is None and cost_amount is None:
+        raise ValueError(
+            "期初发出商品明细需填 销售成本单价 或 销售成本（金额）：期初为系统首月前的历史发货，"
+            "没有流水可做月末加权，成本以你上传的历史成本为准（仅当月销售台账可留空成本）。"
+        )
+    if cost_amount is None:
+        cost_amount = (quantity * cost_price).quantize(Decimal("0.01"))
+    if cost_price is None:
+        cost_price = (cost_amount / quantity).quantize(Decimal("0.00000001"))
+    if cost_price < 0 or cost_amount < 0:
+        raise ValueError("销售成本单价/销售成本不能小于0。")
+    import calendar
+
+    last_day = calendar.monthrange(out_month.year, out_month.month)[1]
+    seq_no = text(row.get("row_no")) or str(row["_row_number"])
+    document_no = text(row.get("sales_order_no")) or (
+        f"OG-{batch.period.month:%Y%m}-{row['_row_number']}"
     )
     OpeningGoodsIssued.objects.create(
         period=batch.period,
         batch=batch,
+        original_period=out_month,
+        document_date=out_month.replace(day=last_day),
+        document_no=document_no[:100],
+        line_no=seq_no[:40],
         sales_order_no=text(row.get("sales_order_no")),
         customer_code=text(row.get("customer_code")),
         customer_name=text(row.get("customer_name")),
-        unit_cost=unit_cost,
-        **values,
+        sales_category=(text(row.get("sales_category")) or "")[:120],
+        material_code=code,
+        material_name=text(row.get("material_name"))[:255],
+        uom=text(row.get("uom"))[:30],
+        original_quantity=quantity,
+        prior_invoiced_quantity=Decimal("0"),
+        opening_quantity=quantity,
+        unit_cost=cost_price,
+        opening_amount=cost_amount,
+        remaining_quantity=quantity,
+        remark=text(row.get("remark"))[:500],
     )
-
-
 def _import_opening_inventory(batch, row):
     material_code = text(row.get("material_code"))
     if not material_code:

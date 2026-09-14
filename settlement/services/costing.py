@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import uuid
 from collections import defaultdict
 from datetime import timedelta
@@ -855,10 +856,21 @@ def ensure_workshop_settlements(period: AccountingPeriod):
             sequence=next_sequence,
         )
     stale = set(existing) - workshops
-    period.workshop_settlements.filter(
-        workshop__in=stale,
-        status=WorkshopSettlement.Status.PENDING,
-    ).delete()
+    if stale:
+        stale_qs = period.workshop_settlements.filter(
+            workshop__in=stale,
+            status=WorkshopSettlement.Status.PENDING,
+        )
+        # 页面每次打开都会调用本函数，因此这里必须避免任何写操作：
+        #   1) 没有要清理的车间 → 纯读取，不写库；
+        #   2) 正有车间在结转（长事务占着写锁）→ 跳过清理，等结转结束后再清理。
+        # 否则页面会等写锁（本地 sqlite 最长 120 秒），表现为页面转圈、打不开。
+        settling = SettlementRun.objects.filter(
+            period=period,
+            status=SettlementRun.Status.RUNNING,
+        ).exists()
+        if stale_qs.exists() and not settling:
+            stale_qs.delete()
     return period.workshop_settlements.order_by("sequence", "workshop")
 
 
@@ -914,15 +926,55 @@ def reset_workshop_settlements(period: AccountingPeriod):
     period.save(update_fields=["status", "last_run_at"])
 
 
+def _restore_unpriced_receipts(period, before: dict):
+    """清空后仍未被重新计价的完工入库行，恢复清空前的计价。
+
+    为什么需要：完工入库行只在"所属车间本次真正结算"时才重新计价；
+    已结转的车间（重复结算场景）不会重算，清空后就永久丢金额，
+    月末加权平均价会因此偏高/偏低（成本凭空变化）。
+    返回恢复的行数。
+    """
+    from settlement.services.workorder_costing import FINISHED_RECEIPT_TYPES
+
+    rows = []
+    for txn in period.inventory_transactions.filter(
+        business_type__in=FINISHED_RECEIPT_TYPES
+    ):
+        if txn.amount not in (None, ZERO):
+            continue
+        saved = before.get(txn.id)
+        if not saved:
+            continue
+        txn.unit_price, txn.amount, txn.price_source = saved
+        rows.append(txn)
+    if rows:
+        InventoryTransaction.objects.bulk_update(
+            rows, ["unit_price", "amount", "price_source"]
+        )
+    return len(rows)
+
+
 def _prepare_period(period):
     carry_summary = sync_carry_forward(period)
     _normalize_priced_production_flows(period)
     auto_match_all(period)
     ensure_workshop_settlements(period)
+    # 清空前先记下完工入库行的计价：重复结算时这些行不会再走车间结算，
+    # 若清空后没能重新计价，会导致月末加权价失真（成本凭空变化）。
+    from settlement.services.workorder_costing import FINISHED_RECEIPT_TYPES
+
+    _before_receipt_prices = {
+        t.id: (t.unit_price, t.amount, t.price_source)
+        for t in period.inventory_transactions.filter(
+            business_type__in=FINISHED_RECEIPT_TYPES
+        )
+        if t.amount is not None and t.amount != ZERO
+    }
     clear_baogong_receipt_prices(period)
     # 清空后用现有工单成本结果立即回填全部报工入库，
     # 保证已结转车间的报工入库始终带完工成本，不被后续单车间结转清空
     price_baogong_receipts(period, None)
+    _restore_unpriced_receipts(period, _before_receipt_prices)
     _fill_opening_prices(period)
     return carry_summary
 
@@ -1216,7 +1268,32 @@ def _finalize_period_state(period):
     }
 
 
+_SETTLE_LOCK = threading.Lock()
+
+
 def settle_workshop(period, settlement_id, user=None):
+    """车间结转入口：同一时间只允许一个结转在跑（页面并发触发时给中文提示）。"""
+    if not _SETTLE_LOCK.acquire(blocking=False):
+        raise ValueError(
+            "上一次结转还在进行中（通常需要 1～2 分钟），请等它完成后再操作。"
+        )
+    try:
+        return _settle_workshop_locked(period, settlement_id, user)
+    finally:
+        _SETTLE_LOCK.release()
+
+
+def _settle_workshop_locked(period, settlement_id, user=None):
+    # 上次结转若被中断（关闭/刷新页面），会留下“进行中”的批次：先自动标记失败，
+    # 免得界面一直显示进行中，也免得残留事务一直占着数据库写锁。
+    SettlementRun.objects.filter(
+        period=period,
+        status=SettlementRun.Status.RUNNING,
+    ).update(
+        status=SettlementRun.Status.FAILED,
+        error_message="上一次结转被中断，已自动标记为失败，可重新结转。",
+        finished_at=timezone.now(),
+    )
     run = SettlementRun.objects.create(
         period=period,
         run_id=str(uuid.uuid4()),
@@ -1318,6 +1395,11 @@ def run_settlement(period: AccountingPeriod, user=None):
 
             # 回填BOM单价：子项单价=子项物料月末加权价；标准成品单价=Σ(子项用量×子项单价)
             _fill_bom_prices(period)
+
+            # 回填销售台账的 成本单价/成本/毛利/毛利率（台账只给数量与收入，成本按月末加权价算）
+            from settlement.services.sales_ledger import fill_sales_ledger_costs
+
+            fill_sales_ledger_costs(period)
 
             run.status = SettlementRun.Status.SUCCESS
             run.iterations = total_iterations

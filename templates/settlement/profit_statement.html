@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}损益表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PROFIT &amp; LOSS</p>
+    <h1>损益表</h1>
+    <p>
+      销售台账逐行 + 当月费用按「本行终端销售收入 ÷ 当月终端销售收入合计」分摊；
+      销售毛利 = 终端销售收入 − 销售成本。
+    </p>
+  </div>
+  <div class="heading-actions">
+    <a class="button primary" href="{% url 'profit_statement_export' period.id %}">导出Excel</a>
+    <a class="button secondary" href="{% url 'export_center' period.id %}">报表导出中心</a>
+    <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售核销核对</a>
+  </div>
+</section>
+
+{% if data.backfilled %}
+<div class="message message-info">
+  已按月末加权平均价回填 {{ data.backfilled }} 行销售成本（台账只给数量与收入，成本由平台算）。
+</div>
+{% endif %}
+{% if not data.has_valuation %}
+<div class="message message-error">
+  本期还没有库存计价结果，销售成本会为空。请先完成「车间结转」并按顺序结算，毛利/营业利润/净利润才算得出来。
+</div>
+{% endif %}
+{% if data.missing_cost_rows %}
+<div class="message message-error">
+  有 {{ data.missing_cost_rows }} 行有收入但没有成本单价（该产品本月没有库存计价），这些行的毛利会偏高，请核对。
+</div>
+{% endif %}
+{% if data.lb_only_rows %}
+<div class="message message-info">
+  有 {{ data.lb_only_rows }} 行只填了「射阳兰邦销售收入」。按你定的口径（收入只算终端销售收入），
+  这些行收入为 0、毛利为负、也不参与费用分摊。
+</div>
+{% endif %}
+{% if not data.revenue_total %}
+<div class="message message-error">本月终端销售收入合计为 0，费用无法分摊。</div>
+{% endif %}
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">MONTHLY COSTS</p>
+      <h2>当月费用录入</h2>
+    </div>
+    <span class="pill">填当月发生额 → 保存后自动分摊到每一行</span>
+  </div>
+  <form method="post" class="stack-form">
+    {% csrf_token %}
+    <div class="filter-grid wide">
+      {% for field in fields %}
+      <label>{{ field.label }}
+        <input name="{{ field.name }}" type="number" step="0.01"
+               value="{{ field.value|floatformat:2 }}">
+      </label>
+      {% endfor %}
+    </div>
+    <div class="filter-actions">
+      <button class="button primary" type="submit">保存并重新计算</button>
+      <span class="muted-text">
+        分摊规则：本行分摊额 = 本行终端销售收入 ÷ 当月终端销售收入合计 × 当月金额；
+        四舍五入到分，尾差计入收入最大的那一行（保证每列合计 = 你录入的金额）。
+      </span>
+    </div>
+  </form>
+  {% if expense.updated_at %}
+  <p class="muted-text">
+    最近保存：{{ expense.updated_at|date:"Y-m-d H:i" }}{% if expense.updated_by %}（{{ expense.updated_by }}）{% endif %}
+  </p>
+  {% endif %}
+</section>
+
+<section class="summary-strip">
+  <article><span>终端销售收入</span><strong>{{ data.totals.revenue|thousands }}</strong></article>
+  <article><span>销售成本</span><strong>{{ data.totals.cost|thousands }}</strong></article>
+  <article><span>销售毛利</span><strong>{{ data.totals.gross|thousands }}</strong></article>
+  <article><span>销售毛利率</span><strong>{% if data.totals.gross_margin is None %}—{% else %}{{ data.totals.gross_margin|floatformat:2 }}%{% endif %}</strong></article>
+  <article><span>营业利润</span><strong>{{ data.totals.operating_profit|thousands }}</strong></article>
+  <article><span>利润总额</span><strong>{{ data.totals.total_profit|thousands }}</strong></article>
+  <article><span>净利润</span><strong>{{ data.totals.net_profit|thousands }}</strong></article>
+  <article><span>净利润率</span><strong>{% if data.totals.net_margin is None %}—{% else %}{{ data.totals.net_margin|floatformat:2 }}%{% endif %}</strong></article>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">BY ORDER LINE</p>
+      <h2>逐行损益（共 {{ data.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
+    </div>
+    <span class="pill">合计行按全月计算</span>
+  </div>
+  <div class="table-scroll" style="overflow-x:auto;">
+    <table class="data-table profit-table">
+      <thead>
+        <tr>
+          {% for header in data.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page.object_list %}
+        <tr>
+          <td>{{ row.seq }}</td>
+          <td>{{ row.out_month }}</td>
+          <td>{{ row.invoice_month }}</td>
+          <td>{{ row.channel }}</td>
+          <td>{{ row.company }}</td>
+          <td>{{ row.order_no }}</td>
+          <td>{{ row.customer }}</td>
+          <td>{{ row.category }}</td>
+          <td>{{ row.code }}</td>
+          <td>{{ row.name }}</td>
+          <td>{{ row.spec }}</td>
+          <td>{{ row.uom }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{% if row.revenue_price is not None %}{{ row.revenue_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.lb_amount|thousands }}</td>
+          <td style="text-align:right;">{% if row.lb_price is not None %}{{ row.lb_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">{% if row.cost_price is not None %}{{ row.cost_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ row.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="32">本期还没有销售台账，请先在「资料导入」上传销售台账（出库+开票）。</td></tr>
+        {% endfor %}
+        {% if page.object_list %}
+        <tr class="total-row" style="font-weight:600;background:#f2f7fd;">
+          <td colspan="12">合计（全月）</td>
+          <td style="text-align:right;">{{ data.totals.revenue|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ data.totals.lb_amount|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ data.totals.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ data.totals.cost|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.gross|thousands }}</td>
+          <td style="text-align:right;">{% if data.totals.gross_margin is None %}—{% else %}{{ data.totals.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ data.totals.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ data.totals.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if data.totals.net_margin is None %}—{% else %}{{ data.totals.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" with page=page %}
+</section>
+
+<section class="section-card">
+  <div class="section-heading"><div><h2>口径说明</h2></div></div>
+  <ul class="muted-text">
+    <li>收入口径：只取「终端销售收入」；射阳兰邦销售收入只作列展示，不参与毛利与分摊。</li>
+    <li>销售成本 = 销售数量 × 该产品月末加权平均价（由平台在结算后回填，与库存账一致）。</li>
+    <li>销售毛利 = 终端销售收入 − 销售成本；销售毛利率 = 销售毛利 ÷ 终端销售收入（百分数，2位小数）。</li>
+    <li>税金及附加、管理费用、销售费用、财务费用、营业外收入、营业外支出、所得税费用：你填当月发生额，按本行收入占比分摊。</li>
+    <li>营业利润 = 销售毛利 − 税金及附加 − 管理费用 − 销售费用 − 财务费用。</li>
+    <li>利润总额 = 营业利润 + 营业外收入 − 营业外支出；净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入。</li>
+    <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致。</li>
+  </ul>
+</section>
+{% endblock %}

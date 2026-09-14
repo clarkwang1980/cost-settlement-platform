@@ -61,6 +61,9 @@ from settlement.services.imports import (
     normalize_header,
     process_batch,
 )
+from settlement.services.profit_statement import (
+    build_profit_statement_sheet,
+)
 from settlement.services.matching import (
     auto_match_all,
     is_purchase_receipt,
@@ -104,10 +107,11 @@ TEMPLATE_FILES = {
     ImportBatch.Kind.PURCHASE_CONTRACT: "采购合同.csv",
     ImportBatch.Kind.PURCHASE_INVOICE: "采购发票.csv",
     ImportBatch.Kind.SALES_INVOICE: "销售发票.csv",
+    ImportBatch.Kind.SALES_LEDGER: "销售台账（出库+开票）.xlsx",
     ImportBatch.Kind.WORKSHOP_COST: "车间费用.csv",
     ImportBatch.Kind.OPENING_WIP: "期初在产品.xlsx",
     ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL: "期初采购暂估明细.csv",
-    ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细.csv",
+    ImportBatch.Kind.OPENING_GOODS_ISSUED: "期初发出商品明细（同销售台账）.xlsx",
     ImportBatch.Kind.OPENING_INVENTORY: "期初存货.csv",
     ImportBatch.Kind.ENDING_INVENTORY: "期末存货.csv",
     ImportBatch.Kind.WORK_ORDER: "生产工单.csv",
@@ -120,7 +124,7 @@ TEMPLATE_FILES = {
     "pulp_ledger": "浆粕流水.xlsx",
     ImportBatch.Kind.BOM: "BOM表.xlsx",
     ImportBatch.Kind.ISSUE_PROGRESS: "投料进度表.xlsx",
-    ImportBatch.Kind.HISTORICAL_PRICE: "历史单价.csv",
+    ImportBatch.Kind.HISTORICAL_PRICE: "历史单价（入库+出库）.xlsx",
     ImportBatch.Kind.WORK_ORDER_DETAIL: "工单明细.xlsx",
 }
 
@@ -225,6 +229,10 @@ def period_detail(request, period_id):
         "contracts": period.purchase_contracts.count(),
         "purchase_invoices": period.purchase_invoices.count(),
         "sales_invoices": period.sales_invoices.count(),
+        # 待处理 = 还有未核销数量的销售发票（台账已自动核销完的为 0）
+        "sales_pending": period.sales_invoices.filter(
+            remaining_quantity__gt=0
+        ).count(),
         "orders": period.work_orders.count(),
         "valuations": period.inventory_valuations.count(),
         "ending_inventory": period.ending_inventory_balances.count(),
@@ -328,6 +336,15 @@ def upload_file(request, period_id):
                 )
                 return redirect("period_detail", period_id=period.id)
             except Exception as exc:
+                # 处理中途异常（如解析/整批校验失败）：以数据库真实状态为准，清掉回滚后残留的
+                # PENDING 批次，避免占住文件哈希导致无法重传（process_batch 的保存已随事务回滚）
+                pending = locals().get("batch")
+                if pending is not None and pending.pk:
+                    stale = ImportBatch.objects.filter(
+                        pk=pending.pk, status=ImportBatch.Status.PENDING
+                    ).first()
+                    if stale is not None:
+                        stale.delete()
                 messages.error(request, str(exc))
     else:
         form = UploadForm()
@@ -345,6 +362,20 @@ def upload_file(request, period_id):
 
 @login_required
 def download_template(request, kind):
+    # 历史单价：模板结构随年度变化（列=当年1~12月），按最新核算期间动态生成
+    if kind == ImportBatch.Kind.HISTORICAL_PRICE:
+        from settlement.services.price_table import build_price_template_workbook
+
+        stream = build_price_template_workbook()
+        filename = "历史单价（入库+出库）.xlsx"
+        response = HttpResponse(
+            stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(filename)}"
+        )
+        return response
     filename = TEMPLATE_FILES.get(kind)
     if not filename:
         raise Http404("模板不存在")
@@ -1695,6 +1726,184 @@ def purchase_reversal_report(request, period_id):
     )
 
 
+def _purchase_summary_stats(period):
+    """采购暂估回冲汇总的统计口径：返回与 purchase_summary 模板一致的 context 数据。
+
+    供单期间汇总页（purchase_summary）与各期间汇总页（purchase_accrual_overview）复用。
+    """
+    from settlement.services.purchase_accruals import provisional_basis
+
+    ZERO = Decimal("0")
+
+    def money(v):
+        return (Decimal(v or ZERO)).quantize(Decimal("0.01"))
+
+    # —— 1. 当月入库（本期采购入库流水）——
+    receipts = [
+        t for t in period.inventory_transactions.select_related("period").all()
+        if is_purchase_receipt(t)
+    ]
+    receipt_qty = sum((abs(Decimal(t.quantity or ZERO)) for t in receipts), ZERO)
+    receipt_amount = ZERO
+    receipt_unpriced = 0
+    for t in receipts:
+        basis = provisional_basis(t)
+        if basis["unit_price"] is not None:
+            receipt_amount += Decimal(t.quantity or ZERO) * basis["unit_price"]
+        else:
+            receipt_unpriced += 1
+
+    # —— 2. 发票 ——
+    invoices = list(period.purchase_invoices.all())
+    total_invoice = sum((money(i.amount_excl_tax) for i in invoices), ZERO)
+    matched_ids = set(
+        MatchAllocation.objects.filter(
+            kind=MatchAllocation.Kind.PURCHASE_INVOICE,
+            period__month__lte=period.month,
+        ).values_list("purchase_invoice_line_id", flat=True)
+    )
+    matched = [i for i in invoices if i.id in matched_ids]
+    matched_amount = sum((money(i.amount_excl_tax) for i in matched), ZERO)
+    unmatched_amount = total_invoice - matched_amount
+
+    # —— 3. 回冲（发票核销分配）——
+    allocations = MatchAllocation.objects.filter(
+        kind=MatchAllocation.Kind.PURCHASE_INVOICE,
+        period__month__lte=period.month,
+    ).select_related("inventory_transaction__period", "opening_purchase_accrual")
+    reversal_qty = sum(
+        (Decimal(a.matched_quantity or ZERO) for a in allocations), ZERO
+    )
+    reversal_amount = sum((money(a.amount) for a in allocations), ZERO)
+    cross_count = 0
+    for a in allocations:
+        if (
+            a.inventory_transaction is not None
+            and a.inventory_transaction.period.month < period.month
+        ):
+            cross_count += 1
+        elif (
+            a.opening_purchase_accrual is not None
+            and a.opening_purchase_accrual.original_period < period.month
+        ):
+            cross_count += 1
+
+    # —— 4. 月末采购暂估 ——
+    rows = build_purchase_accrual_rows(period)
+    month_rows = [r for r in rows if r.receipt_month == period.month]
+    prior_rows = [r for r in rows if r.receipt_month < period.month]
+    total_accrual = sum((r.provisional_amount or ZERO for r in rows), ZERO)
+    month_accrual = sum((r.provisional_amount or ZERO for r in month_rows), ZERO)
+    prior_accrual = sum((r.provisional_amount or ZERO for r in prior_rows), ZERO)
+
+    # —— 5. 期初采购暂估台账 ——
+    opening = OpeningPurchaseAccrual.objects.filter(period__month__lte=period.month)
+    opening_amount = sum((money(o.opening_amount) for o in opening), ZERO)
+
+    # —— 6. 可视化数据（万元 + 占比）——
+    def wan(v):
+        return (Decimal(v or ZERO) / Decimal("10000")).quantize(Decimal("0.01"))
+
+    receipt_amt = money(receipt_amount)
+    reversal_amt = money(reversal_amount)
+    month_accrual_amt = money(month_accrual)
+    total_accrual_amt = money(total_accrual)
+    inv_total = money(total_invoice)
+    inv_matched = money(matched_amount)
+    inv_unmatched = money(unmatched_amount)
+
+    def pct(part, whole):
+        if not whole:
+            return 0
+        return int((Decimal(part) / Decimal(whole) * 100).quantize(Decimal("0")))
+
+    return {
+        "period": period,
+        "receipts": {
+            "count": len(receipts),
+            "quantity": receipt_qty,
+            "amount": receipt_amt,
+            "unpriced": receipt_unpriced,
+        },
+        "invoice": {
+            "count": len(invoices),
+            "total": inv_total,
+            "matched_count": len(matched),
+            "matched": inv_matched,
+            "unmatched_count": len(invoices) - len(matched),
+            "unmatched": inv_unmatched,
+            "matched_pct": pct(inv_matched, inv_total),
+            "unmatched_pct": pct(inv_unmatched, inv_total),
+        },
+        "reversal": {
+            "count": allocations.count(),
+            "quantity": reversal_qty,
+            "amount": reversal_amt,
+            "cross_count": cross_count,
+        },
+        "accrual": {
+            "count": len(rows),
+            "total": total_accrual_amt,
+            "month_count": len(month_rows),
+            "month": month_accrual_amt,
+            "prior_count": len(prior_rows),
+            "prior": money(prior_accrual),
+        },
+        "opening": {"count": opening.count(), "amount": money(opening_amount)},
+        "flow": {
+            "reversal_pct": pct(reversal_amt, receipt_amt),
+            "accrual_pct": pct(month_accrual_amt, receipt_amt),
+        },
+        "kpi": {
+            "receipts": wan(receipt_amt),
+            "invoice": wan(inv_total),
+            "invoice_matched": wan(inv_matched),
+            "invoice_unmatched": wan(inv_unmatched),
+            "reversal": wan(reversal_amt),
+            "month": wan(month_accrual_amt),
+            "total": wan(total_accrual_amt),
+            "opening": wan(opening_amount),
+        },
+    }
+
+
+@login_required
+def purchase_summary(request, period_id):
+    """采购暂估回冲汇总：当月入库 / 发票 / 回冲 / 月末暂估 一页看清。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    context = _purchase_summary_stats(period)
+    # 各期间对比（复用当前期间已算好的 stats）
+    overview_rows = []
+    for p in AccountingPeriod.objects.order_by("month"):
+        if p.id == period.id:
+            s = context
+        else:
+            s = _purchase_summary_stats(p)
+        overview_rows.append(
+            {
+                "period": p,
+                "opening": s["opening"]["amount"],
+                "receipts": s["receipts"]["amount"],
+                "invoice": s["invoice"]["total"],
+                "matched_pct": s["invoice"]["matched_pct"],
+                "reversal": s["reversal"]["amount"],
+                "month_accrual": s["accrual"]["month"],
+                "prior_accrual": s["accrual"]["prior"],
+                "total_accrual": s["accrual"]["total"],
+                "current": p.id == period.id,
+            }
+        )
+    context["overview_rows"] = overview_rows
+    return render(request, "settlement/purchase_summary.html", context)
+
+
+@login_required
+def purchase_accrual_overview(request):
+    """各期间暂估已并入回冲汇总页：直接跳转到最近期间的回冲汇总页。"""
+    latest = AccountingPeriod.objects.order_by("month").last()
+    if latest is None:
+        return redirect("dashboard")
+    return redirect("purchase_summary", period_id=latest.id)
 @login_required
 def work_order_imports(request, period_id):
     """生产工单导入台账（ERP 原始资料，不参与成本计算）。"""
@@ -2285,58 +2494,16 @@ def prepare_price_table_data(period, n=6):
     return periods, rows
 
 
-def build_price_table_workbook(period, n=6):
-    """生成单价表（跨月对比）Excel 工作簿，返回 BytesIO。"""
-    from io import BytesIO
+def build_price_table_workbook(period, n=None):
+    """单价表：两个工作表（入库单价 / 出库单价），列为 序号/品类/品名编码/品名名称 + 当年 1~12 月。
 
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    口径见 settlement.services.price_table（n 参数保留仅为兼容旧调用）。
+    """
+    from settlement.services.price_table import (
+        build_price_table_workbook as _build,
+    )
 
-    periods, rows = prepare_price_table_data(period, n)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "单价表-跨月对比"
-    ws.append([f"物料单价表（跨月对比）"])
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + 2 * len(periods))
-    ws.cell(1, 1).font = Font(bold=True, size=14)
-    headers = ["类别", "物料编码", "物料名称", "单位"]
-    for p in periods:
-        headers += [
-            f"{p.month:%Y-%m} 入库单价", f"{p.month:%Y-%m} 出库单价",
-        ]
-    ws.append(headers)
-    thin = Side(style="thin", color="BFBFBF")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    fill = PatternFill("solid", fgColor="1F4E79")
-    for c in range(1, len(headers) + 1):
-        cell = ws.cell(2, c)
-        cell.fill = fill
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
-    raw_fill = PatternFill("solid", fgColor="FCE4D6")
-    fin_fill = PatternFill("solid", fgColor="E2EFDA")
-    for row in rows:
-        line = [row["category"], row["code"], row["name"], row["uom"]]
-        for rq, ra, rp, iq, ia, ip in row["cells"]:
-            line += [rp, ip]
-        ws.append(line)
-        rf = raw_fill if row["category"] == "原料" else (fin_fill if row["category"] == "成品" else None)
-        for c in range(1, len(headers) + 1):
-            cell = ws.cell(ws.max_row, c)
-            cell.border = border
-            if c >= 5:
-                cell.alignment = Alignment(horizontal="right")
-                cell.number_format = "#,##0.0000"
-            if rf:
-                cell.fill = rf
-    for i, h in enumerate(headers, 1):
-        ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 16
-    ws.freeze_panes = "E3"
-    stream = BytesIO()
-    wb.save(stream)
-    return stream
+    return _build(period)
 
 
 @login_required
@@ -2606,6 +2773,8 @@ LISTING_EXPORTS = {
     "purchase_reversal": {"title": "发票暂估回冲明细"},
     "sales_invoice": {"title": "销售发票匹配"},
     "sales_uninvoiced": {"title": "月末已出库未开票"},
+    "sales_ledger": {"title": "销售台账（成本·毛利）"},
+    "profit_statement": {"title": "损益表"},
     "work_order_match": {"title": "工单匹配"},
     "inventory_valuation": {"title": "库存金额结转"},
     "work_order_cost": {"title": "工单成本"},
@@ -3369,8 +3538,8 @@ def _listing_rows(request, period, kind):
         sheets.append(
             (
                 "月末未开票",
-                ["出库期间", "出库日期", "出库单号", "销售订单号", "客户", "产品编码",
-                 "产品名称", "出库数量", "累计开票数量", "未开票数量", "出库成本",
+                ["出库期间", "出库日期", "出库单号", "销售订单号", "客户", "销售大类", "产品编码",
+                 "产品名称", "出库数量", "累计开票数量", "未开票数量", "出库单价", "出库成本",
                  "已开票成本", "未开票成本", "匹配发票", "最近开票期间", "未开票天数", "状态"],
                 (
                     (
@@ -3379,11 +3548,13 @@ def _listing_rows(request, period, kind):
                         r.document_no,
                         r.sales_order_no,
                         r.customer_name or r.customer_code,
+                        r.sales_category,
                         r.material_code,
                         r.material_name,
                         r.issue_quantity,
                         r.invoiced_quantity,
                         r.outstanding_quantity,
+                        r.issue_unit_price,
                         r.issue_amount,
                         r.invoiced_cost,
                         r.outstanding_cost,
@@ -3396,6 +3567,52 @@ def _listing_rows(request, period, kind):
                 ),
             )
         )
+
+    elif kind == "sales_ledger":
+        items = period.sales_ledger_lines.order_by("row_no")
+        sheets.append(
+            (
+                "销售台账（成本·毛利）",
+                ["序号", "出库期间", "开票状态", "开票期间", "销售渠道", "销售公司",
+                 "订单单号", "客户名称", "销售大类", "产品编码", "产品名称", "规格型号",
+                 "计量单位", "终端销售收入", "终端销售单价", "射阳兰邦销售收入",
+                 "射阳兰邦销售单价", "销售数量", "销售成本单价", "销售成本",
+                 "销售毛利", "销售毛利率", "结转类型"],
+                (
+                    (
+                        item.row_no,
+                        item.out_month.strftime("%Y-%m") if item.out_month else "",
+                        item.get_invoice_status_display(),
+                        item.invoice_month.strftime("%Y-%m") if item.invoice_month else "",
+                        item.channel,
+                        item.company,
+                        item.order_no,
+                        item.customer_name or item.customer_code,
+                        item.sales_category,
+                        item.material_code,
+                        item.material_name,
+                        item.specification,
+                        item.uom,
+                        item.terminal_amount,
+                        item.terminal_unit_price,
+                        item.lb_amount,
+                        item.lb_unit_price,
+                        item.quantity,
+                        item.cost_price,
+                        item.cost_amount,
+                        item.gross_profit,
+                        (item.gross_margin * 100).quantize(Decimal("0.01"))
+                        if item.gross_margin is not None
+                        else None,
+                        item.carry_type,
+                    )
+                    for item in items
+                ),
+            )
+        )
+
+    elif kind == "profit_statement":
+        sheets.extend(build_profit_statement_sheet(period)[0])
 
     elif kind == "work_order_match":
         # 与"工单匹配"页一致：工单 + 投料/报工台账 + 报工入库汇总
@@ -4900,8 +5117,9 @@ def export_center(request, period_id):
                  "desc": "本月期间全部库存出入库流水，按你上传的原始文件原样导出（单价/金额保持上传原值，不含系统回填）"},
                 {"kind": "inventory_valuation", "name": "库存金额结转",
                  "desc": "各物料期初/入库/出库/期末数量金额及月末加权平均价"},
-                {"kind": "price_table", "name": "单价表（历史单价·跨月对比）",
-                 "desc": "各物料最近多期的入库/出库单价（上传的历史单价优先，未上传用系统计算价）；含新增物料自动补全"},
+                {"kind": "price_table", "name": "单价表（入库/出库·跨月对比）",
+                 "desc": "两个工作表：入库单价、出库单价；列=序号/品类/品名编码/品名名称 + 当年1~12月，"
+                         "按月填该月新入库/新出库的单价（含采购入库、完工核算入库、其他入库；上传的历史单价优先）"},
                 {"kind": "purchase_contract", "name": "采购合同",
                  "desc": "采购合同台账（合同号、供应商、品名、数量、不含税单价、剩余数量）"},
                 {"kind": "purchase_invoice", "name": "采购发票匹配",
@@ -4959,6 +5177,10 @@ def export_center(request, period_id):
                  "desc": "销售发票及核销的出库/期初发出商品明细"},
                 {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
                  "desc": "截止月末仍未开票的销售出库及发出商品成本"},
+                {"kind": "sales_ledger", "name": "销售台账（成本·毛利）",
+                 "desc": "你上传的销售台账 + 平台算出的成本单价（产品月末加权平均价）、销售成本、销售毛利与毛利率"},
+                {"kind": "profit_statement", "name": "损益表",
+                 "desc": "销售台账逐行 + 当月税金及附加/三费/营业外收支/所得税按终端销售收入占比分摊，含销售毛利、营业利润、利润总额、净利润与净利润率"},
             ],
         },
         {

@@ -77,6 +77,37 @@ def is_sales_issue(txn: InventoryTransaction) -> bool:
     )
 
 
+def is_sample_issue(txn) -> bool:
+    """样品（样品免费赠送）出库判定，满足其一即为样品：
+
+    1) 业务类型或备注含“样品”；
+    2) 该行被平台生成的样品开票记录（发票号 LEDGER-SAMPLE-*）核销。
+
+    样品出库照常参与库存计价（数量扣减、成本=月末加权价），但不参与正常销售核销，
+    结算时计入销售费用（sample_cost），不进入“已开票结转/发出商品”口径。"""
+    if "样品" in f"{txn.business_type or ''}{txn.remark or ''}":
+        return True
+    try:
+        return txn.allocations.filter(
+            kind=MatchAllocation.Kind.SALES_INVOICE,
+            sales_invoice_line__invoice_no__startswith="LEDGER-SAMPLE-",
+        ).exists()
+    except Exception:
+        return False
+
+
+def _same_party_loose(code_a, name_a, code_b, name_b) -> bool:
+    """宽松客户匹配：任一方完全没有客户信息时视为可匹配；双方都有客户时才要求严格一致。
+
+    用于“无订单号”的开票记录（如平台台账当月结转生成的 LEDGER 发票）按物料核销当月流水，
+    因为流水销售出库行通常不带客户/订单信息。"""
+    has_a = bool(code_a or name_a)
+    has_b = bool(code_b or name_b)
+    if not has_a or not has_b:
+        return True
+    return _same_party_strict(code_a, name_a, code_b, name_b)
+
+
 def _manual_used(source, field_name: str, kind: str) -> Decimal:
     return (
         MatchAllocation.objects.filter(
@@ -300,29 +331,45 @@ def _candidate_opening_purchase_accruals(period, invoice):
 
 
 def _candidate_sales_issues(period, invoice):
-    if not invoice.sales_order_no:
-        return []
     txns = [
         txn
         for txn in InventoryTransaction.objects.filter(
             period__month__lte=period.month,
             match_mode=MatchingMode.AUTO
         ).select_related("period")
-        if is_sales_issue(txn)
+        if is_sales_issue(txn) and not is_sample_issue(txn)
     ]
-    txns = [
-        txn
-        for txn in txns
-        if txn.material_code == invoice.material_code
-        and txn.order_no
-        and _norm(txn.order_no) == _norm(invoice.sales_order_no)
-        and _same_party_strict(
-            txn.customer_code,
-            txn.customer_name,
-            invoice.customer_code,
-            invoice.customer_name,
-        )
-    ]
+    if invoice.sales_order_no:
+        txns = [
+            txn
+            for txn in txns
+            if txn.material_code == invoice.material_code
+            and txn.order_no
+            and _norm(txn.order_no) == _norm(invoice.sales_order_no)
+            and _same_party_strict(
+                txn.customer_code,
+                txn.customer_name,
+                invoice.customer_code,
+                invoice.customer_name,
+            )
+        ]
+    elif invoice.invoice_no.startswith("LEDGER"):
+        # 无订单号：只有平台台账生成的 LEDGER 发票才按物料宽松核销（它们本就没有订单/客户）；
+        # 你上传的销售发票若缺订单号，不做自动核销，留在"销售匹配"页人工核销，避免张冠李戴。
+        txns = [
+            txn
+            for txn in txns
+            if txn.material_code == invoice.material_code
+            and _same_party_loose(
+                txn.customer_code,
+                txn.customer_name,
+                invoice.customer_code,
+                invoice.customer_name,
+            )
+        ]
+    else:
+        # 用户上传发票缺订单号：不自动核销（需人工指定对应出库/期初发出商品）
+        txns = []
     txns.sort(
         key=lambda txn: (
             txn.period.month,

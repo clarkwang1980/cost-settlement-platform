@@ -22,6 +22,7 @@
     {% endif %}
     <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水</a>
     <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
+    <a class="button secondary" href="{% url 'purchase_summary' period.id %}">采购暂估汇总</a>
   </div>
 </section>
 
@@ -47,8 +48,8 @@
   <a class="workflow-step {% if counts.contracts %}done{% endif %}" href="{% url 'purchase_matches' period.id %}">
     <span>02</span><strong>采购匹配</strong><small>{{ counts.contracts }}条合同</small>
   </a>
-  <a class="workflow-step {% if counts.sales_invoices %}done{% endif %}" href="{% url 'sales_matches' period.id %}">
-    <span>03</span><strong>销售匹配</strong><small>{{ counts.sales_invoices }}条发票</small>
+  <a class="workflow-step {% if not counts.sales_pending %}done{% endif %}" href="{% url 'sales_matches' period.id %}">
+    <span>03</span><strong>销售核销核对</strong><small>待处理 {{ counts.sales_pending }} 条</small>
   </a>
   <a class="workflow-step {% if counts.orders %}done{% endif %}" href="{% url 'work_order_matches' period.id %}">
     <span>04</span><strong>订单匹配</strong><small>{{ counts.orders }}张工单</small>

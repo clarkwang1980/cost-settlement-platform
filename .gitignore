@@ -24,3 +24,7 @@ start_server.bat
 启动本地演示自启.bat
 cost_platform_service.py
 server_watchdog*.py
+*.bak_*
+_*.txt
+_*.html
+*.tmp

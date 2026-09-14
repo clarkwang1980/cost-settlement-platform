@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+
+{% block title %}各期间采购暂估汇总{% endblock %}
+
+{% block content %}
+
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PURCHASE OVERVIEW</p>
+    <h1>各期间采购暂估汇总</h1>
+    <p>每个核算期间一行：当月入库 → 发票核销 → 回冲 → 月末暂估。新增期间（如 8 月）后自动出现对应行。</p>
+  </div>
+</section>
+
+{% if rows %}
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">BY PERIOD</p><h2>各期间暂估一览</h2></div>
+    <span class="pill">{{ rows|length }} 个期间</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>期间</th>
+          <th>状态</th>
+          <th class="num">期初暂估台账（元）</th>
+          <th class="num">当月入库（元）</th>
+          <th class="num">发票上传（元）</th>
+          <th class="num">发票核销</th>
+          <th class="num">已回冲（元）</th>
+          <th class="num">当月暂估（元）</th>
+          <th class="num">月末暂估合计（元）</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a class="document-link" href="{% url 'purchase_summary' r.period.id %}"><strong>{{ r.period }}</strong></a></td>
+          <td><span class="status status-{{ r.status }}">{{ r.period.get_status_display }}</span></td>
+          <td class="num"><strong>{{ r.opening|floatformat:2|thousands }}</strong></td>
+          <td class="num">{{ r.receipts|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.invoice|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.matched_pct }}%</td>
+          <td class="num">{{ r.reversal|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.month_accrual|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.total_accrual|floatformat:2|thousands }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="help-box" style="margin-top:14px;">
+    <strong>口径说明</strong>
+    <span>金额单位为元；当月入库为暂估价口径；发票核销按整张开票金额计；月末暂估合计 = 当月未到票暂估 + 以前月份期初台账未到票。点期间名可进入该期间的回冲汇总页。</span>
+  </p>
+</section>
+{% else %}
+<section class="section-card">
+  <p>还没有任何核算期间。请先在首页新建期间并导入数据。</p>
+</section>
+{% endif %}
+
+{% endblock %}

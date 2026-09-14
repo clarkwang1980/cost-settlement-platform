@@ -1,6 +1,6 @@
 from django.urls import path
 
-from settlement import views, views_total_cost
+from settlement import views, views_profit, views_total_cost
 
 
 urlpatterns = [
@@ -73,6 +73,11 @@ urlpatterns = [
         "periods/<int:period_id>/purchase-reversals/",
         views.purchase_reversal_report,
         name="purchase_reversal_report",
+    ),
+    path(
+        "periods/<int:period_id>/purchase-summary/",
+        views.purchase_summary,
+        name="purchase_summary",
     ),
     path(
         "periods/<int:period_id>/sales-matches/",
@@ -212,8 +217,23 @@ urlpatterns = [
         name="export_center",
     ),
     path(
+        "purchase-accrual-overview/",
+        views.purchase_accrual_overview,
+        name="purchase_accrual_overview",
+    ),
+    path(
         "periods/<int:period_id>/export-list/<str:kind>/",
         views.export_listing,
         name="export_listing",
+    ),
+    path(
+        "periods/<int:period_id>/profit-statement/",
+        views_profit.profit_statement_view,
+        name="profit_statement",
+    ),
+    path(
+        "periods/<int:period_id>/profit-statement/export/",
+        views_profit.profit_statement_export,
+        name="profit_statement_export",
     ),
 ]

@@ -90,6 +90,17 @@ if os.getenv("DB_ENGINE", "postgres") == "sqlite":
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            # 本地 sqlite 加固：车间结转是分钟级的长写事务，默认配置下会被页面轮询
+            # 顶成 "database is locked"。这里让写事务排队等待、并开启 WAL 读写不互斥。
+            "OPTIONS": {
+                "timeout": 120,
+                "transaction_mode": "IMMEDIATE",
+                "init_command": (
+                    "PRAGMA journal_mode=WAL;"
+                    "PRAGMA synchronous=NORMAL;"
+                    "PRAGMA busy_timeout=120000;"
+                ),
+            },
         }
     }
 else:

@@ -31,7 +31,9 @@ from settlement.models import (
     PurchaseInvoiceLine,
     PulpMaterial,
     ReconciliationResult,
+    ProfitStatementExpense,
     SalesInvoiceLine,
+    SalesLedgerLine,
     WorkOrder,
     WorkOrderCostResult,
     WorkReport,
@@ -58,6 +60,11 @@ from settlement.services.pulp_costing import collect_pulp_costs
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
     build_sales_uninvoiced_rows,
+)
+from settlement.services.profit_statement import (
+    ALLOCATION_FIELDS,
+    HEADERS,
+    build_profit_statement,
 )
 
 
@@ -1416,21 +1423,29 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertIn("88.8800", html)
         self.assertIn("77.7700", html)
         self.assertNotIn("100.0000", html)
-        # 导出含上传价
+        # 导出含上传价：两个工作表（入库单价 / 出库单价），列为 序号/品类/品名编码/品名名称 + 当年各月
         resp = self.client.get(
             reverse("price_table", args=[self.period.id]) + "?export=1"
         )
         self.assertEqual(resp.status_code, 200)
         wb = load_workbook(BytesIO(resp.content))
-        ws = wb.active
-        found = False
-        for row in ws.iter_rows(values_only=True):
-            if row and row[1] == "11.01":
-                found = True
-                self.assertEqual(float(row[4]), 88.88)
-                self.assertEqual(float(row[5]), 77.77)
-                break
-        self.assertTrue(found)
+        self.assertEqual(wb.sheetnames, ["入库单价", "出库单价"])
+        month_label = f"{self.period.month.year}年{self.period.month.month}月"
+        for sheet_name, expected in (("入库单价", 88.88), ("出库单价", 77.77)):
+            ws = wb[sheet_name]
+            headers = [
+                ws.cell(2, col).value for col in range(1, ws.max_column + 1)
+            ]
+            self.assertEqual(headers[:4], ["序号", "品类", "品名编码", "品名名称"])
+            self.assertIn(month_label, headers)
+            price_col = headers.index(month_label) + 1
+            found = False
+            for row in range(3, ws.max_row + 1):
+                if ws.cell(row, 3).value == "11.01":
+                    found = True
+                    self.assertEqual(float(ws.cell(row, price_col).value), expected)
+                    break
+            self.assertTrue(found, f"{sheet_name} 未找到 11.01")
 
     def test_autofill_historical_prices_for_new_materials(self):
         """历史单价自动补全：期间内新增物料（无上传价）访问单价表时自动按系统计算价补入；
@@ -1503,21 +1518,16 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertIn("ONLY-HP", html)
         self.assertIn("12.3400", html)
         self.assertIn("11.1100", html)
-        # 导出同样包含
+        # 导出：该期间没有任何入库/出库，按"有进出才填月份"的口径两张表均为空表
         resp = self.client.get(
             reverse("price_table", args=[self.period.id]) + "?export=1"
         )
         self.assertEqual(resp.status_code, 200)
         wb = load_workbook(BytesIO(resp.content))
-        ws = wb.active
-        found = False
-        for row in ws.iter_rows(values_only=True):
-            if row and row[1] == "ONLY-HP":
-                found = True
-                self.assertEqual(float(row[4]), 12.34)
-                self.assertEqual(float(row[5]), 11.11)
-                break
-        self.assertTrue(found)
+        self.assertEqual(wb.sheetnames, ["入库单价", "出库单价"])
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            self.assertEqual(ws.max_row, 2)  # 仅标题行 + 表头行
 
     def test_export_center_includes_price_table(self):
         """导出中心包含"单价表"，勾选后 ZIP 内可导出跨月单价表。"""
@@ -1531,11 +1541,20 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             material_name="导出测试物料",
             receipt_price=D("45.67000000"), issue_price=D("44.44000000"),
         )
+        # 需要有实际进出，单价才会落到对应月份列（上传价覆盖系统价）
+        from settlement.models import InventoryValuation
+
+        InventoryValuation.objects.create(
+            period=self.period, material_code="EXP-HP",
+            material_name="导出测试物料",
+            receipt_quantity=10, receipt_amount=1000,
+            issue_quantity=5, issue_amount=600,
+        )
         self.client.force_login(self.user)
         # 导出中心页面含单价表选项
         resp = self.client.get(reverse("export_center", args=[self.period.id]))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "单价表（历史单价·跨月对比）")
+        self.assertContains(resp, "单价表（入库/出库·跨月对比）")
         # 勾选导出 ZIP
         resp = self.client.post(
             reverse("export_center", args=[self.period.id]),
@@ -1549,15 +1568,21 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         wb = load_workbook(
             BytesIO(zf.read([n for n in names if "单价表" in n][0]))
         )
-        ws = wb.active
-        found = False
-        for row in ws.iter_rows(values_only=True):
-            if row and row[1] == "EXP-HP":
-                found = True
-                self.assertEqual(float(row[4]), 45.67)
-                self.assertEqual(float(row[5]), 44.44)
-                break
-        self.assertTrue(found)
+        self.assertEqual(wb.sheetnames, ["入库单价", "出库单价"])
+        month_label = f"{self.period.month.year}年{self.period.month.month}月"
+        for sheet_name, expected in (("入库单价", 45.67), ("出库单价", 44.44)):
+            ws = wb[sheet_name]
+            headers = [
+                ws.cell(2, col).value for col in range(1, ws.max_column + 1)
+            ]
+            price_col = headers.index(month_label) + 1
+            found = False
+            for row in range(3, ws.max_row + 1):
+                if ws.cell(row, 3).value == "EXP-HP":
+                    found = True
+                    self.assertEqual(float(ws.cell(row, price_col).value), expected)
+                    break
+            self.assertTrue(found, f"{sheet_name} 未找到 EXP-HP")
 
     def test_ledger_pages_hidden_and_exports_available(self):
         """工单/投料/报工台账不再出现在页面导航，仅在报表导出中心可导出（原样明细）。"""
@@ -1980,6 +2005,8 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                 ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL,
                 "期初采购暂估明细.csv",
             ),
+            # 期初发出商品：sample_templates 里的 期初发出商品明细.csv 是旧 17 列格式，
+            # 与现行"同销售台账"23 列口径不一致，这里用内嵌的现行格式数据
             (
                 ImportBatch.Kind.OPENING_GOODS_ISSUED,
                 "期初发出商品明细.csv",
@@ -2010,6 +2037,11 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             "报工时间,生产任务编号,工序编号,工序名称,报工物料编号,报工物料名称,生产人员,质量状态,不良原因,报工数量,报工单位,辅助数量,辅助单位,批次号,标识码,流转卡编号,工时,工时单位,备注,部门,设备,工单编号,工单物料编号,工单物料名称,订单编号,特纺/包覆-纸管颜色,纺纱-班别,染色纤维-含水率,染色纤维-批号流水,织布-序号,织布-机台,产出仓位,工单部门\n"
             "2026-06-20 16:00,TASK-001,OP10,报工,FG-001,示例产品,,,,10,kg,,,,,,,,,,,WO-001,RM-001,示例原料,,,,,,,,\n"
         ).encode("utf-8-sig")
+        # 期初发出商品：现行「同销售台账」23 列格式（旧 17 列 CSV 已不适用）
+        opening_goods_issued_csv = (
+            "序号,出库期间,开票状态,开票期间,销售渠道,销售公司,订单单号,客户名称,销售大类,产品编码,产品名称,规格型号,计量单位,销售数量,销售成本单价,销售成本\n"
+            "1,2026-06,未开票,,直销/终端,射阳兰邦,OG-001,示例客户,成品,FG-001,示例产品,,kg,2,50,\n"
+        ).encode("utf-8-sig")
         template_dir = Path(settings.BASE_DIR) / "sample_templates"
         with TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
@@ -2022,6 +2054,8 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
                         content = material_issue_csv
                     elif kind == ImportBatch.Kind.WORK_REPORT:
                         content = work_report_csv
+                    elif kind == ImportBatch.Kind.OPENING_GOODS_ISSUED:
+                        content = opening_goods_issued_csv
                     elif kind == ImportBatch.Kind.WORKSHOP_COST:
                         # 车间费用用内嵌数据（染整 水电100/人工50），
                         # 不依赖 sample_templates/车间费用.csv（该文件为用户模板，含预填车间+合计行）
@@ -2846,3 +2880,232 @@ class PulpMaterialImportTests(TestCase):
         self._import_csv(content)
         with self.assertRaises(ValueError):
             collect_pulp_costs(self.period)
+
+
+class ProfitStatementTests(SettlementFixtureMixin, TestCase):
+    """损益表：逐行取销售台账、当月费用按终端收入占比分摊、导出 32 列。
+
+    口径（用户 2026-09-14 确认）：
+    - 收入只取「终端销售收入」；射阳兰邦销售收入只作列展示；
+    - 销售毛利 = 终端销售收入 − 销售成本；
+    - 税金及附加 / 管理费用 / 销售费用 / 财务费用 / 营业外收入 / 营业外支出 / 所得税费用
+      为用户录入的【当月发生额】，按「本行终端收入 ÷ 当月终端收入合计」分摊，尾差计入收入最大行；
+    - 营业利润 = 毛利 − 税及附加 − 三费；利润总额 = 营业利润 + 营业外收入 − 营业外支出；
+      净利润 = 利润总额 − 所得税费用。
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="pl-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(
+            self.period, ImportBatch.Kind.SALES_LEDGER, "pl"
+        )
+
+    def _line(self, row_no, *, revenue, cost=None, quantity=Decimal("10"), lb=None):
+        return SalesLedgerLine.objects.create(
+            period=self.period,
+            batch=self.batch,
+            row_no=row_no,
+            out_month=date(2026, 7, 1),
+            invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
+            invoice_month=date(2026, 7, 1),
+            channel="直销",
+            company="射阳兰邦",
+            order_no="SO2026070001",
+            customer_code="C001",
+            customer_name="测试客户",
+            sales_category="浆粕",
+            material_code="21.03",
+            material_name="21.03 芳纶浆粕 DFP-103",
+            specification="DFP-103",
+            uom="kg",
+            terminal_amount=revenue,
+            terminal_unit_price=Decimal("100") if revenue else None,
+            lb_amount=lb,
+            quantity=quantity,
+            cost_amount=cost,
+        )
+
+    def _expense(self, **kwargs):
+        return ProfitStatementExpense.objects.create(period=self.period, **kwargs)
+
+    def test_expenses_allocated_by_terminal_revenue_share(self):
+        self._line(1, revenue=Decimal("100"), cost=Decimal("10"))
+        self._line(2, revenue=Decimal("300"), cost=Decimal("30"))
+        self._line(3, revenue=Decimal("600"), cost=Decimal("60"))
+        self._expense(
+            tax_surcharge=Decimal("100"),
+            admin_expense=Decimal("200"),
+            selling_expense=Decimal("300"),
+            finance_expense=Decimal("400"),
+            non_operating_income=Decimal("50"),
+            non_operating_expense=Decimal("60"),
+            income_tax=Decimal("70"),
+        )
+
+        rows = build_profit_statement(self.period)["rows"]
+
+        self.assertEqual(
+            [row["tax_surcharge"] for row in rows],
+            [Decimal("10.00"), Decimal("30.00"), Decimal("60.00")],
+        )
+        self.assertEqual(
+            [row["admin_expense"] for row in rows],
+            [Decimal("20.00"), Decimal("60.00"), Decimal("120.00")],
+        )
+        self.assertEqual(
+            [row["selling_expense"] for row in rows],
+            [Decimal("30.00"), Decimal("90.00"), Decimal("180.00")],
+        )
+        self.assertEqual(
+            [row["finance_expense"] for row in rows],
+            [Decimal("40.00"), Decimal("120.00"), Decimal("240.00")],
+        )
+        self.assertEqual(
+            [row["non_operating_income"] for row in rows],
+            [Decimal("5.00"), Decimal("15.00"), Decimal("30.00")],
+        )
+        self.assertEqual(
+            [row["non_operating_expense"] for row in rows],
+            [Decimal("6.00"), Decimal("18.00"), Decimal("36.00")],
+        )
+        self.assertEqual(
+            [row["income_tax"] for row in rows],
+            [Decimal("7.00"), Decimal("21.00"), Decimal("42.00")],
+        )
+
+    def test_each_allocation_column_totals_to_entered_amount(self):
+        # 三行收入不能被整除 → 每列分摊合计仍必须等于录入金额（尾差计入收入最大行）
+        for row_no in (1, 2, 3):
+            self._line(row_no, revenue=Decimal("333.33"), cost=Decimal("100"))
+        expense = self._expense(
+            tax_surcharge=Decimal("100"),
+            admin_expense=Decimal("200"),
+            selling_expense=Decimal("300"),
+            finance_expense=Decimal("400"),
+            non_operating_income=Decimal("50"),
+            non_operating_expense=Decimal("60"),
+            income_tax=Decimal("70"),
+        )
+
+        data = build_profit_statement(self.period)
+        for field, _label in ALLOCATION_FIELDS:
+            entered = getattr(expense, field)
+            self.assertEqual(
+                sum(row[field] for row in data["rows"]),
+                entered,
+                msg=f"{field} 分摊合计应等于录入金额",
+            )
+            self.assertEqual(data["totals"][field], entered)
+
+        tax_values = [row["tax_surcharge"] for row in data["rows"]]
+        self.assertEqual(sum(tax_values), Decimal("100.00"))
+        self.assertEqual(tax_values.count(Decimal("33.34")), 1)
+
+    def test_gross_to_net_formulas(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._expense(
+            tax_surcharge=Decimal("10"),
+            admin_expense=Decimal("20"),
+            selling_expense=Decimal("30"),
+            finance_expense=Decimal("40"),
+            non_operating_income=Decimal("5"),
+            non_operating_expense=Decimal("7"),
+            income_tax=Decimal("8"),
+        )
+
+        data = build_profit_statement(self.period)
+        row = data["rows"][0]
+        self.assertEqual(row["gross"], Decimal("400.00"))
+        self.assertEqual(row["gross_margin"], Decimal("40.00"))
+        self.assertEqual(row["operating_profit"], Decimal("300.00"))
+        self.assertEqual(row["total_profit"], Decimal("298.00"))
+        self.assertEqual(row["net_profit"], Decimal("290.00"))
+        self.assertEqual(row["net_margin"], Decimal("29.00"))
+
+        totals = data["totals"]
+        self.assertEqual(totals["revenue"], Decimal("1000.00"))
+        self.assertEqual(totals["cost"], Decimal("600.00"))
+        self.assertEqual(totals["gross"], Decimal("400.00"))
+        self.assertEqual(totals["operating_profit"], Decimal("300.00"))
+        self.assertEqual(totals["total_profit"], Decimal("298.00"))
+        self.assertEqual(totals["net_profit"], Decimal("290.00"))
+        self.assertEqual(totals["gross_margin"], Decimal("40.00"))
+        self.assertEqual(totals["net_margin"], Decimal("29.00"))
+
+    def test_zero_terminal_revenue_rows_are_not_allocated(self):
+        # 只填了射阳兰邦收入的行：收入为 0，不分摊费用，毛利率/净利润率显示为空
+        self._line(1, revenue=Decimal("0"), cost=None, lb=Decimal("500"))
+        self._expense(admin_expense=Decimal("100"))
+
+        data = build_profit_statement(self.period)
+        self.assertEqual(data["lb_only_rows"], 1)
+        self.assertEqual(data["revenue_total"], Decimal("0"))
+        row = data["rows"][0]
+        self.assertEqual(row["admin_expense"], Decimal("0.00"))
+        self.assertIsNone(row["gross_margin"])
+        self.assertIsNone(row["net_margin"])
+
+    def test_expense_entry_page_saves_and_exports(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        for text in (
+            "当月费用录入", "税金及附加", "管理费用", "销售费用", "财务费用",
+            "营业外收入", "营业外支出", "所得税费用",
+            "销售毛利", "营业利润", "利润总额", "净利润", "净利润率",
+        ):
+            self.assertContains(response, text)
+
+        response = client.post(
+            url,
+            {
+                "tax_surcharge": "1,000",
+                "admin_expense": "2000",
+                "selling_expense": "3000",
+                "finance_expense": "4000",
+                "non_operating_income": "500",
+                "non_operating_expense": "600",
+                "income_tax": "700",
+            },
+        )
+        self.assertRedirects(response, url)
+        expense = ProfitStatementExpense.objects.get(period=self.period)
+        # 允许千分位输入
+        self.assertEqual(expense.tax_surcharge, Decimal("1000.00"))
+        self.assertEqual(expense.income_tax, Decimal("700.00"))
+
+        export = client.get(reverse("profit_statement_export", args=[self.period.id]))
+        self.assertEqual(export.status_code, 200)
+        workbook = load_workbook(BytesIO(export.content))
+        sheet = workbook.active
+        self.assertEqual(sheet.title, "损益表")
+        self.assertEqual(
+            [sheet.cell(1, column).value for column in range(1, len(HEADERS) + 1)],
+            list(HEADERS),
+        )
+        # 表头 + 1 数据行 + 合计行
+        self.assertEqual(sheet.max_row, 3)
+        self.assertEqual(float(sheet.cell(2, 13).value), 1000.0)
+
+    def test_locked_period_keeps_expenses_unchanged(self):
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._expense(admin_expense=Decimal("100"))
+        self.period.status = AccountingPeriod.Status.LOCKED
+        self.period.save(update_fields=["status"])
+
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        response = client.post(url, {"admin_expense": "999"})
+        self.assertRedirects(response, url)
+        self.assertEqual(
+            ProfitStatementExpense.objects.get(period=self.period).admin_expense,
+            Decimal("100.00"),
+        )

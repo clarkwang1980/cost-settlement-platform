@@ -13,7 +13,7 @@ from settlement.models import (
     MatchingMode,
     OpeningGoodsIssued,
 )
-from settlement.services.matching import is_sales_issue
+from settlement.services.matching import is_sample_issue, is_sales_issue
 
 
 ZERO = Decimal("0")
@@ -22,6 +22,13 @@ CENT = Decimal("0.01")
 
 def money(value) -> Decimal:
     return Decimal(value or ZERO).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _price(value) -> Decimal:
+    """单价保留 8 位小数（与库存计价口径一致）。"""
+    return Decimal(value or ZERO).quantize(
+        Decimal("0.00000001"), rounding=ROUND_HALF_UP
+    )
 
 
 def _month_end(month: date) -> date:
@@ -33,7 +40,7 @@ def _previous_month(month: date) -> date:
 
 
 def _is_sample_issue(txn: InventoryTransaction) -> bool:
-    return "样品" in str(txn.business_type or "")
+    return is_sample_issue(txn)
 
 
 @dataclass
@@ -47,12 +54,14 @@ class SalesUninvoicedRow:
     sales_order_no: str
     customer_code: str
     customer_name: str
+    sales_category: str
     material_code: str
     material_name: str
     issue_quantity: Decimal
     invoiced_quantity: Decimal
     outstanding_quantity: Decimal
     issue_amount: Decimal | None
+    issue_unit_price: Decimal | None
     invoiced_cost: Decimal | None
     outstanding_cost: Decimal | None
     invoice_nos: str
@@ -116,6 +125,13 @@ def _build_sales_rows_as_of(month: date, include_closed=False):
                 issue_amount * outstanding_quantity / issue_quantity
             )
             invoiced_cost = money(issue_amount - outstanding_cost)
+        # 出库单价：优先用流水上的单价（月末加权价），否则用 出库成本 ÷ 出库数量
+        if txn.unit_price is not None:
+            issue_unit_price = Decimal(txn.unit_price)
+        elif issue_amount is not None and issue_quantity != ZERO:
+            issue_unit_price = _price(issue_amount / issue_quantity)
+        else:
+            issue_unit_price = None
 
         invoice_nos = "；".join(
             allocations.order_by(
@@ -145,12 +161,14 @@ def _build_sales_rows_as_of(month: date, include_closed=False):
                 sales_order_no=txn.order_no,
                 customer_code=txn.customer_code,
                 customer_name=txn.customer_name,
+                sales_category="",
                 material_code=txn.material_code,
                 material_name=txn.material_name,
                 issue_quantity=issue_quantity,
                 invoiced_quantity=invoiced_quantity,
                 outstanding_quantity=outstanding_quantity,
                 issue_amount=issue_amount,
+                issue_unit_price=issue_unit_price,
                 invoiced_cost=invoiced_cost,
                 outstanding_cost=outstanding_cost,
                 invoice_nos=invoice_nos,
@@ -200,6 +218,13 @@ def _build_sales_rows_as_of(month: date, include_closed=False):
             issue_amount * outstanding_quantity / issue_quantity
         )
         invoiced_cost = money(issue_amount - outstanding_cost)
+        # 出库单价：优先用期初发出商品台账上的原出库单位成本
+        if opening.unit_cost is not None:
+            issue_unit_price = Decimal(opening.unit_cost)
+        elif issue_quantity != ZERO:
+            issue_unit_price = _price(issue_amount / issue_quantity)
+        else:
+            issue_unit_price = None
         invoice_nos = "；".join(
             allocations.order_by(
                 "sales_invoice_line__invoice_period",
@@ -227,12 +252,14 @@ def _build_sales_rows_as_of(month: date, include_closed=False):
                 sales_order_no=opening.sales_order_no,
                 customer_code=opening.customer_code,
                 customer_name=opening.customer_name,
+                sales_category=opening.sales_category,
                 material_code=opening.material_code,
                 material_name=opening.material_name,
                 issue_quantity=issue_quantity,
                 invoiced_quantity=invoiced_quantity,
                 outstanding_quantity=outstanding_quantity,
                 issue_amount=issue_amount,
+                issue_unit_price=issue_unit_price,
                 invoiced_cost=invoiced_cost,
                 outstanding_cost=outstanding_cost,
                 invoice_nos=invoice_nos,
