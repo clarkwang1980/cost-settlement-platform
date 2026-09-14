@@ -29,6 +29,7 @@ from settlement.services.profit_statement import (
     build_summary,
     ledger_months,
     month_label,
+    summary_period_options,
 )
 
 PAGE_SIZE = 200
@@ -71,6 +72,28 @@ def _month_forms(months):
     return forms
 
 
+def _normalise_range(period_options, period_from, period_to):
+    """校验/纠正期间区间：非法值忽略；顺序反了自动对调；返回 (from, to)。"""
+    values = [item["value"] for item in period_options]
+    if period_from not in values:
+        period_from = ""
+    if period_to not in values:
+        period_to = ""
+    if period_from and period_to and values.index(period_from) > values.index(period_to):
+        period_from, period_to = period_to, period_from
+    return period_from, period_to
+
+
+def _range_query(request):
+    """「从/到」两个参数拼成跳转用的查询串（保留口径与区间）。"""
+    pairs = []
+    for key in ("basis", "pfrom", "pto"):
+        value = request.GET.get(key)
+        if value:
+            pairs.append((key, value))
+    return "&".join("%s=%s" % pair for pair in pairs)
+
+
 @login_required
 def profit_statement_view(request, period_id):
     period = get_object_or_404(AccountingPeriod, pk=period_id)
@@ -79,6 +102,8 @@ def profit_statement_view(request, period_id):
     basis = request.POST.get("basis") or request.GET.get("basis") or BASIS_OUT
     if basis not in BASIS_VALUES:
         basis = BASIS_OUT
+    querystring = _range_query(request)
+    back_url = f"{request.path}?{querystring}" if querystring else request.path
 
     if request.method == "POST":
         if period.status == AccountingPeriod.Status.LOCKED:
@@ -86,7 +111,7 @@ def profit_statement_view(request, period_id):
                 request,
                 "该期间已锁账，不能修改损益表费用；如需调整请让管理员重开期间。",
             )
-            return redirect(f"{request.path}?basis={basis}")
+            return redirect(back_url)
         try:
             values_by_month = {}
             for month in months:
@@ -96,7 +121,7 @@ def profit_statement_view(request, period_id):
                 }
         except ValueError as exc:
             messages.error(request, str(exc))
-            return redirect(f"{request.path}?basis={basis}")
+            return redirect(back_url)
 
         for month, values in values_by_month.items():
             ProfitStatementExpense.objects.update_or_create(
@@ -118,11 +143,19 @@ def profit_statement_view(request, period_id):
             f"已保存 {len(values_by_month)} 个月的费用：{summary}。"
             "每个月按该月终端销售收入占比分摊到该月各台账行。",
         )
-        return redirect(f"{request.path}?basis={basis}")
+        return redirect(back_url)
 
     data = build_profit_statement(period)
     summary = build_summary(data["rows"], basis)
-    category_summary = build_category_summary(data["rows"], basis)
+
+    # 顶端汇总表：只显示「从…到…」选定的期间
+    period_options = summary_period_options(data["rows"], basis)
+    period_from, period_to = _normalise_range(
+        period_options, request.GET.get("pfrom"), request.GET.get("pto")
+    )
+    category_summary = build_category_summary(
+        data["rows"], basis, period_from or None, period_to or None
+    )
 
     page = Paginator(data["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
     query = request.GET.copy()
@@ -137,6 +170,9 @@ def profit_statement_view(request, period_id):
             "data": data,
             "summary": summary,
             "category_summary": category_summary,
+            "period_options": period_options,
+            "period_from": period_from,
+            "period_to": period_to,
             "months": _month_forms(data["months"]),
             "basis": basis,
             "basis_choices": BASIS_CHOICES,

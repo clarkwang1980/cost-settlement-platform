@@ -67,6 +67,7 @@ from settlement.services.profit_statement import (
     build_category_summary,
     build_profit_statement,
     build_summary,
+    summary_period_options,
 )
 
 
@@ -3190,8 +3191,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
                 "exp_2026-07_income_tax": "700",
             },
         )
-        self.assertRedirects(response, url + "?basis=out")
-
+        self.assertRedirects(response, url)
         june = ProfitStatementExpense.objects.get(period=self.period, month=self.june)
         self.assertEqual(june.tax_surcharge, Decimal("1000.00"))  # 千分位可识别
         self.assertEqual(june.admin_expense, Decimal("600.00"))
@@ -3312,6 +3312,83 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             by_invoice["grand_total_row"]["revenue"], Decimal("1200.00")
         )
 
+    def test_category_summary_period_range_filter(self):
+        # 区间筛选：只显示所选期间，合计=所选区间合计；不影响别处
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线",
+                   out_month=date(2026, 5, 1))
+        self._line(2, revenue=Decimal("2000"), cost=Decimal("1200"), category="纱线")
+        self._line(3, revenue=Decimal("500"), cost=Decimal("300"), category="面料")
+        data = build_profit_statement(self.period)
+
+        # 期间选项：升序、（未开票）最后
+        options = [item["value"] for item in summary_period_options(data["rows"], "out")]
+        self.assertEqual(options, ["2026-05", "2026-07"])
+
+        only_may = build_category_summary(data["rows"], "out", "2026-05", "2026-05")
+        self.assertEqual(
+            [r["month"] for r in only_may["rows"] if r["level"] == "month"], ["2026-05"]
+        )
+        self.assertEqual(only_may["grand_total_row"]["revenue"], Decimal("1000.00"))
+        self.assertTrue(only_may["has_range"])
+
+        both = build_category_summary(data["rows"], "out", "2026-05", "2026-07")
+        self.assertEqual(
+            [r["month"] for r in both["rows"] if r["level"] == "month"],
+            ["2026-05", "2026-07"],
+        )
+        self.assertEqual(both["grand_total_row"]["revenue"], Decimal("3500.00"))
+
+        # 只给「从」不给「到」= 从该期到最新
+        from_only = build_category_summary(data["rows"], "out", "2026-07", None)
+        self.assertEqual(from_only["grand_total_row"]["revenue"], Decimal("2500.00"))
+        # 只给「到」不给「从」= 最早到该期
+        to_only = build_category_summary(data["rows"], "out", None, "2026-05")
+        self.assertEqual(to_only["grand_total_row"]["revenue"], Decimal("1000.00"))
+
+        # 范围外 → 空表
+        empty = build_category_summary(data["rows"], "out", "2026-09", "2026-09")
+        self.assertTrue(empty["empty"])
+        self.assertEqual(len(empty["rows"]), 1)  # 只剩合计行（0）
+
+    def test_category_summary_range_handles_uninvoiced_and_swapped_bounds(self):
+        # 开票口径下的「(未开票)」可被选中；页面里起止反了会自动对调、非法值被忽略
+        self._line(1, revenue=Decimal("300"), cost=Decimal("100"),
+                   out_month=date(2026, 5, 1), invoice_month=date(2026, 7, 1))
+        self._line(2, revenue=Decimal("200"), cost=Decimal("100"), invoice_month=None)
+        data = build_profit_statement(self.period)
+
+        options = [item["value"] for item in summary_period_options(data["rows"], "invoice")]
+        self.assertEqual(options, ["2026-07", "(未开票)"])
+        uninv = build_category_summary(data["rows"], "invoice", "(未开票)", "(未开票)")
+        self.assertEqual(uninv["grand_total_row"]["revenue"], Decimal("200.00"))
+
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        # 起止反了 → 对调成 2026-05 ~ 2026-07
+        response = client.get(url + "?basis=out&pfrom=2026-07&pto=2026-05")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period_from"], "2026-05")
+        self.assertEqual(response.context["period_to"], "2026-07")
+
+        # 非法值被忽略
+        response = client.get(url + "?basis=out&pfrom=abc&pto=2026-05")
+        self.assertEqual(response.context["period_from"], "")
+        self.assertEqual(response.context["period_to"], "2026-05")
+
+        # 区间只影响顶端表：下方「月×渠道」汇总仍是全部期间
+        response = client.get(url + "?basis=out&pfrom=2026-05&pto=2026-05")
+        top_months = [r["month"] for r in response.context["category_summary"]["rows"]
+                      if r["level"] == "month"]
+        all_months = [r["month"] for r in response.context["summary"]["rows"]
+                      if r["level"] == "month"]
+        self.assertEqual(top_months, ["2026-05"])
+        self.assertEqual(all_months, ["2026-05", "2026-07"])
+        # 切换口径的链接保留区间参数
+        html = response.content.decode("utf-8")
+        self.assertIn("pfrom=2026-05", html)
+
     def test_expense_entry_page_has_top_summary_table(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
         client = self.client
@@ -3336,7 +3413,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
         response = client.post(url, {"exp_2026-07_admin_expense": "999"})
-        self.assertRedirects(response, url + "?basis=out")
+        self.assertRedirects(response, url)
         self.assertEqual(
             ProfitStatementExpense.objects.get(
                 period=self.period, month=self.period.month

@@ -530,16 +530,69 @@ def build_summary(rows, basis: str = BASIS_OUT) -> dict:
     }
 
 
-def build_category_summary(rows, basis: str = BASIS_OUT) -> dict:
-    """页面顶端汇总表：期间 → 销售类别（销售大类），每个期间一个小计，末尾全部合计。
+def summary_period_options(rows, basis: str = BASIS_OUT) -> list:
+    """期间选项（按当前口径去重、按期间升序，「(未开票)」排最后）。
 
-    列固定为用户指定的 8 个指标：销售收入、销售成本、销售毛利、销售毛利率、
-    营业利润、利润总额、净利润、净利润率。期间口径随「按出库期间 / 按开票期间」切换。
+    每项：{value, label, row_count, revenue}，供页面「从…到…」选择按钮使用。
     """
     key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
+    stats = defaultdict(lambda: {"row_count": 0, "revenue": ZERO})
+    for row in rows:
+        item = stats[row[key_field]]
+        item["row_count"] += 1
+        item["revenue"] += row["revenue"]
+    return [
+        {
+            "value": label,
+            "label": label,
+            "row_count": stats[label]["row_count"],
+            "revenue": _q(stats[label]["revenue"]),
+        }
+        for label in sorted(stats, key=_month_sort_key)
+    ]
+
+
+def _period_in_range(label: str, period_from, period_to, order) -> bool:
+    """期间是否落在 [从, 到] 区间内（两端为空表示不限制；(未开票) 排在最后并可被选中）。
+
+    端点值不在可选期间里（拼错/不存在）时，视为该区间无可显示期间，返回 False，
+    避免把「限定错了」静默当成「不限定」。
+    """
+    if not period_from and not period_to:
+        return True
+    index = order.get(label)
+    if index is None:
+        return False
+    if period_from:
+        start = order.get(period_from)
+        if start is None or index < start:
+            return False
+    if period_to:
+        end = order.get(period_to)
+        if end is None or index > end:
+            return False
+    return True
+
+
+def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
+                           period_to=None) -> dict:
+    """页面顶端汇总表：期间 → 销售类别（销售大类），每个期间一个小计，末尾合计。
+
+    列固定为用户指定的 8 个指标：销售收入、销售成本、销售毛利、销售毛利率、
+    营业利润、利润总额、净利润、净利润率。期间口径随「按出库期间 / 按开票期间」切换；
+    period_from / period_to 用于只显示选定区间内的期间（不含费用录入或明细表）。
+    """
+    key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
+    order = {
+        item["value"]: index
+        for index, item in enumerate(summary_period_options(rows, basis))
+    }
     tree = defaultdict(lambda: defaultdict(list))
     for row in rows:
-        tree[row[key_field]][row["category_key"]].append(row)
+        label = row[key_field]
+        if not _period_in_range(label, period_from, period_to, order):
+            continue
+        tree[label][row["category_key"]].append(row)
 
     flat = []
     month_blocks = []
@@ -592,6 +645,10 @@ def build_category_summary(rows, basis: str = BASIS_OUT) -> dict:
         "keys": CATEGORY_SUMMARY_KEYS,
         "months": month_blocks,
         "grand_total_row": grand_total_row,
+        "period_from": period_from or "",
+        "period_to": period_to or "",
+        "has_range": bool(period_from or period_to),
+        "empty": not month_blocks,
     }
 
 
