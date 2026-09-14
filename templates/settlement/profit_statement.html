@@ -84,25 +84,26 @@
         {% endfor %}
       </select>
     </label>
-    <div>类别（可单选也可多选，都不勾 = 全部）
-      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px;">
-        {% for item in category_options %}
-        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-          <input type="checkbox" name="cat" value="{{ item.value }}"{% if item.value in selected_categories %} checked{% endif %}>
-          {{ item.label }}
-        </label>
-        {% endfor %}
-      </div>
+    <div class="filter-field">
+      <span>类别</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if selected_categories %}{% if selected_categories|length > 2 %}已选 {{ selected_categories|length }} 项{% else %}{{ selected_categories|join:"、" }}{% endif %}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in category_options %}
+          <label><input type="checkbox" name="cat" value="{{ item.value }}"{% if item.value in selected_categories %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
     </div>
     <button class="button primary" type="submit">确定</button>
     {% if period_from or period_to or selected_categories %}
     <a class="button secondary" href="?basis={{ basis }}">显示全部</a>
     {% endif %}
-    <span class="muted-text">
-      期间按当前口径（{{ category_summary.basis_label }}）的列表选择；勾一个 = 只看该类（单选），勾多个 = 看这几类（多选）。
-      两个条件都只影响上方这张汇总表。
-    </span>
   </form>
+  <p class="muted-text" style="margin-top:8px;">
+    期间按当前口径（{{ category_summary.basis_label }}）的列表选择；「类别」点开勾选，勾一个 = 只看该类，勾多个 = 看这几类，都不勾 = 全部。
+    两个条件都只影响上方这张汇总表。
+  </p>
   {% endif %}
 
   <div class="table-scroll" style="overflow-x:auto;">
@@ -371,4 +372,17 @@
     <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>
   </ul>
 </section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // 多选下拉：点击空白处收起
+  document.addEventListener("click", function (event) {
+    document.querySelectorAll("details.multi-select[open]").forEach(function (box) {
+      if (!box.contains(event.target)) {
+        box.removeAttribute("open");
+      }
+    });
+  });
+</script>
 {% endblock %}
