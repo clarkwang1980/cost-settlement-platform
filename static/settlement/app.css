@@ -224,11 +224,53 @@ input:focus, select:focus { outline: 3px solid rgba(31,109,155,.14); border-colo
   box-shadow: inset 0 -1px 0 #cbd6dc, inset -1px 0 0 #e3e9ed, inset 1px 0 0 #e3e9ed;
 }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { border: 1px solid #e3e9ed; }  /* 网格线 */
-th { padding: 7px 9px; text-align: left; color: #526070; background: #eef2f5; border-color: #cbd6dc; white-space: nowrap; }
-td { padding: 7px 9px; vertical-align: top; }
-td strong, td small { display: block; }
-td small { margin-top: 3px; color: var(--muted); }
+/* 网格线 + 统一行高 25 磅（≈33.3px）：
+   - 单元格单行显示（不换行），行高才锁得住 25 磅；
+   - 单元格最宽 320px，超出部分省略号（鼠标悬停有全文提示，见 base.html 的脚本）；
+   - 主值（加粗）与说明小字排在同一行。 */
+th, td { border: 1px solid #e3e9ed; height: 25pt; line-height: 1.3; }
+th {
+  padding: 7px 9px;
+  text-align: left;
+  color: #526070;
+  background: #eef2f5;
+  border-color: #cbd6dc;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+td {
+  padding: 7px 9px;
+  vertical-align: middle;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+td strong, td small { display: inline; }
+td small { margin-left: 6px; color: var(--muted); font-size: 11px; }
+/* 表格内的徽标 / 小按钮 / 输入框也要跟着收小：
+   单元格上下内边距共 14px，行内元素必须 ≤19px 高，行高才落得回 25 磅。 */
+td .pill, td .status { padding: 1px 6px; font-size: 11px; line-height: 15px; }
+td .mini-button { padding: 1px 5px; font-size: 11px; line-height: 15px; }
+td .allocation { margin: 0 3px 0 0; padding: 1px 5px; font-size: 11px; line-height: 15px; }
+td .muted-text, td .document-link { font-size: 12px; }
+th input, td input, th select, td select {
+  min-height: 17px;
+  height: 17px;
+  padding: 0 6px;
+  font-size: 12px;
+  border-radius: 5px;
+  line-height: 15px;
+}
+.expense-entry-table input.expense-input { width: 120px; height: 17px; }
+.expense-entry-table th, .expense-entry-table td { vertical-align: middle; }
+.expense-entry-table .expense-month-cell strong { font-size: 13px; line-height: 1.3; }
+.expense-entry-table .expense-month-title,
+.expense-entry-table .expense-month-meta { vertical-align: middle; }
+.sequence-input { min-height: 17px; height: 17px; width: 62px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .empty-cell { padding: 42px; text-align: center; color: var(--muted); }
 .pagination { padding-top: 18px; display: flex; justify-content: center; align-items: center; gap: 18px; font-size: 13px; }
@@ -336,9 +378,9 @@ td small { margin-top: 3px; color: var(--muted); }
 .expense-entry-table th, .expense-entry-table td { white-space: nowrap; vertical-align: middle; }
 .expense-entry-table th:first-child, .expense-entry-table td:first-child { min-width: 230px; }
 .expense-entry-table input.expense-input { width: 132px; text-align: right; }
-.expense-entry-table .expense-month-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.expense-entry-table .expense-month-cell strong { font-size: 15px; color: var(--navy); }
-.expense-entry-table .expense-month-meta { margin-top: 4px; font-size: 12px; white-space: normal; }
+.expense-entry-table .expense-month-title { display: inline-flex; align-items: center; gap: 8px; }
+.expense-entry-table .expense-month-cell strong { font-size: 13px; line-height: 1.2; color: var(--navy); }
+.expense-entry-table .expense-month-meta { display: inline; margin-left: 8px; font-size: 12px; white-space: nowrap; }
 .pill-ok { background: var(--green-soft); color: var(--green); }
 /* 逐行损益：一屏内横竖滚动 + 滚动时表头固定 + 紧凑列宽（整体不再铺太宽） */
 .profit-table-wrap {
@@ -362,8 +404,6 @@ td small { margin-top: 3px; color: var(--muted); }
   box-shadow: inset 0 -1px 0 #ced7dc;
 }
 .profit-table tbody td { white-space: nowrap; }
-.profit-table tbody td:nth-child(5) { white-space: normal; min-width: 150px; }  /* 销售公司：可换行，少占宽 */
-.profit-table tbody td:nth-child(7) { white-space: normal; min-width: 84px; }   /* 客户名称：可换行 */
 .profit-table td.num, .profit-table th.num { text-align: right; }
 /* 损益汇总表：固定高度内横向 + 纵向滚动，滚动时表头固定 */
 .summary-table-wrap {

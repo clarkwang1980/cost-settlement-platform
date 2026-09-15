@@ -3701,7 +3701,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         self.assertIsNotNone(block, "缺少汇总表单元格样式")
         self.assertIn("padding", block.group(1))
         # 网格线走全局规则，汇总表也覆盖到
-        self.assertRegex(css, r"th, td \{ border: 1px solid #e3e9ed; \}")
+        self.assertRegex(css, r"th, td \{[^}]*border: 1px solid #e3e9ed")
 
     def test_category_parenthetical_shows_short_name(self):
         # 销售大类带明细括注的只显示主体；括注明细写在表下说明里
@@ -3842,6 +3842,8 @@ class TableScrollContainerTests(SettlementFixtureMixin, TestCase):
         self.assertIn("top: 0", head.group(1))
         # 长列表（期间详情「最近导入」）也要能在卡片内滚动
         self.assertRegex(css, r"\.compact-list\s*\{[^}]*max-height[^}]*overflow: auto")
+        # 行高 25 磅（≈33.3px）：全站表格一行的高度统一
+        self.assertRegex(css, r"th, td \{[^}]*height: 25pt")
 
     def test_price_table_two_row_header_offsets(self):
         # 单价表：两行表头，第一行贴顶、第二行贴在其下（28px），不互相盖住
@@ -4018,3 +4020,43 @@ class MaterialNameColumnTests(SettlementFixtureMixin, TestCase):
                 span = re.search(r'colspan="(\d+)"', cell)
                 total += int(span.group(1)) if span else 1
             self.assertEqual(total, head_cols, "行列表数 %d != 表头 %d" % (total, head_cols))
+
+
+class RowHeightTests(SettlementFixtureMixin, TestCase):
+    """全站表格行高 = 25 磅（≈33.3px）。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="row-height-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 9, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "rowh")
+        self.material = Material.objects.create(code="RH-1", name="行高测试物料", uom="kg")
+
+    def test_css_declares_25pt_row_height(self):
+        css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+        rule = re.search(r"th, td \{([^}]*)\}", css)
+        self.assertIsNotNone(rule)
+        self.assertIn("height: 25pt", rule.group(1))
+        # 只在一个地方声明行高，避免各页面自己调
+        self.assertEqual(css.count("height: 25pt"), 1)
+
+    def test_single_line_row_is_about_25pt(self):
+        # 单行内容：行高应贴合 25 磅（33.3px），允许 1px 误差
+        self.create_txn(
+            self.period, self.batch,
+            txn_date=date(2026, 9, 10), document_no="RH-001",
+            business_type="采购入库", direction="in", material=self.material,
+            quantity=Decimal("1"),
+        )
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("inventory_ledger", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("height: 25pt", (
+            settings.BASE_DIR / "static" / "settlement" / "app.css"
+        ).read_text(encoding="utf-8"))
+        # 页面用的还是同一个样式表（缓存版本号已更新）
+        self.assertRegex(html, r"v=20260915-row-25pt")

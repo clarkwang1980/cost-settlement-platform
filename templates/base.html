@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}月度成本结算平台{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260915-table-grid">
+  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260915-row-25pt-done2">
 </head>
 <body>
   <header class="topbar">
@@ -73,6 +73,25 @@
   </main>
 
   <footer class="footer">所有结果均保留原始文件、导入批次、匹配关系和计算记录。</footer>
+
+  <script>
+    // 表格单元格一行显示，超出宽度会显示省略号；这里给被截断的单元格补上悬停提示，
+    // 鼠标停在上面就能看到完整内容（不影响表格行高，也不会额外占用宽度）。
+    (function () {
+      function addTitles() {
+        document.querySelectorAll('td, th').forEach(function (cell) {
+          if (cell.scrollWidth > cell.clientWidth + 1) {
+            var text = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+            if (text) { cell.title = text; }
+          } else if (cell.title) {
+            cell.removeAttribute('title');
+          }
+        });
+      }
+      window.addEventListener('load', addTitles);
+      window.addEventListener('resize', addTitles);
+    })();
+  </script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>
