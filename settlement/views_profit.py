@@ -3,7 +3,8 @@
 
 页面结构：
 - 按月费用录入：台账里出现过的每个出库月份一块，各录一套当月费用；
-- 汇总：按【出库期间】或【开票期间】切换，层级 = 月份 → 销售渠道(国内/国外/未分类) → 销售大类；
+- 损益汇总表（一张表）：期间 × 销售渠道 × 销售大类，可按口径（出库/开票）、期间、销售渠道、销售大类筛选；
+  打开页面默认只看当月（当前期间所属月份），可点「显示全部」或另勾期间；
 - 明细：销售台账逐行；
 - 导出 Excel：明细 + 两张汇总。
 """
@@ -23,18 +24,23 @@ from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     BASIS_CHOICES,
     BASIS_OUT,
-    build_category_summary,
     build_profit_statement,
     build_profit_statement_sheet,
     build_summary,
+    filter_summary_rows,
     ledger_months,
     month_label,
+    UNINVOICED_LABEL,
     summary_category_options,
+    summary_channel_options,
     summary_period_options,
 )
 
 PAGE_SIZE = 200
 BASIS_VALUES = tuple(value for value, _label in BASIS_CHOICES)
+
+#: 筛选表单 / 「显示全部」提交时带的标记：把「刚打开页面」和「主动筛选（哪怕一个都没勾）」区分开
+FILTER_MARKER = "f"
 
 
 def _parse_amount(raw, label):
@@ -73,32 +79,53 @@ def _month_forms(months):
     return forms
 
 
-def _normalise_range(period_options, period_from, period_to):
-    """校验/纠正期间区间：非法值忽略；顺序反了自动对调；返回 (from, to)。"""
-    values = [item["value"] for item in period_options]
-    if period_from not in values:
-        period_from = ""
-    if period_to not in values:
-        period_to = ""
-    if period_from and period_to and values.index(period_from) > values.index(period_to):
-        period_from, period_to = period_to, period_from
-    return period_from, period_to
-
-
-def _normalise_categories(options, selected):
-    """只保留确实存在的类别；去重且按选项顺序（收入从大到小）。"""
+def _normalise_selection(options, selected):
+    """按选项顺序保留确实存在的筛选项（去重）；非法值忽略。"""
     wanted = {value for value in (selected or []) if value}
     return [item["value"] for item in options if item["value"] in wanted]
 
 
-def _filter_query(request):
-    """把「口径 + 期间区间 + 类别」拼成跳转用的查询串（正确 URL 编码）。"""
-    pairs = [("basis", request.GET.get("basis") or "")]
-    pairs.append(("pfrom", request.GET.get("pfrom") or ""))
-    pairs.append(("pto", request.GET.get("pto") or ""))
-    for value in request.GET.getlist("cat"):
-        pairs.append(("cat", value))
+def _selection_query(basis, periods, channels, categories):
+    """按「口径 + 期间 + 销售渠道 + 销售大类」拼查询串（口径切换链接 / 跳转回跳用）。"""
+    pairs = [("basis", basis)]
+    pairs += [("m", value) for value in periods]
+    pairs += [("ch", value) for value in channels]
+    pairs += [("cat", value) for value in categories]
     return urlencode([(key, value) for key, value in pairs if value])
+
+
+def _filter_query(request):
+    """当前筛选（口径 + 期间 + 销售渠道 + 销售大类）拼成跳转用的查询串。"""
+    return _selection_query(
+        request.GET.get("basis") or "",
+        request.GET.getlist("m"),
+        request.GET.getlist("ch"),
+        request.GET.getlist("cat"),
+    )
+
+
+def _has_explicit_filter(request) -> bool:
+    """本次请求是不是「用户主动动过的筛选」。
+
+    带提交标记（筛选表单 / 显示全部）或显式给了期间 = 主动筛选，按 URL 原样显示；
+    否则算「刚打开页面」，套用默认当月。
+    """
+    return FILTER_MARKER in request.GET or "m" in request.GET
+
+
+def _default_period_selection(period_options, period) -> list:
+    """打开页面时的默认期间：优先「当前期间所属月份」，台账里没有该月份时退回最近有数据的期间。
+
+    只影响「期间」这一项；销售渠道 / 销售大类仍保持「全部」。
+    """
+    if not period_options:
+        return []
+    current = month_label(period.month)
+    values = [item["value"] for item in period_options]
+    if current in values:
+        return [current]
+    months = [value for value in values if value != UNINVOICED_LABEL]
+    return [months[-1]] if months else [values[-1]]
 
 
 @login_required
@@ -136,35 +163,43 @@ def profit_statement_view(request, period_id):
                 month=month,
                 defaults={**values, "updated_by": request.user},
             )
-        summary = "；".join(
-            "%s %s" % (
-                month_label(month),
-                "、".join(
-                    f"{label} {values[field]:,.2f}" for field, label in ALLOCATION_FIELDS
-                ),
-            )
-            for month, values in values_by_month.items()
-        )
-        messages.success(
-            request,
-            f"已保存 {len(values_by_month)} 个月的费用：{summary}。"
-            "每个月按该月终端销售收入占比分摊到该月各台账行。",
-        )
         return redirect(back_url)
 
     data = build_profit_statement(period)
-    summary = build_summary(data["rows"], basis)
 
-    # 顶端汇总表：只显示「从…到…」选定的期间 与 选定的销售类别
+    # 汇总（一张表）：期间 × 销售渠道 × 销售大类；口径 / 期间 / 销售渠道 / 销售大类 四个筛选
     period_options = summary_period_options(data["rows"], basis)
-    period_from, period_to = _normalise_range(
-        period_options, request.GET.get("pfrom"), request.GET.get("pto")
-    )
+    channel_options = summary_channel_options(data["rows"])
     category_options = summary_category_options(data["rows"])
-    categories = _normalise_categories(category_options, request.GET.getlist("cat"))
-    category_summary = build_category_summary(
-        data["rows"], basis, period_from or None, period_to or None, categories or None
+    selected_periods = _normalise_selection(period_options, request.GET.getlist("m"))
+    selected_channels = _normalise_selection(channel_options, request.GET.getlist("ch"))
+    selected_categories = _normalise_selection(
+        category_options, request.GET.getlist("cat")
     )
+    # 刚打开页面（没带筛选标记、也没指定期间）默认只看当月；
+    # 「期间」= 当前期间所属月份，台账里没有该月份时退回最近有数据的期间。
+    default_period_applied = False
+    if not _has_explicit_filter(request):
+        selected_periods = _default_period_selection(period_options, period)
+        default_period_applied = bool(selected_periods)
+    has_filter = bool(selected_periods or selected_channels or selected_categories)
+    summary = build_summary(
+        filter_summary_rows(
+            data["rows"], basis, selected_periods, selected_channels, selected_categories
+        ),
+        basis,
+        has_filter=has_filter,
+    )
+    basis_links = [
+        {
+            "value": value,
+            "label": label,
+            "query": _selection_query(
+                value, selected_periods, selected_channels, selected_categories
+            ),
+        }
+        for value, label in BASIS_CHOICES
+    ]
 
     page = Paginator(data["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
     query = request.GET.copy()
@@ -178,12 +213,14 @@ def profit_statement_view(request, period_id):
             "period": period,
             "data": data,
             "summary": summary,
-            "category_summary": category_summary,
             "period_options": period_options,
-            "period_from": period_from,
-            "period_to": period_to,
+            "channel_options": channel_options,
             "category_options": category_options,
-            "selected_categories": categories,
+            "selected_periods": selected_periods,
+            "default_period_applied": default_period_applied,
+            "selected_channels": selected_channels,
+            "selected_categories": selected_categories,
+            "basis_links": basis_links,
             "months": _month_forms(data["months"]),
             "basis": basis,
             "basis_choices": BASIS_CHOICES,

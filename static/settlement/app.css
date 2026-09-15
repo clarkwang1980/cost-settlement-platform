@@ -304,20 +304,59 @@ td small { margin-top: 3px; color: var(--muted); }
 .filter-grid .filter-field > span { color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field .multi-select > summary { font-size: 14px; font-weight: 400; color: var(--ink); }
 
-/* 按月费用录入：每个月一个可收起块（与筛选下拉同一视觉语言） */
-.month-block {
-  border: 1px solid #dbe3ec; border-radius: 8px; background: #fff; margin-bottom: 8px;
-}
-.month-block > summary {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 12px; cursor: pointer; list-style: none;
-}
-.month-block > summary::-webkit-details-marker { display: none; }
-.month-block > summary::after { content: "\25BE"; color: var(--muted); font-size: 12px; margin-left: 4px; }
-.month-block[open] > summary { border-bottom: 1px solid #eef2f6; background: #f8fbfd; border-radius: 8px 8px 0 0; }
-.month-block > summary:hover { background: #f8fbfd; }
-.month-block > summary strong { font-size: 15px; color: var(--navy); }
-.month-block .month-block-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.month-block .month-block-body { padding: 12px 12px 4px; }
-.month-block .month-block-body .filter-grid { gap: 10px 12px; }
+/* 按月费用录入：每个期间一行（期间逐一列出） */
+.expense-entry-table { width: auto; min-width: 100%; }
+.expense-entry-table th, .expense-entry-table td { white-space: nowrap; vertical-align: middle; }
+.expense-entry-table th:first-child, .expense-entry-table td:first-child { min-width: 230px; }
+.expense-entry-table input.expense-input { width: 132px; text-align: right; }
+.expense-entry-table .expense-month-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.expense-entry-table .expense-month-cell strong { font-size: 15px; color: var(--navy); }
+.expense-entry-table .expense-month-meta { margin-top: 4px; font-size: 12px; white-space: normal; }
 .pill-ok { background: var(--green-soft); color: var(--green); }
+/* 逐行损益：一屏内横竖滚动 + 滚动时表头固定 + 紧凑列宽（整体不再铺太宽） */
+.profit-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  min-height: 280px;
+  overflow: auto;              /* 横向 + 纵向滚动条 */
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overscroll-behavior: contain;
+}
+.profit-table { width: auto; min-width: 100%; font-size: 12px; }
+.profit-table th, .profit-table td { padding: 6px 8px; }
+.profit-table thead th {
+  position: sticky;            /* 滚动时表头保持可见 */
+  top: 0;
+  z-index: 3;
+  background: #f2f5f6;
+  box-shadow: inset 0 -1px 0 #ced7dc;
+}
+.profit-table tbody td { white-space: nowrap; }
+.profit-table tbody td:nth-child(5) { white-space: normal; min-width: 150px; }  /* 销售公司：可换行，少占宽 */
+.profit-table tbody td:nth-child(7) { white-space: normal; min-width: 84px; }   /* 客户名称：可换行 */
+.profit-table td.num, .profit-table th.num { text-align: right; }
+/* 损益汇总表：固定高度内横向 + 纵向滚动，滚动时表头固定 */
+.summary-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100vh - 300px);
+  min-height: 240px;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overscroll-behavior: contain;
+}
+.summary-table { width: auto; min-width: 100%; font-size: 12px; }
+.summary-table th, .summary-table td { padding: 6px 8px; white-space: nowrap; }
+.summary-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f2f5f6;
+  box-shadow: inset 0 -1px 0 #ced7dc;
+}

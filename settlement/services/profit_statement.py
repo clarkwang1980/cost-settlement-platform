@@ -101,7 +101,7 @@ SUMMARY_METRICS = (
     ("net_profit", "净利润"),
     ("net_margin", "净利润率(%)"),
 )
-SUMMARY_HEADERS = ("月份", "销售渠道", "销售大类") + tuple(
+SUMMARY_HEADERS = ("期间", "销售渠道", "销售大类") + tuple(
     label for _key, label in SUMMARY_METRICS
 )
 SUMMARY_KEYS = ("month", "channel", "category") + tuple(
@@ -441,8 +441,11 @@ def _month_sort_key(label: str):
     return (label == UNINVOICED_LABEL, label)
 
 
-def build_summary(rows, basis: str = BASIS_OUT) -> dict:
-    """按 月份 → 销售渠道 → 销售大类 汇总；含渠道小计、月度小计与总计。"""
+def build_summary(rows, basis: str = BASIS_OUT, has_filter: bool = False) -> dict:
+    """按 期间 → 销售渠道 → 销售大类 汇总；含渠道小计、期间小计与总计。
+
+    has_filter 仅用于页面提示「合计 = 当前筛选条件下的合计」。
+    """
     key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
     tree = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for row in rows:
@@ -524,6 +527,7 @@ def build_summary(rows, basis: str = BASIS_OUT) -> dict:
         "rows": flat,
         "headers": SUMMARY_HEADERS,
         "keys": SUMMARY_KEYS,
+        "has_filter": has_filter,
         "pivot_rows": [row for row in flat if row["level"] in ("channel", "month", "grand")],
         "pivot_headers": PIVOT_HEADERS,
         "pivot_keys": ("month", "channel") + PIVOT_METRICS,
@@ -597,6 +601,47 @@ def _category_in_selection(category: str, selected) -> bool:
     if not selected:
         return True
     return category in set(selected)
+
+
+def summary_channel_options(rows) -> list:
+    """「销售渠道」筛选项（国内/国外在前，「未分类」在后）。"""
+    stats = defaultdict(lambda: {"row_count": 0, "revenue": ZERO})
+    for row in rows:
+        item = stats[row["channel_key"]]
+        item["row_count"] += 1
+        item["revenue"] += row["revenue"]
+    return [
+        {
+            "value": name,
+            "label": name,
+            "row_count": stats[name]["row_count"],
+            "revenue": _q(stats[name]["revenue"]),
+        }
+        for name in sorted(stats, key=_channel_sort_key)
+    ]
+
+
+def filter_summary_rows(rows, basis: str = BASIS_OUT, periods=None, channels=None,
+                        categories=None) -> list:
+    """按「期间 / 销售渠道 / 销售大类」筛选明细行（空 = 不限制）。
+
+    「期间」跟随口径：按出库期间看出库月份，按开票期间看开票月份（未开票 = 「(未开票)」）。
+    小计与合计由筛选后的行重算，保证与当前筛选条件一致。
+    """
+    key_field = "month_invoice_key" if basis == BASIS_INVOICE else "month_out_key"
+    period_set = {value for value in (periods or []) if value}
+    channel_set = {value for value in (channels or []) if value}
+    category_set = {value for value in (categories or []) if value}
+    kept = []
+    for row in rows:
+        if period_set and row.get(key_field) not in period_set:
+            continue
+        if channel_set and row.get("channel_key") not in channel_set:
+            continue
+        if category_set and row.get("category_key") not in category_set:
+            continue
+        kept.append(row)
+    return kept
 
 
 def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,

@@ -3162,7 +3162,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
 
     # —————————————— 页面与导出 ——————————————
 
-    def test_expense_entry_page_saves_each_month_and_exports(self):
+    def test_expense_entry_page_lists_every_month_and_exports(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), out_month=self.june)
         self._line(2, revenue=Decimal("1000"), cost=Decimal("600"))
         client = self.client
@@ -3175,12 +3175,21 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             "按月费用录入", "税金及附加", "管理费用", "销售费用", "财务费用",
             "营业外收入", "营业外支出", "所得税费用",
             "销售毛利", "营业利润", "利润总额", "净利润", "净利润率",
-            "月度 × 销售渠道", "月份 × 销售渠道 × 销售大类",
+            "损益汇总表",
         ):
             self.assertContains(response, text)
-        # 两个月份各一套输入框
-        self.assertContains(response, "exp_2026-06_admin_expense")
-        self.assertContains(response, "exp_2026-07_admin_expense")
+        html = response.content.decode("utf-8")
+        # 表头 = 期间 + 7 项费用；每个月一行（2 个月 → 14 个输入框）
+        self.assertIn("<th>期间</th>", html)
+        self.assertEqual(html.count('class="expense-input"'), 14)
+        self.assertIn("<strong>2026-06</strong>", html)
+        self.assertIn("<strong>2026-07</strong>", html)
+        self.assertIn("exp_2026-06_admin_expense", html)
+        self.assertIn("exp_2026-07_admin_expense", html)
+        # 已删掉「期间 从…到…」这一行筛选
+        self.assertNotIn("期间 从", html)
+        self.assertNotIn('name="mfrom"', html)
+        self.assertNotIn('name="mto"', html)
 
         response = client.post(
             url,
@@ -3220,7 +3229,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         summary_sheet = workbook["汇总-按出库期间"]
         self.assertEqual(
             [summary_sheet.cell(1, column).value for column in range(1, 4)],
-            ["月份", "销售渠道", "销售大类"],
+            ["期间", "销售渠道", "销售大类"],
         )
         # 汇总表最后一行是合计，收入 = 2000
         self.assertEqual(summary_sheet.cell(summary_sheet.max_row, 1).value, "合计")
@@ -3367,28 +3376,37 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
 
-        # 起止反了 → 对调成 2026-05 ~ 2026-07
-        response = client.get(url + "?basis=out&pfrom=2026-07&pto=2026-05")
+        # 期间筛选：只勾 2026-05 → 汇总只剩该期间，合计按筛选重算
+        response = client.get(url + "?basis=out&m=2026-05")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["period_from"], "2026-05")
-        self.assertEqual(response.context["period_to"], "2026-07")
+        self.assertEqual(response.context["selected_periods"], ["2026-05"])
+        self.assertTrue(response.context["summary"]["has_filter"])
+        months = [r["month"] for r in response.context["summary"]["rows"]
+                  if r["level"] == "month"]
+        self.assertEqual(months, ["2026-05"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("300.00"))
 
-        # 非法值被忽略
-        response = client.get(url + "?basis=out&pfrom=abc&pto=2026-05")
-        self.assertEqual(response.context["period_from"], "")
-        self.assertEqual(response.context["period_to"], "2026-05")
+        # 一个都不勾 + 提交标记 = 全部期间（「显示全部」）
+        response = client.get(url + "?basis=out&f=1")
+        self.assertEqual(response.context["selected_periods"], [])
+        self.assertFalse(response.context["summary"]["has_filter"])
+        months = [r["month"] for r in response.context["summary"]["rows"]
+                  if r["level"] == "month"]
+        self.assertEqual(months, ["2026-05", "2026-07"])
 
-        # 区间只影响顶端表：下方「月×渠道」汇总仍是全部期间
-        response = client.get(url + "?basis=out&pfrom=2026-05&pto=2026-05")
-        top_months = [r["month"] for r in response.context["category_summary"]["rows"]
-                      if r["level"] == "month"]
-        all_months = [r["month"] for r in response.context["summary"]["rows"]
-                      if r["level"] == "month"]
-        self.assertEqual(top_months, ["2026-05"])
-        self.assertEqual(all_months, ["2026-05", "2026-07"])
-        # 切换口径的链接保留区间参数
+        # 不存在的期间被忽略 → 视为不筛选
+        response = client.get(url + "?basis=out&m=2000-01")
+        self.assertEqual(response.context["selected_periods"], [])
+
+        # 开票口径下「(未开票)」可被勾选，且只统计未开票行
+        response = client.get(url + "?basis=invoice&m=%28%E6%9C%AA%E5%BC%80%E7%A5%A8%29")
+        self.assertEqual(response.context["selected_periods"], ["(未开票)"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("200.00"))
+        # 切换口径的链接保留期间筛选参数
         html = response.content.decode("utf-8")
-        self.assertIn("pfrom=2026-05", html)
+        self.assertIn("m=%28%E6%9C%AA%E5%BC%80%E7%A5%A8%29", html)
 
     def test_category_summary_category_filter(self):
         # 类别筛选：单选、多选、不选（全部）；与期间条件叠加；合计随之变化
@@ -3426,58 +3444,107 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         empty = build_category_summary(data["rows"], "out", "2026-05", "2026-05", ["纱线"])
         self.assertTrue(empty["empty"])
 
-    def test_category_filter_on_page_and_isolation(self):
+    def test_summary_category_filter_on_page(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
         self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="面料")
         client = self.client
         client.force_login(self.user)
         url = reverse("profit_statement", args=[self.period.id])
 
-        # 页面：类别是复选框（单选/多选都用它），且选项里不再带金额
+        # 页面：三个筛选都是复选框，且选项里不带金额
         response = client.get(url + "?basis=out")
         html = response.content.decode("utf-8")
         self.assertIn('type="checkbox" name="cat"', html)
+        self.assertIn('type="checkbox" name="m"', html)
+        self.assertIn('type="checkbox" name="ch"', html)
         self.assertIn('value="纱线"', html)
         self.assertIn('value="面料"', html)
-        self.assertIsNone(re.search(r"（[\d,]+\.\d\d）", html), "类别选项不应再显示金额")
+        self.assertIsNone(re.search(r"（[\d,]+\.\d\d）", html), "筛选项不应显示金额")
         # 已勾选项回显为 checked
         response = client.get(url + "?basis=out&cat=纱线")
         self.assertIn('value="纱线" checked', response.content.decode("utf-8"))
 
-        # 单选：只勾一个类别
+        # 单选：只勾一个销售大类 → 汇总（含合计）跟着筛
         response = client.get(url + "?basis=out&cat=纱线")
         self.assertEqual(response.context["selected_categories"], ["纱线"])
         self.assertEqual(
-            {r["category"] for r in response.context["category_summary"]["rows"]
+            {r["category"] for r in response.context["summary"]["rows"]
              if r["level"] == "category"},
             {"纱线"},
         )
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1000.00"))
+        self.assertTrue(response.context["summary"]["has_filter"])
 
         # 多选参数生效
         response = client.get(url + "?basis=out&cat=纱线&cat=面料")
         self.assertEqual(response.context["selected_categories"], ["纱线", "面料"])
-        cats = {r["category"] for r in response.context["category_summary"]["rows"]
+        cats = {r["category"] for r in response.context["summary"]["rows"]
                 if r["level"] == "category"}
         self.assertEqual(cats, {"纱线", "面料"})
 
-        # 不存在的类别被忽略 → 视为不筛选
+        # 不存在的取值被忽略 → 大类视为不筛选
         response = client.get(url + "?basis=out&cat=不存在")
         self.assertEqual(response.context["selected_categories"], [])
-        self.assertFalse(response.context["category_summary"]["has_category_filter"])
+        # 链接没带提交标记也没指定期间 → 期间仍默认当月，因此仍算已筛选
+        self.assertEqual(response.context["selected_periods"], ["2026-07"])
+        self.assertTrue(response.context["summary"]["has_filter"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1500.00"))
 
-        # 只影响顶端表：下方「月×渠道」汇总的合计仍含全部类别
-        response = client.get(url + "?basis=out&cat=纱线")
-        top = response.context["category_summary"]["grand_total_row"]["revenue"]
-        low = response.context["summary"]["grand_total"]["revenue"]
-        self.assertEqual(top, Decimal("1000.00"))
-        self.assertEqual(low, Decimal("1500.00"))
-
-        # 口径切换链接保留类别参数（URL 编码）
+        # 口径切换链接与「显示全部」保留当前筛选（URL 编码）
+        response = client.get(url + "?basis=out&cat=纱线&ch=国内销售")
         html = response.content.decode("utf-8")
         self.assertIn("cat=%E7%BA%B1%E7%BA%BF", html)  # “纱线”的 URL 编码
+        self.assertIn("ch=%E5%9B%BD%E5%86%85%E9%94%80%E5%94%AE", html)  # “国内销售”的 URL 编码
         self.assertIn("显示全部", html)
 
-    def test_expense_entry_page_has_top_summary_table(self):
+    def test_expense_entry_lists_all_ledger_months(self):
+        # 台账里出现过的每个月都要列出来（不再有「期间 从…到…」筛选）
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"),
+                   out_month=date(2026, 5, 1))
+        self._line(2, revenue=Decimal("1000"), cost=Decimal("600"), out_month=self.june)
+        self._line(3, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._expense(self.june, admin_expense=Decimal("100"))
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        html = client.get(url).content.decode("utf-8")
+        for label in ("2026-05", "2026-06", "2026-07"):
+            self.assertIn("<strong>%s</strong>" % label, html)
+        self.assertEqual(html.count('class="expense-input"'), 21)  # 3 个月 × 7 项
+        # 已录入的月份有标记，且已录金额回填在输入框里
+        self.assertIn("已录入", html)
+        self.assertIn('value="100.00"', html)
+        self.assertNotIn("期间 从", html)
+
+        # 台账里没有的月份即使提交也不会写库
+        client.post(url, {"exp_2026-04_admin_expense": "10"})
+        self.assertFalse(
+            ProfitStatementExpense.objects.filter(
+                period=self.period, month=date(2026, 4, 1)
+            ).exists()
+        )
+
+    def test_profit_table_has_scroll_wrapper_and_sticky_header(self):
+        # 逐行损益表：外层是可滚动的容器，配 sticky 表头样式（表头固定）＋紧凑列宽
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        html = client.get(url).content.decode("utf-8")
+        self.assertIn('class="table-scroll profit-table-wrap"', html)
+        self.assertIn('class="data-table profit-table"', html)
+        self.assertIn("逐行损益", html)
+        # 逐行损益这张表不再依赖内联的横向滚动
+        section = html[html.index("逐行损益"):]
+        section = section[:section.index("</section>")]
+        self.assertNotIn('style="overflow-x:auto;"', section)
+        self.assertIn("profit-table-wrap", section)
+
+    def test_summary_is_single_table_with_filters(self):
+        # 汇总只有一张表：期间 × 销售渠道 × 销售大类，上方是 期间/销售渠道/销售大类 三个筛选
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
         client = self.client
         client.force_login(self.user)
@@ -3485,11 +3552,101 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         response = client.get(url)
         self.assertEqual(response.status_code, 200)
         html = response.content.decode("utf-8")
-        self.assertContains(response, "汇总：期间 × 销售类别")
-        for text in ("销售类别", "销售毛利率(%)", "净利润率(%)"):
-            self.assertContains(response, text)
-        # 顶端汇总表出现在「按月费用录入」之前
-        self.assertLess(html.index("汇总：期间 × 销售类别"), html.index("按月费用录入"))
+        # 汇总表标题改成「损益汇总表」（细分结构写在标题下方的说明里）
+        self.assertIn("<h2>损益汇总表</h2>", html)
+        # 旧的两张表都不再出现
+        self.assertNotIn("月度 × 销售渠道", html)
+        self.assertNotIn("汇总：期间 × 销售类别", html)
+        # 合并表的表头 = 期间 + 销售渠道 + 销售大类
+        for header in ("<th>期间</th>", "<th>销售渠道</th>", "<th>销售大类</th>"):
+            self.assertIn(header, html)
+        # 三个筛选字段（复选框）+ 口径切换
+        for name in ('type="checkbox" name="m"', 'type="checkbox" name="ch"',
+                     'type="checkbox" name="cat"'):
+            self.assertIn(name, html)
+        self.assertIn("按出库期间", html)
+        self.assertIn("按开票期间", html)
+        # 汇总表在「按月费用录入」之后（原顶端表已删除）
+        self.assertLess(html.index("按月费用录入"), html.index("<h2>损益汇总表</h2>"))
+
+    def test_summary_default_shows_current_period_month(self):
+        # 打开页面（不带任何筛选）默认只看当月：期间勾当前期间月份，合计按当月重算
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._line(2, revenue=Decimal("200"), cost=Decimal("100"), out_month=self.june)
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        response = client.get(url)
+        self.assertEqual(response.context["selected_periods"], ["2026-07"])
+        self.assertTrue(response.context["default_period_applied"])
+        self.assertTrue(response.context["summary"]["has_filter"])
+        self.assertEqual(
+            [r["month"] for r in response.context["summary"]["rows"]
+             if r["level"] == "month"],
+            ["2026-07"],
+        )
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1000.00"))
+        html = response.content.decode("utf-8")
+        self.assertIn("<h2>\u635f\u76ca\u6c47\u603b\u8868</h2>", html)
+        self.assertIn('value="2026-07" checked', html)
+
+        # 「显示全部」带提交标记 f=1 → 三个筛选都清空，回到全部期间
+        self.assertIn("f=1", html)
+        response = client.get(url + "?basis=out&f=1")
+        self.assertEqual(response.context["selected_periods"], [])
+        self.assertFalse(response.context["default_period_applied"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1200.00"))
+
+    def test_summary_default_period_falls_back_to_latest_ledger_month(self):
+        # 台账里没有当前期间那个月 → 默认退到最近有数据的期间（不留空表）
+        self._line(1, revenue=Decimal("200"), cost=Decimal("100"),
+                   out_month=date(2026, 5, 1))
+        self._line(2, revenue=Decimal("1000"), cost=Decimal("600"), out_month=self.june)
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        response = client.get(url)
+        self.assertEqual(response.context["selected_periods"], ["2026-06"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1000.00"))
+
+    def test_summary_default_period_on_invoice_basis(self):
+        # 开票口径：默认仍是当前期间月份；台账全未开票（没有该月份）→ 默认落到「(未开票)」
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._line(2, revenue=Decimal("200"), cost=Decimal("100"),
+                   invoice_month=None)
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+
+        response = client.get(url + "?basis=invoice")
+        self.assertEqual(response.context["selected_periods"], ["2026-07"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1000.00"))
+
+        SalesLedgerLine.objects.filter(row_no=1).update(invoice_month=None)
+        response = client.get(url + "?basis=invoice")
+        self.assertEqual(response.context["selected_periods"], ["(\u672a\u5f00\u7968)"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1200.00"))
+
+    def test_summary_table_has_scroll_wrapper_and_sticky_header(self):
+        # 损益汇总表：外层是带滚动条的容器（横竖都能滚），滚动时表头固定
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        html = client.get(url).content.decode("utf-8")
+        self.assertIn('class="table-scroll summary-table-wrap"', html)
+        self.assertIn('class="data-table summary-table"', html)
+        section = html[html.index("<h2>\u635f\u76ca\u6c47\u603b\u8868</h2>"):]
+        section = section[:section.index("</section>")]
+        # 汇总表自己带滚动容器，不再依赖内联的横向滚动
+        self.assertNotIn('style="overflow-x:auto;"', section)
+        self.assertIn("summary-table-wrap", section)
 
     def test_locked_period_keeps_expenses_unchanged(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
