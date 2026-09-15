@@ -4,6 +4,8 @@ from datetime import date
 from decimal import Decimal
 
 from django.conf import settings
+from urllib.parse import urlencode
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -94,7 +96,7 @@ from settlement.services.rollforward import (
 )
 from settlement.services.sales_voucher import (
     build_sales_cost_statistics,
-    build_sales_voucher_data,
+    build_sales_voucher_summary,
 )
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
@@ -821,7 +823,7 @@ def sales_uninvoiced(request, period_id):
             if row.cross_period == (cross_period == "yes")
         ]
 
-    # 销售凭证：按「记账月份」筛选（默认当前期间月份）
+    # 销售结转成本凭证：记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类
     voucher_month_raw = str(request.GET.get("voucher_month", "")).strip()
     voucher_month = None
     if voucher_month_raw:
@@ -830,13 +832,30 @@ def sales_uninvoiced(request, period_id):
             voucher_month = date(int(year), int(month_no), 1)
         except (TypeError, ValueError):
             voucher_month = None
-    voucher = build_sales_voucher_data(period, month=voucher_month)
+    voucher = build_sales_voucher_summary(
+        period,
+        month=voucher_month,
+        out_months=request.GET.getlist("vout"),
+        invoice_months=request.GET.getlist("vinv"),
+        statuses=request.GET.getlist("vst"),
+        categories=request.GET.getlist("vcat"),
+    )
     voucher_page = Paginator(voucher["rows"], 200).get_page(
         request.GET.get("vpage")
     )
     query = request.GET.copy()
     query.pop("vpage", None)
     voucher_page.querystring = query.urlencode()
+    # 「清空筛选」：只清凭证这几项，保留上面的明细筛选
+    voucher_clear_query = urlencode(
+        [(key, value) for key, value in request.GET.items()
+         if key not in {"voucher_month", "vout", "vinv", "vst", "vcat", "vpage"}]
+    )
+    voucher_context = {
+        "voucher": voucher,
+        "voucher_page": voucher_page,
+        "voucher_clear_query": voucher_clear_query,
+    }
 
     return render(
         request,
@@ -847,8 +866,7 @@ def sales_uninvoiced(request, period_id):
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
             "statuses": ["全部未开票", "部分开票", "缺少出库成本"],
-            "voucher": voucher,
-            "voucher_page": voucher_page,
+            **voucher_context,
             "statistics": build_sales_cost_statistics(period),
         },
     )
