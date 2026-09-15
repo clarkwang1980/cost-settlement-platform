@@ -4878,3 +4878,49 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             self.assertIn(label, html)
         # 期末余额结转下去 = 800.00 应出现在页面上
         self.assertIn("800.00", html)
+
+
+class SalesUninvoicedDetailLayoutTests(SettlementFixtureMixin, TestCase):
+    """月末未开票页：明细表「出库月份/日期」拆成两列；明细上方那块筛选字段已删除。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="uninv-layout", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.client.force_login(self.user)
+        self.url = reverse("sales_uninvoiced", args=[self.period.id])
+
+    def test_detail_table_splits_issue_month_and_date(self):
+        html = self.client.get(self.url).content.decode("utf-8")
+        idx = html.index("<h2>截至月末仍未开票的销售出库明细</h2>")
+        section = html[html.rindex("<section", 0, idx):]
+        section = section[: section.index("</section>")]
+        heads = [re.sub(r"<[^>]+>", "", x).strip()
+                 for x in re.findall(r"<th[^>]*>(.*?)</th>", section, re.S)]
+        self.assertEqual(heads[0], "出库月份")
+        self.assertEqual(heads[1], "出库日期")
+        self.assertNotIn("出库月份/日期", heads)
+        # 每行列数与表头一致（含 colspan 累加）
+        def width(tr):
+            n = 0
+            for td in re.findall(r"<td\b[^>]*>", tr):
+                span = re.search(r'colspan="(\d+)"', td)
+                n += int(span.group(1)) if span else 1
+            return n
+        body = section[section.index("<tbody>"):section.index("</tbody>")]
+        for tr in re.findall(r"<tr\b[^>]*>(.*?)</tr>", body, re.S):
+            self.assertEqual(width(tr), len(heads), tr[:80])
+
+    def test_filter_card_is_removed(self):
+        html = self.client.get(self.url).content.decode("utf-8")
+        self.assertNotIn('class="section-card filter-card"', html)
+        for field in ("issue_month", "document_no", "sales_order_no",
+                      "cross_period", 'name="status"'):
+            self.assertNotIn(field, html, field)
+
+    def test_other_sections_still_present(self):
+        html = self.client.get(self.url).content.decode("utf-8")
+        for label in ("发出商品跨月滚动勾稽", "销售结转成本凭证",
+                      "发出商品及销售成本统计表", "截至月末仍未开票的销售出库明细"):
+            self.assertIn(label, html)

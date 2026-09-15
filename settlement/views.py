@@ -769,61 +769,7 @@ def sales_matches(request, period_id):
 def sales_uninvoiced(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     rows = build_sales_uninvoiced_rows(period)
-    issue_month = str(request.GET.get("issue_month", "")).strip()
-    document_no = str(request.GET.get("document_no", "")).strip().lower()
-    sales_order_no = str(
-        request.GET.get("sales_order_no", "")
-    ).strip().lower()
-    customer = str(request.GET.get("customer", "")).strip().lower()
-    material = str(request.GET.get("material", "")).strip().lower()
-    status = str(request.GET.get("status", "")).strip()
-    cross_period = str(request.GET.get("cross_period", "")).strip()
-    if issue_month:
-        rows = [
-            row
-            for row in rows
-            if row.issue_month.strftime("%Y-%m") == issue_month
-        ]
-    if document_no:
-        rows = [
-            row
-            for row in rows
-            if document_no in (row.document_no or "").lower()
-        ]
-    if sales_order_no:
-        rows = [
-            row
-            for row in rows
-            if sales_order_no in (row.sales_order_no or "").lower()
-        ]
-    if customer:
-        rows = [
-            row
-            for row in rows
-            if customer
-            in (
-                f"{row.customer_code} "
-                f"{row.customer_name}"
-            ).lower()
-        ]
-    if material:
-        rows = [
-            row
-            for row in rows
-            if material
-            in (
-                f"{row.material_code} "
-                f"{row.material_name}"
-            ).lower()
-        ]
-    if status:
-        rows = [row for row in rows if row.status == status]
-    if cross_period in {"yes", "no"}:
-        rows = [
-            row
-            for row in rows
-            if row.cross_period == (cross_period == "yes")
-        ]
+    # 明细表上方原来那块筛选字段已按用户要求删除（该表只做展示）。
 
     # 销售结转成本凭证：记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类
     voucher_month_raw = str(request.GET.get("voucher_month", "")).strip()
@@ -877,7 +823,6 @@ def sales_uninvoiced(request, period_id):
             "page": _page(request, rows),
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
-            "statuses": ["全部未开票", "部分开票", "缺少出库成本"],
             **voucher_context,
             "statistics": build_sales_cost_statistics(period),
         },
