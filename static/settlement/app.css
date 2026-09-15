@@ -463,3 +463,89 @@ th input, td input, th select, td select {
   background: #f2f5f6;
   box-shadow: inset 0 -1px 0 #ced7dc;
 }
+
+/* ── 打印 ─────────────────────────────────────────────────────────────
+   打印/另存 PDF 时：
+   1) 隐藏导航、期间导航、筛选表单、按钮、分页、提示条，只留报表本身；
+   2) 滚动容器（表格框）全部展开——否则只会打印出框里看得见的那几行；
+   3) 单元格取消省略号截断——省略号会把内容吃掉，打印时改为完整显示（必要时换行）；
+   4) 表头跨页重复；A4 横向更适合宽报表。 */
+.print-heading { display: none; }
+
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+
+  html, body { background: #fff; }
+  .topbar, .period-nav, .footer, .messages, .message,
+  .heading-actions, .filter-card, form.filter-grid, .filter-actions,
+  .pagination, .no-print, .multi-select, .reference-list { display: none !important; }
+
+  .page-shell { width: auto; max-width: none; margin: 0; padding: 0; }
+  .section-card {
+    margin: 0 0 10px; padding: 0; border: 0; border-radius: 0; box-shadow: none;
+    break-inside: auto;
+  }
+  .section-heading { margin-bottom: 6px; }
+  .section-heading h2 { font-size: 14px; }
+  .page-heading { margin-bottom: 8px; }
+  .page-heading h1 { font-size: 18px; }
+  .eyebrow { display: none; }
+
+  /* 打印抬头（页面上不显示） */
+  .print-heading {
+    display: block; margin: 0 0 8px; font-size: 11px; color: #333;
+    border-bottom: 1px solid #999; padding-bottom: 4px;
+  }
+  .print-heading strong { font-size: 14px; margin-right: 10px; }
+  .print-heading span { margin-right: 12px; }
+
+  /* 滚动容器全部展开 */
+  .table-wrap, .table-scroll, .summary-table-wrap, .profit-table-wrap, .compact-list {
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    border: 0; border-radius: 0;
+  }
+
+  /* 单元格不再截断；字号与行距收紧，一页能多放几行（省纸） */
+  th, td {
+    height: auto !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+    font-size: 9px;
+    line-height: 1.15;
+    padding: 2px 4px;
+  }
+  table { font-size: 9px; }
+  th { border-color: #999 !important; }
+  td { border-color: #bbb !important; }
+
+  /* 超宽表（逐行损益 32 列 / 汇总表 20 列 / 总成本表 33 列）在纸上横向缩一档，
+     避免列被挤到换行、行高膨胀；浏览器不支持时忽略即可。 */
+  .profit-table, .summary-table, .total-cost-table, .price-table { zoom: 0.72; }
+
+  /* 跨页时表头重复；sticky 在打印里要关掉 */
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  thead th { position: static !important; box-shadow: none !important; }
+  tr { break-inside: avoid; }
+
+  /* 徽标/按钮在打印里当纯文字 */
+  td .pill, td .status, td .allocation {
+    background: none !important; color: #000 !important; padding: 0 !important;
+  }
+  td .mini-button { border: 0; color: #000; }
+
+  /* 录入框只留数值 */
+  .expense-entry-table th, .expense-entry-table td { padding: 2px 4px; }
+  .expense-entry-table input.expense-input {
+    border: 0; background: transparent; text-align: right; font-size: 9px;
+    height: auto; min-height: 0;
+  }
+  .expense-entry-table thead th { background: #eee !important; }
+
+  a { color: #000; text-decoration: none; }
+}

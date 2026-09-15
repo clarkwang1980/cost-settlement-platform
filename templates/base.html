@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}月度成本结算平台{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260915-expense-final">
+  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260915-print">
 </head>
 <body>
   <header class="topbar">
@@ -19,6 +19,7 @@
     {% if user.is_authenticated %}
       <nav class="top-actions">
         <span class="user-name">{{ user.get_full_name|default:user.username }}</span>
+        <button class="link-button no-print" type="button" onclick="window.print()">打印</button>
         {% if user.is_staff %}<a href="/admin/">基础数据</a>{% endif %}
         <form method="post" action="{% url 'logout' %}">
           {% csrf_token %}
@@ -62,6 +63,12 @@
   {% endif %}
 
   <main class="page-shell">
+    <div class="print-heading">
+      <strong>月度成本结算平台</strong>
+      {% if period %}<span>{{ period }}</span>{% endif %}
+      <span class="print-title"></span>
+      <span class="print-time"></span>
+    </div>
     {% if messages %}
       <div class="messages">
         {% for message in messages %}
@@ -90,6 +97,26 @@
       }
       window.addEventListener('load', addTitles);
       window.addEventListener('resize', addTitles);
+    })();
+
+    // 打印抬头：填上当前页面标题与打印时间（屏幕上不显示，只在打印时出现）
+    (function () {
+      function fillPrintHeading() {
+        var t = document.querySelector('.print-heading .print-title');
+        if (t) {
+          var h1 = document.querySelector('.page-heading h1') || document.querySelector('h1');
+          t.textContent = h1 ? h1.textContent.trim() : document.title;
+        }
+        var p = document.querySelector('.print-heading .print-time');
+        if (p) {
+          var d = new Date();
+          var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+          p.textContent = '打印时间 ' + d.getFullYear() + '-' + pad(d.getMonth() + 1) +
+            '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+      }
+      window.addEventListener('load', fillPrintHeading);
+      window.addEventListener('beforeprint', fillPrintHeading);
     })();
   </script>
 {% block extra_js %}{% endblock %}

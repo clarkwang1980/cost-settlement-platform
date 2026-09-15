@@ -4487,3 +4487,82 @@ class ExpenseTableLayoutTests(SettlementFixtureMixin, TestCase):
                / "profit_statement.html").read_text(encoding="utf-8")
         self.assertIn('item.updated_at|date:"m-d H:i"', tpl)
         self.assertNotIn('item.updated_at|date:"Y-m-d H:i"', tpl)
+
+
+class PrintSupportTests(SettlementFixtureMixin, TestCase):
+    """打印功能：页面上有打印按钮；打印时隐藏外壳、展开滚动框、内容不截断、表头跨页重复。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="print-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.base_tpl = (settings.BASE_DIR / "templates" / "base.html").read_text(
+            encoding="utf-8"
+        )
+        self.css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+
+    def test_base_has_print_button_and_heading(self):
+        # 顶部有「打印」按钮；打印抬头在页面上不显示、打印时才出现
+        self.assertIn("window.print()", self.base_tpl)
+        self.assertIn('class="print-heading"', self.base_tpl)
+        self.assertIn(".print-heading { display: none; }", self.css)
+        # 按钮本身打上 no-print，打印时不会被印出来
+        self.assertRegex(self.base_tpl, r'class="[^"]*no-print[^"]*"[^>]*onclick="window\.print\(\)"')
+
+    def test_print_heading_filled_by_script(self):
+        # 抬头里的标题/时间由脚本填（含打印前 beforeprint 兜底）
+        self.assertIn("fillPrintHeading", self.base_tpl)
+        self.assertIn("beforeprint", self.base_tpl)
+
+    def test_print_css_hides_shell_and_expands_scroll_containers(self):
+        block = re.search(r"@media print \{(.*)\n\}\n\Z", self.css, re.S)
+        self.assertIsNotNone(block, "缺少 @media print 样式")
+        css = block.group(1)
+        # 隐藏导航/筛选/分页/按钮
+        for sel in (".topbar", ".period-nav", ".pagination", ".no-print", "form.filter-grid"):
+            self.assertIn(sel, css)
+        # 滚动容器必须展开，否则只会打印框里看得见的一屏
+        for sel in (".table-wrap", ".table-scroll", ".profit-table-wrap", ".summary-table-wrap"):
+            self.assertIn(sel, css)
+        self.assertIn("overflow: visible !important", css)
+        # 单元格不再用省略号截断（否则打印会丢内容）
+        self.assertIn("text-overflow: clip !important", css)
+        self.assertIn("white-space: normal !important", css)
+        # 表头跨页重复
+        self.assertIn("display: table-header-group", css)
+        # A4 横向
+        self.assertIn("size: A4 landscape", css)
+
+    def test_profit_statement_page_has_print_button(self):
+        self.client.force_login(self.user)
+        sales_line = SalesLedgerLine.objects.create(
+            period=self.period,
+            batch=self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "pr"),
+            row_no=1, out_month=self.period.month,
+            invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
+            invoice_month=self.period.month, channel="国内销售",
+            order_no="SO-1", customer_name="客户", sales_category="纱线",
+            material_code="11.01", material_name="产品", uom="kg",
+            quantity=Decimal("1"), terminal_amount=Decimal("100"),
+            cost_amount=Decimal("60"),
+        )
+        self.assertTrue(sales_line.pk)
+        html = self.client.get(
+            reverse("profit_statement", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("window.print()", html)
+        self.assertIn('class="print-heading"', html)
+
+    def test_every_period_page_gets_the_print_button(self):
+        # 打印按钮在公共模板里，所以带期间导航的页面都有
+        self.client.force_login(self.user)
+        for name in ("inventory_ledger", "sales_uninvoiced", "work_order_matches",
+                     "purchase_contracts", "reconciliation"):
+            html = self.client.get(
+                reverse(name, args=[self.period.id])
+            ).content.decode("utf-8")
+            self.assertIn("window.print()", html, name)
+            self.assertIn('class="print-heading"', html, name)

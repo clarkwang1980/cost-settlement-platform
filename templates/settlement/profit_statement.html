@@ -13,7 +13,8 @@
     </p>
   </div>
   <div class="heading-actions">
-    <a class="button primary" href="{% url 'profit_statement_export' period.id %}">导出Excel</a>
+    <button class="button primary" type="button" onclick="window.print()">打印</button>
+    <a class="button secondary" href="{% url 'profit_statement_export' period.id %}">导出Excel</a>
     <a class="button secondary" href="{% url 'export_center' period.id %}">报表导出中心</a>
     <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售核销核对</a>
   </div>
