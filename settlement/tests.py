@@ -4616,7 +4616,7 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
     # ── 销售结转成本凭证（按销售大类汇总；筛选在表内单元格里） ──────────
 
     def test_voucher_summary_groups_by_category(self):
-        # 只统计两类结转成本；每个结转类型都列全 5 个销售大类（无数据显示 0）
+        # 统计三类结转；每个结转类型都列全 5 个销售大类（无数据显示 0）
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
                    carry_type="当月发货当月开票结转成本", cost="100.00", quantity="10",
                    category="纱线")
@@ -4629,39 +4629,48 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self._line(4, out_month=self.june, invoice_month=self.period.month,
                    carry_type="前期发货本期开票结转成本", cost="700.00", quantity="40",
                    category="纤维")
-        # 这两类不该出现在凭证里
         self._line(5, out_month=self.period.month, carry_type="当月发货未开票挂发出商品",
-                   status="uninvoiced", cost="999.00")
+                   status="uninvoiced", cost="900.00", quantity="30", category="面料")
+        # 免费样品不在凭证统计范围内
         self._line(6, out_month=self.period.month, carry_type="免费样品赠送计入销售费用",
                    status="sample_free", cost="888.00")
 
         data = build_sales_voucher_summary(self.period)
         cats = [row for row in data["rows"] if row["level"] == "category"]
-        # 2 个结转类型 × 5 个销售大类 = 10 行
-        self.assertEqual(len(cats), 10)
+        # 3 个结转类型 × 5 个销售大类 = 15 行
+        self.assertEqual(len(cats), 15)
         got = {(row["carry_type"], row["category"]): str(row["amount"]) for row in cats}
         self.assertEqual(got[("当月发货当月开票结转成本", "纱线")], "150.00")
         self.assertEqual(got[("当月发货当月开票结转成本", "面料")], "300.00")
         self.assertEqual(got[("前期发货本期开票结转成本", "纤维")], "700.00")
+        self.assertEqual(got[("当月发货未开票挂发出商品", "面料")], "900.00")
         # 没有数据的大类也要出现（0）
-        for category in ("其他成品", "原料"):
-            self.assertEqual(got[("当月发货当月开票结转成本", category)], "0.00")
-            self.assertEqual(got[("前期发货本期开票结转成本", category)], "0.00")
+        for carry in ("当月发货当月开票结转成本", "前期发货本期开票结转成本",
+                      "当月发货未开票挂发出商品"):
+            for category in ("其他成品", "原料"):
+                self.assertEqual(got[(carry, category)], "0.00")
         # 每个结转类型的销售大类顺序固定为 5 个
-        order = [row["category"] for row in cats
-                 if row["carry_type"] == "当月发货当月开票结转成本"]
-        self.assertEqual(order, ["纱线", "面料", "纤维", "其他成品", "原料"])
-        # 小计与合计
+        for carry in ("当月发货当月开票结转成本", "前期发货本期开票结转成本",
+                      "当月发货未开票挂发出商品"):
+            order = [row["category"] for row in cats if row["carry_type"] == carry]
+            self.assertEqual(order, ["纱线", "面料", "纤维", "其他成品", "原料"], carry)
+        # 会计科目：两类已开票 → 主营业务成本；未开票挂发出商品 → 发出商品
+        accounts = {row["carry_type"]: row["account"] for row in cats}
+        self.assertEqual(accounts["当月发货当月开票结转成本"], "主营业务成本")
+        self.assertEqual(accounts["前期发货本期开票结转成本"], "主营业务成本")
+        self.assertEqual(accounts["当月发货未开票挂发出商品"], "发出商品")
+        # 小计（3 个）与合计
         subtotals = {row["carry_type"]: str(row["amount"])
                      for row in data["rows"] if row["level"] == "subtotal"}
         self.assertEqual(subtotals, {
             "当月发货当月开票结转成本": "450.00",
             "前期发货本期开票结转成本": "700.00",
+            "当月发货未开票挂发出商品": "900.00",
         })
         total = [row for row in data["rows"] if row["level"] == "total"][0]
-        self.assertEqual(str(total["amount"]), "1150.00")
-        for row in cats:
-            self.assertEqual(row["account"], "主营业务成本")
+        self.assertEqual(str(total["amount"]), "2050.00")
+        # 合计行没有单一会计科目 → 留空
+        self.assertEqual(total["account"], "")
         # 列头已去掉「抬头销售凭证」
         self.assertNotIn("抬头销售凭证", data["headers"])
         self.assertEqual(data["headers"][:3], ("会计科目", "结转类型", "销售大类"))
@@ -4737,9 +4746,14 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             self.assertRegex(html, r'<td class="vf-cell">\s*<select class="vf" data-field="%s"' % field)
         # 每个下拉都有空白选项
         self.assertIn("（空白）", html)
-        # 5 个销售大类 × 2 个结转类型
+        # 5 个销售大类 × 3 个结转类型
         for label in ("纱线", "面料", "纤维", "其他成品", "原料", "小计", "合计"):
             self.assertIn(label, html)
+        for carry in ("当月发货当月开票结转成本", "前期发货本期开票结转成本",
+                      "当月发货未开票挂发出商品"):
+            self.assertIn(carry, html)
+        # 第三个结转类型对应「发出商品」科目
+        self.assertIn("发出商品", html)
         # 表内筛选脚本
         self.assertIn("voucher-filter-form", html)
         # 筛选生效（出库期间）

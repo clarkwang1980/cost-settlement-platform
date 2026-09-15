@@ -5,8 +5,8 @@
     当月发货当月开票结转成本 / 前期发货本期开票结转成本 /
     当月发货未开票挂发出商品 / 免费样品赠送计入销售费用
 
-- 销售结转成本凭证：只统计两类结转成本（当月发货当月开票结转成本 /
-  前期发货本期开票结转成本），按「结转类型 × 销售大类」汇总，
+- 销售结转成本凭证：统计三类结转（当月发货当月开票结转成本 /
+  前期发货本期开票结转成本 / 当月发货未开票挂发出商品），按「结转类型 × 销售大类」汇总，
   列：会计科目、结转类型、销售大类、出库期间、开票状态、开票期间、数量、金额；
   可按 记账月份 / 出库期间 / 开票状态 / 开票期间 / 销售大类 筛选。
 - 发出商品及销售成本统计表：项目分类 × 月份（从当前期间起 6 个月）。
@@ -30,13 +30,18 @@ CARRY_PRIOR_INVOICED = "前期发货本期开票结转成本"
 CARRY_UNINVOICED = "当月发货未开票挂发出商品"
 CARRY_SAMPLE = "免费样品赠送计入销售费用"
 
-#: 销售结转成本凭证只统计这两类结转成本
-CARRY_COST_TYPES = (CARRY_CURRENT_INVOICED, CARRY_PRIOR_INVOICED)
+#: 销售结转成本凭证统计的结转类型（每个类型都会列全 5 个销售大类）
+CARRY_COST_TYPES = (
+    CARRY_CURRENT_INVOICED,
+    CARRY_PRIOR_INVOICED,
+    CARRY_UNINVOICED,
+)
 
 #: 结转类型 → 会计科目
 ACCOUNT_BY_CARRY = {
     CARRY_CURRENT_INVOICED: "主营业务成本",
     CARRY_PRIOR_INVOICED: "主营业务成本",
+    CARRY_UNINVOICED: "发出商品",
 }
 
 #: 开票状态中文（台账取值 -> 显示）；三个选项固定出现在筛选里
@@ -148,7 +153,8 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
                                 categories=None) -> dict:
     """销售结转成本凭证：按「结转类型 × 销售大类」汇总。
 
-    - 只统计两类结转成本（当月发货当月开票 / 前期发货本期开票）；
+    - 统计三类结转：当月发货当月开票 / 前期发货本期开票 / 当月发货未开票挂发出商品
+      （前者记主营业务成本，未开票挂发出商品）；
     - 每个结转类型都列全 5 个销售大类（纱线/面料/纤维/其他成品/原料），无数据时显示 0；
     - 筛选：记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类；
       每个筛选都可以「空白」= 不限制该字段（空字符串即不筛选）。
@@ -245,9 +251,13 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
             item["amount"] += Decimal(line.cost_amount)
 
     def _row(level, carry_type, category, item):
+        # 合计行没有单一会计科目，留空；小计行显示该结转类型的科目
+        account = "" if level == "total" else ACCOUNT_BY_CARRY.get(
+            carry_type, "主营业务成本"
+        )
         return {
             "level": level,
-            "account": ACCOUNT_BY_CARRY.get(carry_type, "主营业务成本"),
+            "account": account,
             "carry_type": carry_type,
             "category": category,
             "out_month": out_label,
