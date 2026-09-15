@@ -4675,90 +4675,124 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self.assertNotIn("抬头销售凭证", data["headers"])
         self.assertEqual(data["headers"][:3], ("会计科目", "结转类型", "销售大类"))
 
-    def test_voucher_summary_filters(self):
-        # 记账月份口径：当月发货当月开票按出库月、前期发货本期开票按开票月
+    def test_voucher_summary_defaults_per_block(self):
+        # 三块默认值：前两块 = 出库期间空白 + 已开发票 + 当月开票期间；第三块 = 当月出库 + 空白/空白
+        data = build_sales_voucher_summary(self.period)
+        block_values = {b["index"]: b for b in data["blocks"]}
+        self.assertEqual(block_values[0]["out_value"], "")
+        self.assertEqual(block_values[0]["status_value"], "invoiced")
+        self.assertEqual(block_values[0]["invoice_value"], "2026-07")
+        self.assertEqual(block_values[1]["out_value"], "")
+        self.assertEqual(block_values[1]["status_value"], "invoiced")
+        self.assertEqual(block_values[1]["invoice_value"], "2026-07")
+        self.assertEqual(block_values[2]["out_value"], "2026-07")
+        self.assertEqual(block_values[2]["status_value"], "")
+        self.assertEqual(block_values[2]["invoice_value"], "")
+        # 三块的参数名互不相同（各自独立）
+        names = {b["params"]["out"] for b in data["blocks"]}
+        self.assertEqual(names, {"vout0", "vout1", "vout2"})
+
+    def test_voucher_summary_blocks_are_independent(self):
+        # 行先按「记账月份」归属：当月发货当月开票按出库月、前期发货本期开票按开票月。
+        # 所以「前期发货本期开票」可以有不同出库月、但都落在 7 月记账 → 用它验证块内筛选。
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
                    carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
         self._line(2, out_month=self.june, invoice_month=self.period.month,
                    carry_type="前期发货本期开票结转成本", cost="200.00", category="面料")
         self._line(3, out_month=self.may, invoice_month=self.period.month,
                    carry_type="前期发货本期开票结转成本", cost="300.00", category="纤维")
+        self._line(4, out_month=self.period.month, carry_type="当月发货未开票挂发出商品",
+                   status="uninvoiced", cost="800.00", category="原料")
+
+        def subtotal(data, carry):
+            rows = [r for r in data["rows"]
+                    if r["level"] == "subtotal" and r["carry_type"] == carry]
+            return str(rows[0]["amount"])
+
+        BLOCK0 = "当月发货当月开票结转成本"
+        BLOCK1 = "前期发货本期开票结转成本"
+        BLOCK2 = "当月发货未开票挂发出商品"
 
         base = build_sales_voucher_summary(self.period)
-        self.assertEqual(base["month"], "2026-07")
-        self.assertEqual(str(base["totals"]["amount"]), "600.00")
-        self.assertFalse(base["has_filter"])
+        self.assertEqual(subtotal(base, BLOCK0), "100.00")
+        self.assertEqual(subtotal(base, BLOCK1), "500.00")   # 6 月 200 + 5 月 300
+        self.assertEqual(subtotal(base, BLOCK2), "800.00")
 
-        def total_of(**kwargs):
-            data = build_sales_voucher_summary(self.period, **kwargs)
-            return str([r for r in data["rows"] if r["level"] == "total"][0]["amount"])
+        # 只把块1 的出库期间改成 2026-06 → 块1 变 200；块0 / 块2 完全不变
+        changed = build_sales_voucher_summary(self.period, block_filters={
+            BLOCK1: {"out": "2026-06"},
+        })
+        self.assertEqual(subtotal(changed, BLOCK1), "200.00")
+        self.assertEqual(subtotal(changed, BLOCK0), "100.00")
+        self.assertEqual(subtotal(changed, BLOCK2), "800.00")
 
-        # 三个字段：空白 = 不限制
-        self.assertEqual(total_of(out_months=[""]), "600.00")
-        self.assertEqual(total_of(statuses=[""]), "600.00")
-        self.assertEqual(total_of(invoice_months=[""]), "600.00")
-        # 出库期间
-        self.assertEqual(total_of(out_months=["2026-07"]), "100.00")
-        self.assertEqual(total_of(out_months=["2026-06"]), "200.00")
-        self.assertEqual(total_of(out_months=["2026-05", "2026-06"]), "500.00")
-        # 开票状态（两类结转成本都是已开发票）
-        self.assertEqual(total_of(statuses=["invoiced"]), "600.00")
-        self.assertEqual(total_of(statuses=["uninvoiced"]), "0.00")
-        self.assertEqual(total_of(statuses=["sample_free"]), "0.00")
-        # 开票期间
-        self.assertEqual(total_of(invoice_months=["2026-07"]), "600.00")
-        self.assertEqual(total_of(invoice_months=["2026-06"]), "0.00")
-        # 销售大类
-        self.assertEqual(total_of(categories=["纱线", "纤维"]), "400.00")
-        # 组合
+        # 只把块0 的开票状态改成未开发票 → 块0 变 0；块1 / 块2 不变
+        changed0 = build_sales_voucher_summary(self.period, block_filters={
+            BLOCK0: {"status": "uninvoiced"},
+        })
+        self.assertEqual(subtotal(changed0, BLOCK0), "0.00")
+        self.assertEqual(subtotal(changed0, BLOCK1), "500.00")
+        self.assertEqual(subtotal(changed0, BLOCK2), "800.00")
+
+        # 只把块2 的三个筛选都放开 → 块2 仍 800（该块按出库月记账，结果不变）；块0 / 块1 不变
+        changed2 = build_sales_voucher_summary(self.period, block_filters={
+            BLOCK2: {"out": "", "status": "", "invoice": ""},
+        })
+        self.assertEqual(subtotal(changed2, BLOCK2), "800.00")
+        self.assertEqual(subtotal(changed2, BLOCK0), "100.00")
+        self.assertEqual(subtotal(changed2, BLOCK1), "500.00")
+
+    def test_voucher_summary_blank_means_no_restriction(self):
+        self._line(1, out_month=self.june, invoice_month=self.period.month,
+                   carry_type="前期发货本期开票结转成本", cost="200.00", category="面料")
+        self._line(2, out_month=self.may, invoice_month=self.period.month,
+                   carry_type="前期发货本期开票结转成本", cost="300.00", category="纤维")
+        BLOCK1 = "前期发货本期开票结转成本"
+
+        def subtotal_of(data):
+            rows = [r for r in data["rows"]
+                    if r["level"] == "subtotal" and r["carry_type"] == BLOCK1]
+            return str(rows[0]["amount"])
+
+        # 默认（出库期间空白）→ 两行都算进来
+        self.assertEqual(subtotal_of(build_sales_voucher_summary(self.period)), "500.00")
+        # 出库期间选具体月份 → 只算该月
         self.assertEqual(
-            total_of(out_months=["2026-06"], categories=["面料"]), "200.00"
-        )
-        # 选项：三个筛选的第一个都是空白；开票状态固定三项
-        for key in ("out_options", "invoice_options", "status_options", "category_options"):
-            self.assertEqual(base[key][0]["value"], "", key)
-            self.assertEqual(base[key][0]["label"], "（空白）", key)
-        self.assertEqual([i["value"] for i in base["out_options"]][1:],
-                         ["2026-05", "2026-06", "2026-07"])
-        self.assertEqual([i["value"] for i in base["invoice_options"]][1:], ["2026-07"])
-        self.assertEqual([i["label"] for i in base["status_options"]][1:],
-                         ["已开发票", "未开发票", "样品免费"])
-        self.assertEqual([i["value"] for i in base["category_options"]][1:],
-                         ["纱线", "面料", "纤维", "其他成品", "原料"])
+            subtotal_of(build_sales_voucher_summary(self.period, block_filters={
+                BLOCK1: {"out": "2026-06"},
+            })), "200.00")
+        # 出库期间选「（空白）」→ 恢复不限制
+        self.assertEqual(
+            subtotal_of(build_sales_voucher_summary(self.period, block_filters={
+                BLOCK1: {"out": ""},
+            })), "500.00")
+        # 非法取值按「不限制」处理
+        self.assertEqual(
+            subtotal_of(build_sales_voucher_summary(self.period, block_filters={
+                BLOCK1: {"out": "1999-01", "status": "zzz", "invoice": "1999-01"},
+            })), "500.00")
 
-    def test_voucher_summary_page_renders_inline_filters(self):
+    def test_voucher_page_renders_per_block_filters_and_left_aligned(self):
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
                    carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
-        self._line(2, out_month=self.june, invoice_month=self.period.month,
-                   carry_type="前期发货本期开票结转成本", cost="300.00", category="纤维")
         self.client.force_login(self.user)
         url = reverse("sales_uninvoiced", args=[self.period.id])
         html = self.client.get(url).content.decode("utf-8")
         self.assertIn("<h2>销售结转成本凭证</h2>", html)
-        self.assertNotIn("<h2>销售凭证</h2>", html)
-        self.assertNotIn("抬头销售凭证", html)
-        for header in ("会计科目", "结转类型", "销售大类", "出库期间", "开票状态",
-                       "开票期间", "数量", "金额"):
-            self.assertRegex(html, r"<th[^>]*>%s</th>" % header)
-        # 筛选下拉放在表格单元格里（不是表头、不是上方筛选条）
-        self.assertNotIn('class="filter-grid"', html[:html.index("<h2>销售结转成本凭证</h2>")])
-        for field in ("vout", "vst", "vinv"):
-            self.assertRegex(html, r'<td class="vf-cell">\s*<select class="vf" data-field="%s"' % field)
-        # 每个下拉都有空白选项
-        self.assertIn("（空白）", html)
-        # 5 个销售大类 × 3 个结转类型
-        for label in ("纱线", "面料", "纤维", "其他成品", "原料", "小计", "合计"):
-            self.assertIn(label, html)
-        for carry in ("当月发货当月开票结转成本", "前期发货本期开票结转成本",
-                      "当月发货未开票挂发出商品"):
-            self.assertIn(carry, html)
-        # 第三个结转类型对应「发出商品」科目
-        self.assertIn("发出商品", html)
-        # 表内筛选脚本
-        self.assertIn("voucher-filter-form", html)
-        # 筛选生效（出库期间）
-        filtered = self.client.get(url + "?vout=2026-07").content.decode("utf-8")
-        self.assertIn('value="2026-07" selected', filtered)
+        # 三块的下拉参数名互不相同
+        for name in ("vout0", "vst0", "vinv0", "vout1", "vst1", "vinv1",
+                     "vout2", "vst2", "vinv2"):
+            self.assertIn('name="%s"' % name, html)
+        # 默认选中项：块0 已开发票 + 当月
+        self.assertIn('value="invoiced" selected', html)
+        # 后三列靠左（开票期间 / 数量 / 金额 不带 num 类）
+        section = html[html.index("销售结转成本凭证"):]
+        section = section[:section.index("</section>")]
+        body = section[section.index("<tbody>"):section.index("</tbody>")]
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
+            attrs = re.findall(r"<td([^>]*)>", tr)
+            for attr in attrs[-3:]:
+                self.assertNotIn("num", attr)
 
     # ── 发出商品及销售成本统计表 ────────────────────────────────────────
 

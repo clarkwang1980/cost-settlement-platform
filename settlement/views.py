@@ -95,6 +95,8 @@ from settlement.services.rollforward import (
     invalidate_downstream_periods,
 )
 from settlement.services.sales_voucher import (
+    CARRY_COST_TYPES,
+    block_param_names,
     build_sales_cost_statistics,
     build_sales_voucher_summary,
 )
@@ -832,13 +834,18 @@ def sales_uninvoiced(request, period_id):
             voucher_month = date(int(year), int(month_no), 1)
         except (TypeError, ValueError):
             voucher_month = None
+    # 三个结转类型块各自独立：参数名带块序号（vout0/vst0/vinv0、vout1/...）；
+    # 没提交过的字段传 None → 用该块默认值；提交了空串 = 选了「（空白）」= 不限制。
+    block_filters = {}
+    for index, carry in enumerate(CARRY_COST_TYPES):
+        names = block_param_names(index)
+        block_filters[carry] = {
+            "out": request.GET.get(names["out"]),
+            "status": request.GET.get(names["status"]),
+            "invoice": request.GET.get(names["invoice"]),
+        }
     voucher = build_sales_voucher_summary(
-        period,
-        month=voucher_month,
-        out_months=request.GET.getlist("vout"),
-        invoice_months=request.GET.getlist("vinv"),
-        statuses=request.GET.getlist("vst"),
-        categories=request.GET.getlist("vcat"),
+        period, month=voucher_month, block_filters=block_filters
     )
     voucher_page = Paginator(voucher["rows"], 200).get_page(
         request.GET.get("vpage")
@@ -847,9 +854,14 @@ def sales_uninvoiced(request, period_id):
     query.pop("vpage", None)
     voucher_page.querystring = query.urlencode()
     # 「清空筛选」：只清凭证这几项，保留上面的明细筛选
+    voucher_param_names = {
+        name
+        for index in range(len(CARRY_COST_TYPES))
+        for name in block_param_names(index).values()
+    } | {"vout", "vinv", "vst", "vcat"}
     voucher_clear_query = urlencode(
         [(key, value) for key, value in request.GET.items()
-         if key not in {"voucher_month", "vout", "vinv", "vst", "vcat", "vpage"}]
+         if key not in voucher_param_names and key != "vpage"]
     )
     voucher_context = {
         "voucher": voucher,

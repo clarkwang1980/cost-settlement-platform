@@ -74,15 +74,14 @@
       <p class="eyebrow">SALES COST CARRY-FORWARD VOUCHER</p>
       <h2>销售结转成本凭证</h2>
       <p class="muted-text" style="margin:6px 0 0;">
-        统计三类结转（当月发货当月开票、前期发货本期开票、当月发货未开票挂发出商品），
-        按「结转类型 × 销售大类」汇总（5 个销售大类每个结转类型都列全）。
-        <strong>筛选就在表里</strong>：出库期间 / 开票状态 / 开票期间 三列的每个单元格都是下拉，
-        选「（空白）」= 不限制该字段；改任意一格，其它格同步并按新条件重新汇总。
+        统计三类结转，按「结转类型 × 销售大类」汇总（5 个销售大类每个结转类型都列全）。
+        <strong>三个结转类型块的筛选各自独立</strong>：出库期间 / 开票状态 / 开票期间 三列的每个单元格都是下拉，
+        改某一块只影响这一块（该块内改一格，其它行同步）；选「（空白）」= 不限制该字段。
         记账月份 <strong>{{ voucher.month }}</strong>、来源台账 {{ voucher.totals.source_rows }} 行。
       </p>
     </div>
     <form method="get" class="filter-actions" style="margin:0;">
-      {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vout' and key != 'vst' and key != 'vinv' and key != 'vcat' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+      {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vpage' and 'vout' not in key and 'vst' not in key and 'vinv' not in key %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
       <label class="muted-text">记账月份
         <select name="voucher_month" onchange="this.form.submit()">
           {% for item in voucher.months %}
@@ -102,16 +101,13 @@
 
   <form method="get" id="voucher-filter-form">
     <input type="hidden" name="voucher_month" value="{{ voucher.month }}">
-    {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vout' and key != 'vst' and key != 'vinv' and key != 'vcat' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
-    <input type="hidden" name="vout" value="{{ voucher.selected_out|first|default:'' }}">
-    <input type="hidden" name="vst" value="{{ voucher.selected_status|first|default:'' }}">
-    <input type="hidden" name="vinv" value="{{ voucher.selected_invoice|first|default:'' }}">
+    {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vpage' and 'vout' not in key and 'vst' not in key and 'vinv' not in key %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
 
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            {% for header in voucher.headers %}<th{% if forloop.counter0 >= 5 %} class="num"{% endif %}>{{ header }}</th>{% endfor %}
+            {% for header in voucher.headers %}<th>{{ header }}</th>{% endfor %}
           </tr>
         </thead>
         <tbody>
@@ -120,29 +116,33 @@
             <td>{{ row.account }}</td>
             <td>{{ row.carry_type }}</td>
             <td>{{ row.category }}</td>
+            {% if row.block_index >= 0 %}
             <td class="vf-cell">
-              <select class="vf" data-field="vout" aria-label="出库期间">
+              <select class="vf" name="{{ row.block_params.out }}" data-block="{{ row.block_index }}" data-field="out" aria-label="出库期间">
                 {% for item in voucher.out_options %}
-                <option value="{{ item.value }}"{% if item.value == voucher.selected_out|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                <option value="{{ item.value }}"{% if item.value == row.block_out %} selected{% endif %}>{{ item.label }}</option>
                 {% endfor %}
               </select>
             </td>
             <td class="vf-cell">
-              <select class="vf" data-field="vst" aria-label="开票状态">
+              <select class="vf" name="{{ row.block_params.status }}" data-block="{{ row.block_index }}" data-field="status" aria-label="开票状态">
                 {% for item in voucher.status_options %}
-                <option value="{{ item.value }}"{% if item.value == voucher.selected_status|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                <option value="{{ item.value }}"{% if item.value == row.block_status %} selected{% endif %}>{{ item.label }}</option>
                 {% endfor %}
               </select>
             </td>
             <td class="vf-cell">
-              <select class="vf" data-field="vinv" aria-label="开票期间">
+              <select class="vf" name="{{ row.block_params.invoice }}" data-block="{{ row.block_index }}" data-field="invoice" aria-label="开票期间">
                 {% for item in voucher.invoice_options %}
-                <option value="{{ item.value }}"{% if item.value == voucher.selected_invoice|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                <option value="{{ item.value }}"{% if item.value == row.block_invoice %} selected{% endif %}>{{ item.label }}</option>
                 {% endfor %}
               </select>
             </td>
-            <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
-            <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
+            {% else %}
+            <td></td><td></td><td></td>
+            {% endif %}
+            <td>{{ row.quantity|floatformat:3|thousands }}</td>
+            <td>{{ row.amount|floatformat:2|thousands }}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -152,7 +152,7 @@
   <p class="muted-text">
     口径：金额为销售成本（结转成本口径）；「小计」= 该结转类型合计，「合计」= 三个结转类型总计。
     会计科目：当月发货当月开票 / 前期发货本期开票 → 主营业务成本；当月发货未开票挂发出商品 → 发出商品。
-    出库期间 / 开票状态 / 开票期间三列显示的是当前筛选条件（「（空白）」= 不限制）。
+    默认筛选：前两块 = 出库期间空白 + 已开发票 + 当月开票期间；第三块 = 出库期间当月 + 开票状态/开票期间空白。
   </p>
 </section>
 
@@ -255,30 +255,19 @@
 {% endblock %}
 {% block extra_js %}
 <script>
-  // 多选下拉：点击空白处收起
-  document.addEventListener("click", function (event) {
-    document.querySelectorAll("details.multi-select[open]").forEach(function (box) {
-      if (!box.contains(event.target)) {
-        box.removeAttribute("open");
-      }
-    });
-  });
-</script>
-<script>
-  // 销售结转成本凭证：表内筛选（3 列每个单元格都是下拉，改一个其它同步）
+  // 销售结转成本凭证：表内筛选。三个结转类型块各自独立——
+  // 改某一块的某个下拉，只同步「同一块」的同类下拉，然后提交（不影响其它块）。
   (function () {
     var form = document.getElementById("voucher-filter-form");
     if (!form) { return; }
-    function apply(field, value) {
-      var input = form.querySelector('input[name="' + field + '"]');
-      if (input) { input.value = value; }
-      form.querySelectorAll('select[data-field="' + field + '"]').forEach(function (sel) {
-        sel.value = value;
-      });
-      form.submit();
-    }
     form.querySelectorAll("select.vf").forEach(function (sel) {
-      sel.addEventListener("change", function () { apply(sel.dataset.field, sel.value); });
+      sel.addEventListener("change", function () {
+        var block = sel.dataset.block;
+        var field = sel.dataset.field;
+        form.querySelectorAll('select.vf[data-block="' + block + '"][data-field="' + field + '"]')
+          .forEach(function (other) { other.value = sel.value; });
+        form.submit();
+      });
     });
   })();
 </script>
