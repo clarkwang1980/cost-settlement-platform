@@ -25,7 +25,7 @@
     <table>
       <thead>
         <tr>
-          <th>工单编号</th><th>车间/部门</th><th>产品</th><th class="num">计划数量</th>
+          <th>工单编号</th><th>车间/部门</th><th>产品编码</th><th>产品名称</th><th class="num">计划数量</th>
           <th class="num">投料记录</th><th class="num">报工记录</th>
           <th class="num">报工入库流水</th><th>差异提示</th>
         </tr>
@@ -35,7 +35,7 @@
         <tr>
           <td><strong>{{ row.order_no }}</strong>{% if row.status %}<small>{{ row.status }}</small>{% endif %}</td>
           <td>{{ row.workshop|workshop_label|default:"—" }}</td>
-          <td><strong>{{ row.product_code|default:"—" }}</strong><small>{{ row.product_name }}</small></td>
+          <td><strong>{{ row.product_code|default:"—" }}</strong></td><td>{{ row.product_name }}</td>
           <td class="num">{{ row.plan_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ row.issue_count }} 条 / {{ row.issue_qty|floatformat:3|thousands }}</td>
           <td class="num">{{ row.report_count }} 条 / {{ row.report_qty|floatformat:3|thousands }}</td>
@@ -52,7 +52,7 @@
             {% endif %}
           </td>
         </tr>
-      {% empty %}<tr><td colspan="8" class="empty-cell">没有符合筛选条件的生产工单，请先上传生产工单/投料记录/报工记录。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="9" class="empty-cell">没有符合筛选条件的生产工单，请先上传生产工单/投料记录/报工记录。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

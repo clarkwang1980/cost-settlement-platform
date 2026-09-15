@@ -52,7 +52,7 @@
     <table>
       <thead>
         <tr>
-          <th>入库月份/日期</th><th>入库单号</th><th>合同号</th><th>供应商</th><th>物料</th>
+          <th>入库月份/日期</th><th>入库单号</th><th>合同号</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
           <th class="num">入库数量</th><th class="num">累计到票</th><th class="num">尚未到票</th>
           <th class="num">暂估单价</th><th class="num">月末暂估金额</th><th>最近到票期间</th><th>暂估依据</th><th>状态</th>
         </tr>
@@ -70,7 +70,7 @@
           </td>
           <td>{{ row.contract_nos|default:"—" }}</td>
           <td>{{ row.supplier_name|default:row.supplier_code|default:"—" }}</td>
-          <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
+          <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
           <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
           <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
@@ -81,7 +81,7 @@
           <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
         </tr>
       {% empty %}
-        <tr><td colspan="13" class="empty-cell">截至本月末没有尚未到票的采购入库。</td></tr>
+        <tr><td colspan="14" class="empty-cell">截至本月末没有尚未到票的采购入库。</td></tr>
       {% endfor %}
       </tbody>
     </table>

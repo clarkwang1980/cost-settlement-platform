@@ -47,7 +47,7 @@
       <thead>
         <tr>
           <th>库存单据</th><th>业务日期</th><th>匹配类别</th><th>业务类型</th><th>方向</th>
-          <th>仓库</th><th>物料</th><th class="num">数量</th><th>供应商/客户</th><th>订单号</th>
+          <th>仓库</th><th>物料编码</th><th>物料名称</th><th class="num">数量</th><th>供应商/客户</th><th>订单号</th>
           <th>匹配到的单据</th><th>处理方式</th><th>匹配状态</th><th>操作</th>
         </tr>
       </thead>
@@ -60,7 +60,7 @@
           <td>{{ txn.business_type }}</td>
           <td>{{ txn.get_direction_display }}</td>
           <td>{{ txn.warehouse|default:"—" }}</td>
-          <td><strong>{{ txn.material_code }}</strong><small>{{ txn.material_name }}</small></td>
+          <td><strong>{{ txn.material_code }}</strong></td><td>{{ txn.material_name }}</td>
           <td class="num">{{ txn.quantity|floatformat:3|thousands }}</td>
           <td>{{ txn.supplier_name|default:txn.customer_name|default:txn.supplier_code|default:txn.customer_code|default:"—" }}</td>
           <td>{{ txn.order_no|default:"—" }}</td>
@@ -78,7 +78,7 @@
           <td><span class="pill {% if txn.match_status == 'matched' %}success{% elif txn.match_status == 'partial' %}warning{% endif %}">{{ txn.get_match_status_display }}</span></td>
           <td><a class="mini-button" href="{% url 'inventory_match_detail' period.id txn.id %}">打开修改</a></td>
         </tr>
-      {% empty %}<tr><td colspan="14" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="15" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

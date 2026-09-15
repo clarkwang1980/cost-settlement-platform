@@ -96,7 +96,7 @@
   <div class="section-heading"><h2>已经匹配的库存流水或期初台账</h2><span class="pill">{{ allocations|length }}条</span></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>库存流水</th><th>日期</th><th>业务类型</th><th>物料</th><th class="num">匹配数量</th><th class="num">匹配金额</th><th>来源</th><th>操作</th></tr></thead>
+      <thead><tr><th>库存流水</th><th>日期</th><th>业务类型</th><th>物料编码</th><th>物料名称</th><th class="num">匹配数量</th><th class="num">匹配金额</th><th>来源</th><th>操作</th></tr></thead>
       <tbody>
       {% for a in allocations %}
         <tr>
@@ -104,17 +104,17 @@
             <td><a class="document-link" href="{% url 'inventory_match_detail' a.inventory_transaction.period.id a.inventory_transaction.id %}"><strong>{{ a.inventory_transaction.document_no|default:"—" }}</strong><small>{{ a.inventory_transaction.period.month|date:"Y-m" }} · 流水ID {{ a.inventory_transaction.id }}</small></a></td>
             <td>{{ a.inventory_transaction.txn_date }}</td>
             <td>{{ a.inventory_transaction.business_type }}</td>
-            <td>{{ a.inventory_transaction.material_code }}</td>
+            <td>{{ a.inventory_transaction.material_code }}</td><td>{{ a.inventory_transaction.material_name }}</td>
           {% elif a.opening_purchase_accrual %}
             <td><strong>{{ a.opening_purchase_accrual.document_no }}</strong><small>{{ a.opening_purchase_accrual.original_period|date:"Y-m" }} · 期初采购暂估</small></td>
             <td>{{ a.opening_purchase_accrual.document_date }}</td>
             <td>期初采购暂估台账</td>
-            <td>{{ a.opening_purchase_accrual.material_code }}</td>
+            <td>{{ a.opening_purchase_accrual.material_code }}</td><td>{{ a.opening_purchase_accrual.material_name }}</td>
           {% else %}
             <td><strong>{{ a.opening_goods_issued.document_no }}</strong><small>{{ a.opening_goods_issued.original_period|date:"Y-m" }} · 期初发出商品</small></td>
             <td>{{ a.opening_goods_issued.document_date }}</td>
             <td>期初发出商品台账</td>
-            <td>{{ a.opening_goods_issued.material_code }}</td>
+            <td>{{ a.opening_goods_issued.material_code }}</td><td>{{ a.opening_goods_issued.material_name }}</td>
           {% endif %}
           <td class="num">{{ a.matched_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ a.amount|floatformat:2|thousands|default:"—" }}</td>
@@ -125,7 +125,7 @@
             {% else %}—{% endif %}
           </td>
         </tr>
-      {% empty %}<tr><td colspan="8" class="empty-cell">当前没有匹配的库存流水或期初台账。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="9" class="empty-cell">当前没有匹配的库存流水或期初台账。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

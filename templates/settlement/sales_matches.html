@@ -45,7 +45,7 @@
       <thead>
         <tr>
           <th>销售发票</th><th>发票日期/期间</th><th>销售订单</th><th>客户</th>
-          <th>产品</th><th class="num">发票数量</th><th class="num">已匹配</th>
+          <th>产品编码</th><th>产品名称</th><th class="num">发票数量</th><th class="num">已匹配</th>
           <th class="num">未匹配</th><th class="num">不含税金额</th><th>匹配的销售出库/期初发出商品</th>
           <th>处理方式</th><th>操作</th>
         </tr>
@@ -57,7 +57,7 @@
           <td><strong>{{ invoice.invoice_date }}</strong><small>{{ invoice.invoice_period|date:"Y-m" }}</small></td>
           <td>{{ invoice.sales_order_no|default:"—" }}</td>
           <td>{{ invoice.customer_name|default:invoice.customer_code|default:"—" }}</td>
-          <td><strong>{{ invoice.material_code }}</strong><small>{{ invoice.material_name }}</small></td>
+          <td><strong>{{ invoice.material_code }}</strong></td><td>{{ invoice.material_name }}</td>
           <td class="num">{{ invoice.quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ invoice.matched_total|default:0|floatformat:3|thousands }}</td>
           <td class="num">{{ invoice.remaining_quantity|floatformat:3|thousands }}</td>
@@ -74,7 +74,7 @@
           <td><span class="pill {% if invoice.match_mode == 'ignored' %}warning{% elif invoice.match_mode == 'manual' %}success{% endif %}">{{ invoice.get_match_mode_display }}</span>{% if invoice.ignore_reason %}<small>{{ invoice.ignore_reason }}</small>{% endif %}</td>
           <td><a class="mini-button" href="{% url 'source_document_detail' period.id 'sales_invoice' invoice.id %}">打开修改</a></td>
         </tr>
-      {% empty %}<tr><td colspan="12" class="empty-cell">没有符合筛选条件的销售发票。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="13" class="empty-cell">没有符合筛选条件的销售发票。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

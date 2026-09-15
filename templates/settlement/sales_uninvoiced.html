@@ -77,7 +77,7 @@
     <table>
       <thead>
         <tr>
-          <th>出库月份/日期</th><th>出库单号</th><th>销售订单</th><th>客户</th><th>销售大类</th><th>产品</th>
+          <th>出库月份/日期</th><th>出库单号</th><th>销售订单</th><th>客户</th><th>销售大类</th><th>产品编码</th><th>产品名称</th>
           <th class="num">出库数量</th><th class="num">累计开票</th><th class="num">未开票数量</th>
           <th class="num">出库单价</th><th class="num">出库成本</th><th class="num">已开票成本</th><th class="num">未开票成本</th>
           <th>匹配发票</th><th>未开票天数</th><th>状态</th>
@@ -97,7 +97,7 @@
           <td>{{ row.sales_order_no|default:"—" }}</td>
           <td>{{ row.customer_name|default:row.customer_code|default:"—" }}</td>
           <td>{{ row.sales_category|default:"—" }}</td>
-          <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
+          <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
           <td class="num">{{ row.issue_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
           <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
@@ -110,7 +110,7 @@
           <td><span class="pill {% if row.status == '缺少出库成本' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
         </tr>
       {% empty %}
-        <tr><td colspan="16" class="empty-cell">截至本月末没有已出库未开票记录。</td></tr>
+        <tr><td colspan="17" class="empty-cell">截至本月末没有已出库未开票记录。</td></tr>
       {% endfor %}
       </tbody>
     </table>

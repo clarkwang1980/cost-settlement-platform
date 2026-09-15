@@ -25,7 +25,7 @@
     <table>
       <thead>
         <tr>
-          <th>工单编号</th><th>报工时间</th><th>生产任务编号</th><th>工序</th><th>报工物料</th>
+          <th>工单编号</th><th>报工时间</th><th>生产任务编号</th><th>工序</th><th>报工物料编码</th><th>报工物料名称</th>
           <th class="num">报工数量</th><th>单位</th><th class="num">工时</th><th>工时单位</th>
           <th>生产人员</th><th>质量状态</th><th>不良原因</th><th>设备</th>
         </tr>
@@ -37,7 +37,7 @@
           <td>{{ r.report_time|date:"Y-m-d H:i"|default:"—" }}</td>
           <td>{{ r.task_no|default:"—" }}</td>
           <td>{{ r.operation_no|default:"" }} {{ r.operation_name|default:"" }}</td>
-          <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
+          <td><strong>{{ r.material_code }}</strong></td><td>{{ r.material_name }}</td>
           <td class="num">{{ r.quantity|floatformat:3|thousands }}</td>
           <td>{{ r.uom|default:"—" }}</td>
           <td class="num">{{ r.work_hours|floatformat:3|thousands|default:"—" }}</td>
@@ -47,7 +47,7 @@
           <td>{{ r.defect_reason|default:"—" }}</td>
           <td>{{ r.equipment|default:"—" }}</td>
         </tr>
-      {% empty %}<tr><td colspan="13" class="empty-cell">本月还没有导入报工记录。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="14" class="empty-cell">本月还没有导入报工记录。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

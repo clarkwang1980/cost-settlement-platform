@@ -38,7 +38,7 @@
       <thead>
         <tr>
           <th>发票号</th><th>发票日期</th><th>发票期间</th><th>核销对象</th><th>原入库单号</th>
-          <th>原入库月份</th><th>原入库日期</th><th>物料</th><th>供应商</th>
+          <th>原入库月份</th><th>原入库日期</th><th>物料编码</th><th>物料名称</th><th>供应商</th>
           <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
           <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">价差</th>
           <th class="num">该单入库数量</th><th class="num">累计已核销</th><th class="num">剩余未到票</th>
@@ -55,7 +55,7 @@
           <td>{{ r.document_no|default:"—" }}</td>
           <td>{{ r.receipt_month|date:"Y-m" }}</td>
           <td>{{ r.document_date|date:"Y-m-d" }}</td>
-          <td><strong>{{ r.material_code }}</strong><small>{{ r.material_name }}</small></td>
+          <td><strong>{{ r.material_code }}</strong></td><td>{{ r.material_name }}</td>
           <td>{{ r.supplier_name|default:"—" }}</td>
           <td class="num">{{ r.matched_quantity|floatformat:3|thousands }}</td>
           <td class="num">{% if r.provisional_unit_price %}{{ r.provisional_unit_price|floatformat:4|thousands }}{% else %}—{% endif %}</td>
@@ -69,7 +69,7 @@
           <td>{% if r.cross_period %}<span class="pill warning">跨期</span>{% else %}本期{% endif %}</td>
           <td><span class="pill {% if r.status == '无差异' %}success{% elif r.status == '有差异' %}warning{% else %}danger{% endif %}">{{ r.status }}</span></td>
         </tr>
-      {% empty %}<tr><td colspan="20" class="empty-cell">本期没有采购发票核销记录。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="21" class="empty-cell">本期没有采购发票核销记录。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

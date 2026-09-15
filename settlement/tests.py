@@ -3888,3 +3888,133 @@ class TableScrollContainerTests(SettlementFixtureMixin, TestCase):
         html = self._html("profit_statement")
         self.assertIn('class="table-scroll', html)
         self.assertNotIn('style="overflow-x:auto;"', html)
+
+
+class MaterialNameColumnTests(SettlementFixtureMixin, TestCase):
+    """物料/产品的编码与名称必须分两列（2026-09-15 用户要求）。
+
+    背景：页面原来把「编码 + 名称」挤在一格里（编码加粗、名称小字），
+    而导出 Excel 一直是「物料编码 / 物料名称」两列；现在页面与导出口径一致。
+    """
+
+    #: 需要分两列的模板（本次改动涉及的全部页面）
+    TEMPLATES = (
+        "bom_imports.html", "inventory_ledger.html", "inventory_matches.html",
+        "inventory_results.html", "material_issue_imports.html",
+        "order_completion_report.html", "order_material_report.html",
+        "production_cost_summary.html", "purchase_accruals.html",
+        "purchase_contracts.html", "purchase_differences.html",
+        "purchase_matches.html", "purchase_reversal_report.html",
+        "sales_matches.html", "sales_uninvoiced.html", "work_order_costs.html",
+        "work_order_matches.html", "work_report_imports.html",
+        "source_document_detail.html",
+    )
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="material-col-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 9, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "cols")
+        self.material = Material.objects.create(
+            code="RM-COL", name="分列测试物料", uom="kg"
+        )
+
+    def test_no_template_merges_code_and_name_in_one_cell(self):
+        # 不允许再出现「<strong>编码</strong><small>名称</small>」这种挤在一格的写法
+        tpl_dir = settings.BASE_DIR / "templates" / "settlement"
+        pattern = re.compile(
+            r"<td[^>]*>\s*<strong>\{\{[^}]*\b(material|product|sub_item)_code[^}]*\}\}"
+            r"</strong>\s*<small>\{\{[^}]*\1_name",
+            re.S,
+        )
+        offenders = []
+        for path in sorted(tpl_dir.glob("*.html")):
+            text = path.read_text(encoding="utf-8")
+            for match in pattern.finditer(text):
+                offenders.append("%s: %s" % (path.name, match.group(0)[:90]))
+        self.assertEqual(offenders, [], "以下地方仍把编码和名称挤在一列")
+
+    def test_every_code_column_has_matching_name_column(self):
+        # 有「X编码」表头的地方，必须有对应的「X名称」表头
+        tpl_dir = settings.BASE_DIR / "templates" / "settlement"
+        for name in self.TEMPLATES:
+            text = (tpl_dir / name).read_text(encoding="utf-8")
+            code_headers = set(re.findall(r"<th[^>]*>([^<]*编码)</th>", text))
+            self.assertTrue(code_headers, "%s 没有编码列表头" % name)
+            for code_header in code_headers:
+                name_header = code_header.replace("编码", "名称")
+                self.assertIn(
+                    ">%s</th>" % name_header, text,
+                    "%s 有「%s」却没有「%s」" % (name, code_header, name_header),
+                )
+
+    def test_inventory_ledger_page_shows_two_columns(self):
+        # 库存流水页：表头两列 + 单元格拆成两个 td
+        self.create_txn(
+            self.period, self.batch,
+            txn_date=date(2026, 9, 10), document_no="IT-001",
+            business_type="采购入库", direction="in", material=self.material,
+            quantity=Decimal("10"),
+        )
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("inventory_ledger", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("<th>物料编码</th>", html)
+        self.assertIn("<th>物料名称</th>", html)
+        self.assertIn("<td><strong>RM-COL</strong></td>", html)   # 编码列
+        self.assertIn("<td>分列测试物料</td>", html)             # 名称列（独立一格）
+        # 编码与名称不再是同一个单元格
+        self.assertNotIn("<td><strong>RM-COL</strong><small>分列测试物料</small></td>", html)
+
+    def test_sales_uninvoiced_page_shows_two_columns(self):
+        # 月末未开票页（表头写「产品」）：产品编码 / 产品名称 两列
+        SalesLedgerLine.objects.create(
+            period=self.period, batch=self.batch, row_no=1,
+            out_month=date(2026, 9, 1),
+            invoice_status=SalesLedgerLine.InvoiceStatus.UNINVOICED,
+            channel="国内销售", company="测试公司", order_no="SO-1",
+            customer_code="C1", customer_name="客户甲",
+            sales_category="其他成品", material=self.material,
+            material_code=self.material.code, material_name=self.material.name,
+            uom="kg", quantity=Decimal("5"), terminal_amount=Decimal("100"),
+        )
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("<th>产品编码</th>", html)
+        self.assertIn("<th>产品名称</th>", html)
+        # 数据行：编码与名称各自独立一格（该页无匹配数据，故按模板结构校验）
+        tpl = (settings.BASE_DIR / "templates" / "settlement"
+               / "sales_uninvoiced.html").read_text(encoding="utf-8")
+        self.assertIn("<td><strong>{{ row.material_code }}</strong></td>"
+                      "<td>{{ row.material_name }}</td>", tpl)
+
+    def test_page_column_count_matches_header(self):
+        # 拆列后不能错位：每行（按 colspan 累加）的列数 = 表头列数
+        self.create_txn(
+            self.period, self.batch,
+            txn_date=date(2026, 9, 10), document_no="IT-002",
+            business_type="采购入库", direction="in", material=self.material,
+            quantity=Decimal("10"),
+        )
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("inventory_ledger", args=[self.period.id])
+        ).content.decode("utf-8")
+        table = html[html.index("<table"):html.index("</table>")]
+        head = table[table.index("<thead"):table.index("</thead>")]
+        head_cols = len(re.findall(r"<th\b", head))
+        for row_html in re.findall(r"<tr\b[^>]*>(.*?)</tr>", table, re.S):
+            if "<th" in row_html:
+                continue
+            cells = re.findall(r"<td\b[^>]*>", row_html)
+            if not cells:
+                continue
+            total = 0
+            for cell in cells:
+                span = re.search(r'colspan="(\d+)"', cell)
+                total += int(span.group(1)) if span else 1
+            self.assertEqual(total, head_cols, "行列表数 %d != 表头 %d" % (total, head_cols))

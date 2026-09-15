@@ -54,19 +54,19 @@
   <div class="section-heading"><h2>总账汇总</h2><span class="pill">按供应商、物料汇总</span></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>供应商</th><th>物料</th><th class="num">核销数量</th><th class="num">暂估金额</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>待确认</th></tr></thead>
+      <thead><tr><th>供应商</th><th>物料编码</th><th>物料名称</th><th class="num">核销数量</th><th class="num">暂估金额</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>待确认</th></tr></thead>
       <tbody>
       {% for item in grouped_rows %}
         <tr>
           <td>{{ item.supplier|default:"—" }}</td>
-          <td><strong>{{ item.material_code }}</strong><small>{{ item.material_name }}</small></td>
+          <td><strong>{{ item.material_code }}</strong></td><td>{{ item.material_name }}</td>
           <td class="num">{{ item.matched_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ item.provisional_amount|floatformat:2|thousands }}</td>
           <td class="num">{{ item.invoice_amount|floatformat:2|thousands }}</td>
           <td class="num"><strong class="{% if item.difference_amount %}difference-text{% endif %}">{{ item.difference_amount|floatformat:2|thousands }}</strong></td>
           <td>{% if item.pending_count %}<span class="pill danger">{{ item.pending_count }}笔</span>{% else %}—{% endif %}</td>
         </tr>
-      {% empty %}<tr><td colspan="7" class="empty-cell">本月没有采购发票核销产生的暂估差异。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="8" class="empty-cell">本月没有采购发票核销产生的暂估差异。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -78,7 +78,7 @@
     <table>
       <thead>
         <tr>
-          <th>发票</th><th>供应商</th><th>物料</th><th>入库月份/单号</th>
+          <th>发票</th><th>供应商</th><th>物料编码</th><th>物料名称</th><th>入库月份/单号</th>
           <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
           <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>期间性质</th><th>状态</th>
         </tr>
@@ -88,7 +88,7 @@
         <tr>
           <td><a class="document-link" href="{% url 'source_document_detail' period.id 'purchase_invoice' row.invoice.id %}"><strong>{{ row.invoice.invoice_no }}</strong><small>{{ row.invoice.invoice_period|date:"Y-m" }}</small></a></td>
           <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
-          <td><strong>{{ row.material_code }}</strong><small>{{ row.material_name }}</small></td>
+          <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
           <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong><small>{% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"—" }}</a>{% else %}{{ row.document_no|default:"—" }} · 期初暂估{% endif %}</small></td>
           <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
@@ -99,7 +99,7 @@
           <td>{% if row.cross_period %}<span class="pill warning">跨期核销</span>{% else %}<span class="pill">本月入库</span>{% endif %}</td>
           <td><span class="pill {% if row.status == '有差异' %}warning{% elif row.status == '待确认暂估价格' %}danger{% else %}success{% endif %}">{{ row.status }}</span></td>
         </tr>
-      {% empty %}<tr><td colspan="12" class="empty-cell">本月没有符合筛选条件的暂估差异。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="13" class="empty-cell">本月没有符合筛选条件的暂估差异。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

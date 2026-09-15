@@ -25,7 +25,7 @@
     <table>
       <thead>
         <tr>
-          <th>工单编号</th><th>成品物料</th><th>项次</th><th>子项物料</th>
+          <th>工单编号</th><th>成品物料编码</th><th>成品物料名称</th><th>项次</th><th>子项物料编码</th><th>子项物料名称</th>
           <th class="num">用量(分子/分母)</th><th class="num">用量</th><th>单位</th>
           <th class="num">子项单价</th><th class="num">标准成品单价</th>
         </tr>
@@ -34,16 +34,16 @@
       {% for line in page %}
         <tr>
           <td><strong>{{ line.work_order_no }}</strong></td>
-          <td><strong>{{ line.material_code }}</strong><small>{{ line.material_name }}</small></td>
+          <td><strong>{{ line.material_code }}</strong></td><td>{{ line.material_name }}</td>
           <td>{{ line.line_no|default:"—" }}</td>
-          <td><strong>{{ line.sub_item_code }}</strong><small>{{ line.sub_item_name }}</small></td>
+          <td><strong>{{ line.sub_item_code }}</strong></td><td>{{ line.sub_item_name }}</td>
           <td class="num">{{ line.qty_numerator|floatformat:4|thousands }} / {{ line.qty_denominator|floatformat:4|thousands }}</td>
           <td class="num">{{ line.qty|floatformat:6|thousands }}</td>
           <td>{{ line.uom|default:"—" }}</td>
           <td class="num">{{ line.unit_price|floatformat:4|thousands|default:"—" }}</td>
           <td class="num">{{ line.standard_price|floatformat:2|thousands|default:"—" }}</td>
         </tr>
-      {% empty %}<tr><td colspan="9" class="empty-cell">本月还没有导入BOM表，请先上传。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="11" class="empty-cell">本月还没有导入BOM表，请先上传。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

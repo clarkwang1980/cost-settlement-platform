@@ -133,7 +133,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>生产工单</th><th>产品</th><th>状态</th>
+        <th>生产工单</th><th>产品编码</th><th>产品名称</th><th>状态</th>
         <th class="num">完工数量</th><th class="num">在制数量</th>
         <th class="num">期初在制</th><th class="num">本期材料</th><th class="num">本期分配费用</th>
         <th class="num">工单总成本</th><th class="num">完工成本</th><th class="num">期末在制</th>
@@ -142,7 +142,7 @@
         {% for item in order_rows %}
         <tr>
           <td><strong>{{ item.order.order_no }}</strong></td>
-          <td><strong>{{ item.order.product_code }}</strong><small>{{ item.order.product_name }}</small></td>
+          <td><strong>{{ item.order.product_code }}</strong></td><td>{{ item.order.product_name }}</td>
           <td>{{ item.order.get_status_display }}</td>
           <td class="num">{{ item.result.finished_quantity|floatformat:2|thousands }}</td>
           <td class="num">{{ item.result.wip_quantity|floatformat:2|thousands }}</td>
@@ -153,7 +153,7 @@
           <td class="num">{% if item.is_calculated %}{{ item.finished_cost|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
           <td class="num">{% if item.is_calculated %}{{ item.ending_wip|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
-        {% empty %}<tr><td colspan="11" class="empty-cell">该车间尚无生产工单。</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="12" class="empty-cell">该车间尚无生产工单。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

@@ -43,7 +43,7 @@
       <thead>
         <tr>
           <th>单据号</th><th>业务日期</th><th>业务类型</th><th>方向</th><th>仓库</th>
-          <th>物料</th><th class="num">数量</th><th>单位</th><th>供应商/客户</th>
+          <th>物料编码</th><th>物料名称</th><th class="num">数量</th><th>单位</th><th>供应商/客户</th>
           <th class="num">单价</th><th class="num">金额</th><th>来源批次</th><th>操作</th>
         </tr>
       </thead>
@@ -55,7 +55,7 @@
           <td>{{ txn.business_type }}</td>
           <td>{{ txn.get_direction_display }}</td>
           <td>{{ txn.warehouse|default:"—" }}</td>
-          <td><strong>{{ txn.material_code }}</strong><small>{{ txn.material_name }}</small></td>
+          <td><strong>{{ txn.material_code }}</strong></td><td>{{ txn.material_name }}</td>
           <td class="num">{{ txn.quantity|floatformat:3|thousands }}</td>
           <td>{{ txn.uom|default:"—" }}</td>
           <td>{{ txn.supplier_name|default:txn.customer_name|default:txn.supplier_code|default:txn.customer_code|default:"—" }}</td>
@@ -64,7 +64,7 @@
           <td><span class="pill">{{ txn.batch.get_kind_display }}</span><small>{{ txn.batch.original_name }}</small></td>
           <td><a class="mini-button" href="{% url 'inventory_match_detail' period.id txn.id %}">打开</a></td>
         </tr>
-      {% empty %}<tr><td colspan="13" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="14" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
