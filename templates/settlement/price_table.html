@@ -35,6 +35,13 @@
     </div>
   </form>
 </section>
+<style>
+  /* 两行表头（期间分组 + 入库/出库）：第一行贴顶、第二行贴在其下方，滚动时不盖住彼此 */
+  .price-table thead th { position: sticky; top: 0; z-index: 3; background: #f2f5f6; }
+  .price-table thead tr:first-child th { top: 0; height: 28px; padding: 6px 10px; }
+  .price-table thead tr:nth-child(2) th { top: 30px; }
+  .price-table thead th[rowspan] { vertical-align: top; }
+</style>
 <section class="section-card">
   <div class="section-heading">
     <div>
@@ -42,7 +49,7 @@
       <h2>共 {{ rows|length }} 个物料 · {{ periods|length }} 个期间</h2>
     </div>
   </div>
-  <div class="table-wrap"><table>
+  <div class="table-wrap"><table class="price-table">
     <thead>
       <tr>
         <th rowspan="2">类别</th>

@@ -3665,3 +3665,116 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             ).admin_expense,
             Decimal("100.00"),
         )
+
+
+class TableScrollContainerTests(SettlementFixtureMixin, TestCase):
+    """各页面业务板块：超出一屏的表格统一放进可滚动容器。
+
+    口径（用户 2026-09-15 要求）：其他页面的业务板块超出一个屏幕的也加滚动条。
+    实现：`.table-wrap` / `.table-scroll` 统一为滚动容器（横竖滚动 + 滚动时表头固定），
+    分页控件留在容器外，保证始终可见；两行表头的表单独给出错位 top 偏移。
+    """
+
+    #: 用统一样式的页面（表格容器 = table-wrap / table-scroll）
+    WRAPPED_PAGES = (
+        "inventory_ledger", "inventory_matches", "inventory_results",
+        "purchase_contracts", "purchase_matches", "purchase_summary",
+        "purchase_accruals", "purchase_differences",
+        "sales_matches", "sales_uninvoiced", "reconciliation",
+        "import_batches", "work_order_costs", "work_order_matches",
+        "work_order_report", "work_order_imports", "work_report_imports",
+        "material_issue_imports", "bom_imports", "order_completion_report",
+        "order_material_report", "price_table", "total_cost",
+        "workshop_settlements", "production_cost_summary",
+    )
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="scroll-user", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 8, 1))
+        self.client.force_login(self.user)
+
+    def _html(self, url_name, *args):
+        resp = self.client.get(reverse(url_name, args=list(args) or [self.period.id]))
+        self.assertEqual(resp.status_code, 200, url_name)
+        return resp.content.decode("utf-8")
+
+    def test_every_page_wraps_tables_in_scroll_container(self):
+        # 每张表都要在 table-wrap / table-scroll 里（否则不会出现滚动条）
+        for name in self.WRAPPED_PAGES:
+            html = self._html(name)
+            if "<table" not in html:
+                continue
+            wraps = html.count('class="table-wrap"') + html.count('class="table-scroll')
+            tables = html.count("<table")
+            self.assertGreaterEqual(wraps, tables, "%s: 有表格没进滚动容器" % name)
+
+    def test_no_inline_horizontal_overflow_left(self):
+        # 统一交给样式表，模板里不再留内联的横向滚动
+        for name in ("total_cost", "profit_statement", "price_table"):
+            self.assertNotIn('style="overflow-x:auto;"', self._html(name), name)
+
+    def test_shared_scroll_styles_cover_both_wrappers(self):
+        css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+        block = re.search(r"\.table-wrap,\s*\.table-scroll\s*\{([^}]*)\}", css)
+        self.assertIsNotNone(block, "缺少 .table-wrap/.table-scroll 统一规则")
+        body = block.group(1)
+        self.assertIn("max-height", body)      # 高度上限 → 纵向滚动条
+        self.assertIn("overflow: auto", body)  # 横竖都能滚
+        self.assertIn("border-radius", body)
+        # 滚动时表头固定
+        head = re.search(r"\.table-wrap thead th,\s*\.table-scroll thead th\s*\{([^}]*)\}", css)
+        self.assertIsNotNone(head, "缺少表头 sticky 规则")
+        self.assertIn("position: sticky", head.group(1))
+        self.assertIn("top: 0", head.group(1))
+        # 长列表（期间详情「最近导入」）也要能在卡片内滚动
+        self.assertRegex(css, r"\.compact-list\s*\{[^}]*max-height[^}]*overflow: auto")
+
+    def test_price_table_two_row_header_offsets(self):
+        # 单价表：两行表头，第一行贴顶、第二行贴在其下（28px），不互相盖住
+        html = self._html("price_table")
+        self.assertIn('class="price-table"', html)
+        self.assertIn(".price-table thead tr:first-child th { top: 0;", html)
+        self.assertIn(".price-table thead tr:nth-child(2) th { top: 30px; }", html)
+        self.assertIn('class="table-wrap"', html)
+
+    def test_total_cost_two_row_header_offsets(self):
+        # 总成本表：同样是两行表头，第二行贴在第一行（30px）下方
+        html = self._html("total_cost")
+        self.assertIn('class="table-scroll"', html)
+        self.assertIn(".total-cost-table thead tr:nth-child(2) th { top: 30px; }", html)
+        self.assertIn(".total-cost-table thead th[rowspan] { vertical-align: top; }", html)
+
+    def test_pagination_stays_outside_scroll_container(self):
+        # 分页控件在滚动容器之外 → 表格在容器内滚动时，翻页按钮始终可见
+        # （分页只在多于一页时渲染，所以按模板结构校验）
+        tpl_dir = settings.BASE_DIR / "templates" / "settlement"
+        checked = 0
+        for path in sorted(tpl_dir.glob("*.html")):
+            text_ = path.read_text(encoding="utf-8")
+            if "_pagination.html" not in text_:
+                continue
+            before = text_[: text_.index("_pagination.html")]
+            open_idx = before.rfind('<div class="table-wrap"')
+            if open_idx < 0:
+                continue
+            self.assertGreater(
+                before.rfind("</div>"), open_idx,
+                "%s: 分页被包进滚动容器里了" % path.name,
+            )
+            checked += 1
+        self.assertGreaterEqual(checked, 10)  # 至少覆盖十个带分页的列表页
+
+    def test_profit_expense_table_uses_shared_container(self):
+        # 按月费用录入的表也用统一样式（空数据下该表不渲染，故按模板结构校验）
+        path = settings.BASE_DIR / "templates" / "settlement" / "profit_statement.html"
+        tpl = path.read_text(encoding="utf-8")
+        self.assertIn('<div class="table-scroll">', tpl)
+        self.assertNotIn("overflow-x:auto", tpl)
+        # 页面上确实存在统一容器（汇总表 / 逐行损益，都带额外定位类）
+        html = self._html("profit_statement")
+        self.assertIn('class="table-scroll', html)
+        self.assertNotIn('style="overflow-x:auto;"', html)

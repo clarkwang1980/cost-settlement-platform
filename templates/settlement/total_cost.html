@@ -30,7 +30,7 @@
 {% endif %}
 
 <section class="section-card">
-  <div class="table-scroll" style="overflow-x:auto;">
+  <div class="table-scroll">
     <table class="data-table total-cost-table">
       <thead>
         <tr>
@@ -99,5 +99,10 @@
   .total-cost-table .total-col { background: #fdf0e6; font-weight: 600; }
   .total-cost-table tr.total-row td { background: #fdf0e6; font-weight: 600; }
   .total-cost-table .subject-cell { text-align: left; font-weight: 500; }
+  /* 两行表头：第一行贴顶、第二行贴在第一行下方（避免两行都贴顶互相盖住） */
+  .total-cost-table thead th { position: sticky; top: 0; z-index: 3; }
+  .total-cost-table thead tr:first-child th { top: 0; height: 30px; }
+  .total-cost-table thead tr:nth-child(2) th { top: 30px; }
+  .total-cost-table thead th[rowspan] { vertical-align: top; }
 </style>
 {% endblock %}
