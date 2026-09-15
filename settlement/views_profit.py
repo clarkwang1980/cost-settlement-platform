@@ -5,7 +5,8 @@
 - 按月费用录入：台账里出现过的每个出库月份一块，各录一套当月费用；
 - 损益汇总表（一张表）：期间 × 销售渠道 × 销售大类，可按口径（出库/开票）、期间、销售渠道、销售大类筛选；
   打开页面默认只看当月（当前期间所属月份），可点「显示全部」或另勾期间；
-- 明细：销售台账逐行；
+- 损益明细表：销售台账逐行，默认只看当月，可按 出库期间 / 开票期间（从…到…）/
+  客户名称 / 销售大类 / 产品编码 筛选，行数与合计跟随筛选；
 - 导出 Excel：明细 + 两张汇总。
 """
 from decimal import Decimal, InvalidOperation
@@ -23,13 +24,17 @@ from settlement.services.exports import build_listing_workbook
 from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     BASIS_CHOICES,
+    BASIS_INVOICE,
     BASIS_OUT,
     build_profit_statement,
     build_profit_statement_sheet,
     build_summary,
+    detail_month_options,
+    filter_detail_rows,
     filter_summary_rows,
     ledger_months,
     month_label,
+    row_totals,
     UNINVOICED_LABEL,
     summary_category_options,
     summary_channel_options,
@@ -41,6 +46,24 @@ BASIS_VALUES = tuple(value for value, _label in BASIS_CHOICES)
 
 #: 筛选表单 / 「显示全部」提交时带的标记：把「刚打开页面」和「主动筛选（哪怕一个都没勾）」区分开
 FILTER_MARKER = "f"
+
+#: 损益明细表的筛选参数名（与汇总表的 m/ch/cat 区分开）
+#: DETAIL_MARKER = 明细筛选被主动动过的标记（「清空筛选」后翻页不会重新套用默认当月）
+DETAIL_MARKER = "df"
+DETAIL_MONTH_PARAM = "dm"
+DETAIL_INVOICE_FROM_PARAM = "ifrom"
+DETAIL_INVOICE_TO_PARAM = "ito"
+DETAIL_CUSTOMER_PARAM = "cust"
+DETAIL_CATEGORY_PARAM = "dcat"
+DETAIL_CODE_PARAM = "dcode"
+DETAIL_PARAMS = (
+    DETAIL_MONTH_PARAM,
+    DETAIL_INVOICE_FROM_PARAM,
+    DETAIL_INVOICE_TO_PARAM,
+    DETAIL_CUSTOMER_PARAM,
+    DETAIL_CATEGORY_PARAM,
+    DETAIL_CODE_PARAM,
+)
 
 
 def _parse_amount(raw, label):
@@ -95,13 +118,28 @@ def _selection_query(basis, periods, channels, categories):
 
 
 def _filter_query(request):
-    """当前筛选（口径 + 期间 + 销售渠道 + 销售大类）拼成跳转用的查询串。"""
-    return _selection_query(
+    """当前筛选（口径 + 期间 + 销售渠道 + 销售大类 + 明细表筛选）拼成跳转用的查询串。
+
+    保存「按月费用录入」后跳回本页时要带上明细表的筛选条件，否则刚设的筛选会被重置。
+    """
+    query = _selection_query(
         request.GET.get("basis") or "",
         request.GET.getlist("m"),
         request.GET.getlist("ch"),
         request.GET.getlist("cat"),
     )
+    detail_pairs = [(DETAIL_MARKER, request.GET.get(DETAIL_MARKER) or "")]
+    detail_pairs += [
+        (key, request.GET.get(key) or "")
+        for key in DETAIL_PARAMS
+        if key != DETAIL_CATEGORY_PARAM
+    ]
+    detail_pairs += [
+        (DETAIL_CATEGORY_PARAM, value)
+        for value in request.GET.getlist(DETAIL_CATEGORY_PARAM)
+    ]
+    detail_query = urlencode([pair for pair in detail_pairs if pair[1]])
+    return "&".join(part for part in (query, detail_query) if part)
 
 
 def _has_explicit_filter(request) -> bool:
@@ -126,6 +164,74 @@ def _default_period_selection(period_options, period) -> list:
         return [current]
     months = [value for value in values if value != UNINVOICED_LABEL]
     return [months[-1]] if months else [values[-1]]
+
+
+def _default_detail_month(month_options, period) -> str:
+    """明细表默认出库期间：优先「当前期间所属月份」，台账里没有该月份时取最近有数据的月份。"""
+    if not month_options:
+        return ""
+    values = [item["value"] for item in month_options]
+    current = month_label(period.month)
+    return current if current in values else values[-1]
+
+
+def _detail_filter(request, data, period) -> dict:
+    """解析损益明细表的筛选条件（非法值忽略；未动过筛选时默认当月）。"""
+    month_options = detail_month_options(data["rows"])
+    invoice_options = summary_period_options(data["rows"], BASIS_INVOICE)
+    category_options = summary_category_options(data["rows"])
+
+    month_values = [item["value"] for item in month_options]
+    invoice_values = [item["value"] for item in invoice_options]
+
+    month = (request.GET.get(DETAIL_MONTH_PARAM) or "").strip()
+    if month not in month_values:
+        month = ""
+    invoice_from = (request.GET.get(DETAIL_INVOICE_FROM_PARAM) or "").strip()
+    invoice_to = (request.GET.get(DETAIL_INVOICE_TO_PARAM) or "").strip()
+    if invoice_from not in invoice_values:
+        invoice_from = ""
+    if invoice_to not in invoice_values:
+        invoice_to = ""
+    if invoice_from and invoice_to:
+        order = {value: index for index, value in enumerate(invoice_values)}
+        if order[invoice_from] > order[invoice_to]:      # 起止填反了自动对调
+            invoice_from, invoice_to = invoice_to, invoice_from
+    customer = (request.GET.get(DETAIL_CUSTOMER_PARAM) or "").strip()
+    code = (request.GET.get(DETAIL_CODE_PARAM) or "").strip()
+    categories = _normalise_selection(
+        category_options, request.GET.getlist(DETAIL_CATEGORY_PARAM)
+    )
+
+    explicit = DETAIL_MARKER in request.GET or any(
+        key in request.GET for key in DETAIL_PARAMS
+    )
+    default_applied = False
+    if not explicit:
+        month = _default_detail_month(month_options, period)
+        default_applied = bool(month)
+
+    rows = filter_detail_rows(
+        data["rows"], month=month, invoice_from=invoice_from, invoice_to=invoice_to,
+        customer=customer, categories=categories, code=code,
+    )
+    return {
+        "rows": rows,
+        "row_count": len(rows),
+        "totals": row_totals(rows),
+        "month": month,
+        "month_options": month_options,
+        "invoice_from": invoice_from,
+        "invoice_to": invoice_to,
+        "invoice_options": invoice_options,
+        "customer": customer,
+        "categories": categories,
+        "category_options": category_options,
+        "code": code,
+        "default_applied": default_applied,
+        "has_filter": bool(month or invoice_from or invoice_to or customer
+                           or categories or code),
+    }
 
 
 @login_required
@@ -201,10 +307,37 @@ def profit_statement_view(request, period_id):
         for value, label in BASIS_CHOICES
     ]
 
-    page = Paginator(data["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
-    query = request.GET.copy()
-    query.pop("page", None)
-    page.querystring = query.urlencode()
+    # 损益明细表：自己的筛选（出库期间默认当月 / 开票期间区间 / 客户名称 / 销售大类 / 产品编码）
+    detail = _detail_filter(request, data, period)
+
+    # 当前筛选解析成「显式参数」：分页链接与两个表单都带上，
+    # 这样翻页、或在两张表之间切换筛选时，都不会把另一张表的条件弄丢。
+    summary_params = (
+        [("basis", basis), (FILTER_MARKER, "1")]
+        + [("m", value) for value in selected_periods]
+        + [("ch", value) for value in selected_channels]
+        + [("cat", value) for value in selected_categories]
+    )
+    detail_params = (
+        [(DETAIL_MARKER, "1")]
+        + [(DETAIL_MONTH_PARAM, detail["month"])]
+        + [(DETAIL_INVOICE_FROM_PARAM, detail["invoice_from"])]
+        + [(DETAIL_INVOICE_TO_PARAM, detail["invoice_to"])]
+        + [(DETAIL_CUSTOMER_PARAM, detail["customer"])]
+        + [(DETAIL_CODE_PARAM, detail["code"])]
+        + [(DETAIL_CATEGORY_PARAM, value) for value in detail["categories"]]
+    )
+    # 「清空筛选」：保留汇总条件，明细条件全部留空（出库期间也放开 = 看全部月份）
+    detail_clear_query = urlencode(
+        summary_params + [(DETAIL_MARKER, "1")] + [(key, "") for key in DETAIL_PARAMS]
+    )
+    detail_hidden_inputs = summary_params
+    summary_hidden_inputs = detail_params
+
+    page = Paginator(detail["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
+    page.querystring = urlencode(
+        [pair for pair in (summary_params + detail_params) if pair[1] != ""]
+    )
 
     return render(
         request,
@@ -214,6 +347,11 @@ def profit_statement_view(request, period_id):
             "data": data,
             "summary": summary,
             "period_options": period_options,
+            "detail": detail,
+            "detail_page": page,
+            "detail_clear_query": detail_clear_query,
+            "detail_hidden_inputs": detail_hidden_inputs,
+            "summary_hidden_inputs": summary_hidden_inputs,
             "channel_options": channel_options,
             "category_options": category_options,
             "selected_periods": selected_periods,

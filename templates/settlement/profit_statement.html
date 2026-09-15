@@ -128,6 +128,7 @@
   <form method="get" class="filter-grid" style="align-items:end;gap:8px;flex-wrap:wrap;">
     <input type="hidden" name="basis" value="{{ basis }}">
     <input type="hidden" name="f" value="1">
+    {% for key, value in summary_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
     <div class="filter-field">
       <span>期间</span>
       <details class="multi-select">
@@ -219,10 +220,72 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">BY ORDER LINE</p>
-      <h2>损益明细表（共 {{ data.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
+      <h2>损益明细表（共 {{ detail.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        台账合计 {{ data.row_count }} 行；当前筛选 {{ detail.row_count }} 行{% if detail.default_applied %}（打开页面默认只看当月 {{ detail.month }}）{% endif %}，下方筛选只看这张表，不影响上面的损益汇总表。
+      </p>
     </div>
-    <span class="pill">合计行按全月计算</span>
+    <span class="pill">合计行按当前筛选计算</span>
   </div>
+
+  <form method="get" class="filter-grid" style="align-items:end;gap:8px;flex-wrap:wrap;">
+    {% for key, value in detail_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+    <div class="filter-field">
+      <span>出库期间</span>
+      <select name="dm">
+        <option value="">全部</option>
+        {% for item in detail.month_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.month %} selected{% endif %}>{{ item.label }}（{{ item.row_count }} 行）</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <span>开票期间（从）</span>
+      <select name="ifrom">
+        <option value="">不限</option>
+        {% for item in detail.invoice_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.invoice_from %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <span>开票期间（到）</span>
+      <select name="ito">
+        <option value="">不限</option>
+        {% for item in detail.invoice_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.invoice_to %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <span>客户名称</span>
+      <input name="cust" value="{{ detail.customer }}" placeholder="包含关键字即可">
+    </div>
+    <div class="filter-field">
+      <span>销售大类</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if detail.categories %}{% if detail.categories|length > 2 %}已选 {{ detail.categories|length }} 项{% else %}{{ detail.categories|join:"、" }}{% endif %}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in detail.category_options %}
+          <label><input type="checkbox" name="dcat" value="{{ item.value }}"{% if item.value in detail.categories %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-field">
+      <span>产品编码</span>
+      <input name="dcode" value="{{ detail.code }}" placeholder="包含关键字即可">
+    </div>
+    <button class="button primary" type="submit">确定</button>
+    {% if detail.has_filter %}
+    <a class="button secondary" href="?{{ detail_clear_query }}">清空筛选（看全部月份）</a>
+    {% endif %}
+  </form>
+  <p class="muted-text" style="margin-top:8px;">
+    不填 = 不限制；「开票期间」填了真实月份时不含未开票行，要看未开票请把「(未开票)」选进区间；起止填反了会自动对调；客户名称 / 产品编码按「包含」匹配（忽略大小写）。
+    点「清空筛选」= 出库期间也放开，看全部 {{ data.row_count }} 行。
+  </p>
+
   <div class="table-scroll profit-table-wrap">
     <table class="data-table profit-table">
       <thead>
@@ -267,31 +330,31 @@
           <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="32">本期还没有销售台账，请先在「资料导入」上传销售台账（出库+开票）。</td></tr>
+        <tr><td colspan="32">当前筛选条件下没有数据：本期还没有销售台账，或请调整「出库期间 / 开票期间 / 客户名称 / 销售大类 / 产品编码」。</td></tr>
         {% endfor %}
         {% if page.object_list %}
         <tr class="total-row" style="font-weight:600;background:#f2f7fd;">
-          <td colspan="12">合计（全部月份）</td>
-          <td style="text-align:right;">{{ data.totals.revenue|thousands }}</td>
+          <td colspan="12">合计（{% if detail.has_filter %}当前筛选{% else %}全部台账{% endif %}）</td>
+          <td style="text-align:right;">{{ detail.totals.revenue|thousands }}</td>
           <td style="text-align:right;">—</td>
-          <td style="text-align:right;">{{ data.totals.lb_amount|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.lb_amount|thousands }}</td>
           <td style="text-align:right;">—</td>
-          <td style="text-align:right;">{{ data.totals.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.quantity|floatformat:3|thousands }}</td>
           <td style="text-align:right;">—</td>
-          <td style="text-align:right;">{{ data.totals.cost|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.gross|thousands }}</td>
-          <td style="text-align:right;">{% if data.totals.gross_margin is None %}—{% else %}{{ data.totals.gross_margin|floatformat:2 }}%{% endif %}</td>
-          <td style="text-align:right;">{{ data.totals.tax_surcharge|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.admin_expense|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.selling_expense|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.finance_expense|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.operating_profit|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.non_operating_income|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.non_operating_expense|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.total_profit|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.income_tax|thousands }}</td>
-          <td style="text-align:right;">{{ data.totals.net_profit|thousands }}</td>
-          <td style="text-align:right;">{% if data.totals.net_margin is None %}—{% else %}{{ data.totals.net_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ detail.totals.cost|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.gross|thousands }}</td>
+          <td style="text-align:right;">{% if detail.totals.gross_margin is None %}—{% else %}{{ detail.totals.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ detail.totals.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if detail.totals.net_margin is None %}—{% else %}{{ detail.totals.net_margin|floatformat:2 }}%{% endif %}</td>
         </tr>
         {% endif %}
       </tbody>
@@ -312,6 +375,7 @@
     <li>汇总可切换【按出库期间】/【按开票期间】：只改分组口径，每行的金额不变；未开票的行在开票期间视图里归入「(未开票)」。</li>
     <li>损益汇总表只有一张（期间 × 销售渠道 × 销售大类）：可按 期间 / 销售渠道 / 销售大类 勾选筛选，小计与合计按筛选条件重算；末行「合计」= 当前筛选条件合计。打开页面默认只看当月（当前期间所属月份），点「显示全部」看全部期间。</li>
     <li>销售渠道直接取台账「销售渠道」列（国内销售 / 国外销售，由你的台账按终端客户口径给出）；该列留空的行归入「未分类」。</li>
+    <li>损益明细表默认只看当月（当前期间所属出库月份），可按 出库期间 / 开票期间（从…到…，含「未开票」）/ 客户名称 / 销售大类 / 产品编码 筛选；行数与合计行都按当前筛选计算，这张表的筛选不影响上面的损益汇总表。</li>
     <li>销售大类取台账「销售大类」；带明细括注的（如 手套、袜子、服装、床垫 等）按主体归类显示——台账写「其他成品（手套、服装、床垫等）」，页面与导出统一显示「其他成品」。</li>
     <li>汇总表列名「期间」随口径变化：按出库期间显示出库月份，按开票期间显示开票月份（未开票归「(未开票)」）。</li>
     <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>

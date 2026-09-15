@@ -66,6 +66,9 @@ from settlement.services.profit_statement import (
     HEADERS,
     build_category_summary,
     category_label,
+    detail_month_options,
+    filter_detail_rows,
+    row_totals,
     build_profit_statement,
     build_summary,
     summary_category_options,
@@ -4058,5 +4061,252 @@ class RowHeightTests(SettlementFixtureMixin, TestCase):
         self.assertIn("height: 25pt", (
             settings.BASE_DIR / "static" / "settlement" / "app.css"
         ).read_text(encoding="utf-8"))
-        # 页面用的还是同一个样式表（缓存版本号已更新）
-        self.assertRegex(html, r"v=20260915-row-25pt")
+        # 页面引用的样式表版本号必须和 base.html 里一致（避免改了样式却没换版本号，
+        # 浏览器继续吃旧缓存）
+        base_tpl = (settings.BASE_DIR / "templates" / "base.html").read_text(
+            encoding="utf-8"
+        )
+        version = re.search(r"app\.css' %\}\?v=([\w\-]+)", base_tpl).group(1)
+        self.assertIn("v=" + version, html)
+
+
+class ProfitDetailFilterTests(SettlementFixtureMixin, TestCase):
+    """损益明细表筛选：默认当月 + 出库期间 / 开票期间区间 / 客户名称 / 销售大类 / 产品编码。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="detail-filter-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "df")
+        self.june = date(2026, 6, 1)
+        # 4 行：6 月两行、7 月两行；客户/大类/编码各不相同，便于逐项筛选
+        self.line1 = self._line(1, out_month=self.june, invoice_month=self.june,
+                                customer="客户甲", category="纱线", code="11.01",
+                                revenue=Decimal("100"), cost=Decimal("60"))
+        self.line2 = self._line(2, out_month=self.june, invoice_month=self.period.month,
+                                customer="客户乙", category="面料", code="11.02",
+                                revenue=Decimal("200"), cost=Decimal("120"))
+        self.line3 = self._line(3, invoice_month=None, customer="客户甲", category="纤维",
+                                code="21.01", revenue=Decimal("300"), cost=Decimal("180"))
+        self.line4 = self._line(4, invoice_month=self.period.month, customer="客户甲",
+                                category="纱线", code="11.01",
+                                revenue=Decimal("400"), cost=Decimal("240"))
+
+    def _line(self, row_no, *, out_month=None, invoice_month=None, customer="客户",
+              category="纱线", code="11.01", revenue=Decimal("0"), cost=Decimal("0")):
+        line = SalesLedgerLine.objects.create(
+            period=self.period,
+            batch=self.batch,
+            row_no=row_no,
+            out_month=out_month or self.period.month,
+            invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
+            invoice_month=invoice_month,
+            channel="国内销售",
+            company="测试公司",
+            order_no=f"SO-{row_no}",
+            customer_code=f"C{row_no}",
+            customer_name=customer,
+            sales_category=category,
+            material_code=code,
+            material_name=f"产品{row_no}",
+            uom="kg",
+            quantity=Decimal("10"),
+            terminal_amount=revenue,
+            cost_amount=cost,
+        )
+        return line
+
+    def _detail(self, url, qs=""):
+        self.client.force_login(self.user)
+        response = self.client.get(url + qs)
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    # ── 默认当月 ────────────────────────────────────────────────────────
+
+    def test_defaults_to_current_month(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        response = self._detail(url)
+        detail = response.context["detail"]
+        self.assertTrue(detail["default_applied"])
+        self.assertEqual(detail["month"], "2026-07")
+        self.assertEqual(detail["row_count"], 2)          # 只有 7 月两行
+        self.assertEqual([r["seq"] for r in detail["rows"]], [3, 4])
+        self.assertEqual(response.context["data"]["row_count"], 4)   # 台账全部 4 行
+        html = response.content.decode("utf-8")
+        self.assertIn("<h2>损益明细表（共 2 行，本页 2 行）</h2>", html)
+        self.assertIn("台账合计 4 行", html)
+        # 筛选控件都在
+        for name in ('name="dm"', 'name="ifrom"', 'name="ito"', 'name="cust"',
+                     'name="dcat"', 'name="dcode"'):
+            self.assertIn(name, html)
+
+    def test_month_filter_lists_every_month(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        options = self._detail(url).context["detail"]["month_options"]
+        self.assertEqual([item["value"] for item in options], ["2026-06", "2026-07"])
+        self.assertEqual([item["row_count"] for item in options], [2, 2])
+        # 指定 6 月
+        response = self._detail(url, "?df=1&dm=2026-06")
+        self.assertEqual([r["seq"] for r in response.context["detail"]["rows"]], [1, 2])
+
+    def test_clear_filter_shows_all_months(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        response = self._detail(url, "?df=1&dm=&ifrom=&ito=&cust=&dcat=&dcode=")
+        detail = response.context["detail"]
+        self.assertEqual(detail["row_count"], 4)
+        self.assertEqual(detail["month"], "")
+        self.assertFalse(detail["has_filter"])
+
+    # ── 开票期间区间 ────────────────────────────────────────────────────
+
+    def test_invoice_month_range(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        # 只看 6 月开票
+        r = self._detail(url, "?df=1&dm=&ifrom=2026-06&ito=2026-06")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1])
+        # 6 月到 7 月
+        r = self._detail(url, "?df=1&dm=&ifrom=2026-06&ito=2026-07")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1, 2, 4])
+        # 只填「从」= 该月及以后；只填「到」= 该月及以前
+        r = self._detail(url, "?df=1&dm=&ifrom=2026-07")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [2, 4])
+        r = self._detail(url, "?df=1&dm=&ito=2026-06")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1])
+
+    def test_invoice_range_includes_uninvoiced_and_swaps_bounds(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        response = self._detail(url, "?df=1&dm=&ifrom=2026-07&ito=2026-06")
+        detail = response.context["detail"]
+        self.assertEqual((detail["invoice_from"], detail["invoice_to"]),
+                         ("2026-06", "2026-07"))          # 起止填反自动对调
+        self.assertEqual([x["seq"] for x in detail["rows"]], [1, 2, 4])
+        # 「(未开票)」可被选中，且排在最后
+        uninvoiced = "(\u672a\u5f00\u7968)"
+        self.assertEqual(
+            [item["value"] for item in detail["invoice_options"]][-1], uninvoiced
+        )
+        r = self._detail(url, "?df=1&dm=&ifrom=%28%E6%9C%AA%E5%BC%80%E7%A5%A8%29"
+                              "&ito=%28%E6%9C%AA%E5%BC%80%E7%A5%A8%29")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [3])
+
+    # ── 客户名称 / 销售大类 / 产品编码 ──────────────────────────────────
+
+    def test_customer_name_filter(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=&cust=%E5%AE%A2%E6%88%B7%E7%94%B2")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1, 3, 4])
+        # 空结果
+        r = self._detail(url, "?df=1&dm=&cust=ZZZ")
+        self.assertEqual(r.context["detail"]["row_count"], 0)
+
+    def test_category_filter_multi(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=&dcat=%E7%BA%B1%E7%BA%BF")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1, 4])
+        r = self._detail(url, "?df=1&dm=&dcat=%E7%BA%B1%E7%BA%BF&dcat=%E7%BA%A4%E7%BB%B4")
+        self.assertEqual(r.context["detail"]["categories"], ["纱线", "纤维"])
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1, 3, 4])
+
+    def test_product_code_filter(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=&dcode=11.0")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [1, 2, 4])
+        r = self._detail(url, "?df=1&dm=&dcode=21")
+        self.assertEqual([x["seq"] for x in r.context["detail"]["rows"]], [3])
+
+    def test_invalid_values_ignored(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=2000-01&ifrom=xx&ito=yy&dcat=不存在")
+        detail = r.context["detail"]
+        self.assertEqual(detail["month"], "")
+        self.assertEqual(detail["invoice_from"], "")
+        self.assertEqual(detail["categories"], [])
+        self.assertEqual(detail["row_count"], 4)
+
+    # ── 组合 / 合计 / 与汇总互不影响 ────────────────────────────────────
+
+    def test_combined_filters_and_totals_follow(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=2026-07&dcat=%E7%BA%B1%E7%BA%BF&dcode=11")
+        detail = r.context["detail"]
+        self.assertEqual([x["seq"] for x in detail["rows"]], [4])
+        self.assertEqual(detail["totals"]["revenue"], Decimal("400.00"))
+        html = r.content.decode("utf-8")
+        self.assertIn("合计（当前筛选）", html)
+        # 合计随筛选变化：当月两行 vs 全部四行
+        all_rows = self._detail(url, "?df=1&dm=")
+        self.assertEqual(all_rows.context["detail"]["totals"]["revenue"], Decimal("1000.00"))
+
+    def test_detail_filter_does_not_change_summary(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        before = self._detail(url, "?basis=out&f=1&m=2026-07")
+        after = self._detail(url, "?basis=out&f=1&m=2026-07&df=1&dm=2026-06&cust=X")
+        self.assertEqual(
+            before.context["summary"]["grand_total"]["revenue"],
+            after.context["summary"]["grand_total"]["revenue"],
+        )
+        self.assertEqual(after.context["detail"]["row_count"], 0)   # 明细被筛掉了
+        # 明细筛选不影响汇总表的期间行
+        self.assertEqual(
+            [row["month"] for row in after.context["summary"]["rows"]
+             if row["level"] == "month"], ["2026-07"],
+        )
+
+    def test_summary_filter_does_not_change_detail_default(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?basis=out&f=1&m=2026-06")
+        # 汇总看 6 月，明细仍按自己的默认（当月 7 月）
+        self.assertEqual(r.context["selected_periods"], ["2026-06"])
+        self.assertEqual(r.context["detail"]["month"], "2026-07")
+
+    def test_pagination_keeps_filters(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        r = self._detail(url, "?df=1&dm=2026-06&dcode=11")
+        querystring = r.context["page"].querystring
+        self.assertIn("dm=2026-06", querystring)
+        self.assertIn("dcode=11", querystring)
+        self.assertIn("df=1", querystring)
+        # 清空筛选的链接把明细条件都留空（= 看全部月份）
+        clear = r.context["detail_clear_query"]
+        for key in ("dm=", "ifrom=", "ito=", "cust=", "dcat=", "dcode="):
+            self.assertIn(key, clear)
+        self.assertIn("df=1", clear)
+        r2 = self._detail(url, "?" + clear)
+        self.assertEqual(r2.context["detail"]["row_count"], 4)
+
+    def test_saving_expenses_keeps_detail_filters(self):
+        url = reverse("profit_statement", args=[self.period.id])
+        self.client.force_login(self.user)
+        response = self.client.post(
+            url + "?basis=out&df=1&dm=2026-06&cust=%E5%AE%A2%E6%88%B7%E7%94%B2",
+            {"exp_2026-07_admin_expense": "0"},
+        )
+        location = response["Location"]
+        self.assertIn("dm=2026-06", location)
+        self.assertIn("cust=", location)
+        self.assertIn("df=1", location)
+
+    # ── 服务层函数 ──────────────────────────────────────────────────────
+
+    def test_service_helpers(self):
+        data = build_profit_statement(self.period)
+        rows = data["rows"]
+        options = detail_month_options(rows)
+        self.assertEqual([item["value"] for item in options], ["2026-06", "2026-07"])
+        self.assertEqual(options[0]["row_count"], 2)
+
+        kept = filter_detail_rows(rows, month="2026-07")
+        self.assertEqual(len(kept), 2)
+        kept = filter_detail_rows(rows, customer="客户甲", categories=["纱线"])
+        self.assertEqual([r["seq"] for r in kept], [1, 4])
+        kept = filter_detail_rows(rows, code="21")
+        self.assertEqual([r["seq"] for r in kept], [3])
+        kept = filter_detail_rows(rows, invoice_from="2026-06", invoice_to="2026-06")
+        self.assertEqual([r["seq"] for r in kept], [1])
+        # 空条件 = 不筛
+        self.assertEqual(len(filter_detail_rows(rows)), 4)
+        # 合计
+        totals = row_totals(kept)
+        self.assertEqual(totals["revenue"], Decimal("100.00"))

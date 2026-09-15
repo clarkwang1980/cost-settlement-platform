@@ -662,6 +662,71 @@ def filter_summary_rows(rows, basis: str = BASIS_OUT, periods=None, channels=Non
     return kept
 
 
+def detail_month_options(rows) -> list:
+    """「出库期间」筛选选项（损益明细表用，按月份升序）。
+
+    每项：{value, label, row_count, revenue}。
+    """
+    stats = defaultdict(lambda: {"row_count": 0, "revenue": ZERO})
+    for row in rows:
+        item = stats[row["month_out_key"]]
+        item["row_count"] += 1
+        item["revenue"] += row["revenue"]
+    return [
+        {
+            "value": label,
+            "label": label,
+            "row_count": stats[label]["row_count"],
+            "revenue": _q(stats[label]["revenue"]),
+        }
+        for label in sorted(stats)
+    ]
+
+
+def filter_detail_rows(rows, month=None, invoice_from=None, invoice_to=None,
+                       customer=None, categories=None, code=None) -> list:
+    """损益明细表筛选：出库期间 / 开票期间区间 / 客户名称 / 销售大类 / 产品编码。
+
+    空值 = 不限制；开票期间给了真实月份时，未开票的行不自动计入
+    （要看未开票，需把「(未开票)」明确选进区间）；
+    客户名称 / 产品编码按「包含」匹配（忽略大小写与首尾空格）。
+    """
+    order = {
+        item["value"]: index
+        for index, item in enumerate(summary_period_options(rows, BASIS_INVOICE))
+    }
+    uninvoiced_selected = (
+        invoice_from == UNINVOICED_LABEL or invoice_to == UNINVOICED_LABEL
+    )
+    category_set = {value for value in (categories or []) if value}
+    customer_key = (customer or "").strip().lower()
+    code_key = (code or "").strip().lower()
+    kept = []
+    for row in rows:
+        if month and row["month_out_key"] != month:
+            continue
+        if invoice_from or invoice_to:
+            invoice_key = row["month_invoice_key"]
+            # 未开票不是「期间」：没被明确选进区间时，不跟着月份区间一起出来
+            if invoice_key == UNINVOICED_LABEL and not uninvoiced_selected:
+                continue
+            if not _period_in_range(invoice_key, invoice_from, invoice_to, order):
+                continue
+        if customer_key and customer_key not in (row.get("customer") or "").lower():
+            continue
+        if category_set and row["category_key"] not in category_set:
+            continue
+        if code_key and code_key not in (row.get("code") or "").lower():
+            continue
+        kept.append(row)
+    return kept
+
+
+def row_totals(rows) -> dict:
+    """按给定明细行合计（损益明细表合计行跟随筛选条件）。"""
+    return _accumulate(rows)
+
+
 def build_category_summary(rows, basis: str = BASIS_OUT, period_from=None,
                            period_to=None, categories=None) -> dict:
     """页面顶端汇总表：期间 → 销售类别（销售大类），每个期间一个小计，末尾合计。
