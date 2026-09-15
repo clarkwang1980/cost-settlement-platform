@@ -4971,3 +4971,37 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
         # 表内筛选与合计说明仍在
         for text in ("记账月份", "（空白）", "小计", "合计", "默认筛选"):
             self.assertIn(text, html, text)
+
+
+class KeepScrollPositionTests(TestCase):
+    """筛选/切换条件提交后不跳回页面顶部（全站生效）。"""
+
+    def setUp(self):
+        self.base_tpl = (settings.BASE_DIR / "templates" / "base.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_base_saves_and_restores_scroll(self):
+        for text in ("keepScrollPos", "sessionStorage.setItem", "window.scrollY",
+                     "window.scrollTo"):
+            self.assertIn(text, self.base_tpl, text)
+
+    def test_listens_in_capture_phase(self):
+        # 必须用捕获阶段：要早于 onchange="this.form.submit()" 这类内联处理器
+        self.assertIn('document.addEventListener("change"', self.base_tpl)
+        self.assertIn('document.addEventListener("click"', self.base_tpl)
+        self.assertIn("}, true);", self.base_tpl)
+
+    def test_only_get_forms(self):
+        # 只处理筛选用 GET 表单（POST 表单如保存/锁账不受影响）
+        self.assertIn("function isGetForm(form)", self.base_tpl)
+        self.assertIn('(form.getAttribute("method") || "get").toLowerCase() === "get"',
+                      self.base_tpl)
+
+    def test_has_max_age_guard(self):
+        # 过期的记录不恢复（避免很久以后再打开页面突然跳到某个位置）
+        self.assertIn("MAX_AGE_MS", self.base_tpl)
+        self.assertIn("Date.now() - (data.t || 0) < MAX_AGE_MS", self.base_tpl)
+
+    def test_restores_on_load(self):
+        self.assertIn('window.addEventListener("load"', self.base_tpl)

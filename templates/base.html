@@ -98,6 +98,51 @@
       window.addEventListener('resize', addTitles);
     })();
 
+    // 筛选/切换条件后不要跳回页面顶部：
+    // 带查询串的 URL 会被浏览器当成新页面从而滚到顶部，这里提交前记住滚动位置、加载后恢复。
+    // 用捕获阶段监听，保证早于 onchange="this.form.submit()" 这类内联处理器执行。
+    (function () {
+      var KEY = "keepScrollPos";
+      var MAX_AGE_MS = 15000;
+
+      function savePos() {
+        try {
+          sessionStorage.setItem(KEY, JSON.stringify({ y: window.scrollY, t: Date.now() }));
+        } catch (err) { /* 隐私模式下写不了就算了 */ }
+      }
+
+      function isGetForm(form) {
+        return !!form && (form.getAttribute("method") || "get").toLowerCase() === "get";
+      }
+
+      document.addEventListener("change", function (event) {
+        var el = event.target;
+        if (el && el.form && isGetForm(el.form)) { savePos(); }
+      }, true);
+
+      document.addEventListener("click", function (event) {
+        var el = event.target;
+        if (!el) { return; }
+        var form = el.form || (el.closest ? el.closest("form") : null);
+        if (!form || !isGetForm(form)) { return; }
+        if (el.tagName === "BUTTON" || (el.type && el.type === "submit")) { savePos(); }
+      }, true);
+
+      // 提交后由浏览器跳到新 URL（同一页面），加载完再把位置还原回去
+      try {
+        var raw = sessionStorage.getItem(KEY);
+        if (raw) {
+          sessionStorage.removeItem(KEY);
+          var data = JSON.parse(raw);
+          if (data && typeof data.y === "number" && Date.now() - (data.t || 0) < MAX_AGE_MS) {
+            window.addEventListener("load", function () {
+              window.scrollTo(0, data.y);
+            });
+          }
+        }
+      } catch (err) { /* 数据坏了就忽略 */ }
+    })();
+
     // 打印：抬头填充 + 「就地打印某一块」+ 自动为每个含表格的板块加按钮。
     // 用法：点板块标题旁的「打印本表」→ 只打印这一块（不是整页）。
     (function () {
