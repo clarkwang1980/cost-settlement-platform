@@ -4397,7 +4397,93 @@ class ExpenseSaveSafetyTests(SettlementFixtureMixin, TestCase):
         )
         self.assertTrue(blocks, "缺少费用表单元格样式")
         body = "\n".join(blocks)      # 该选择器可能有多条规则，合起来校验
-        self.assertIn("min-height: 56px", body)      # 行高放宽
+        self.assertIn("min-height: 46px", body)      # 行高适中（一屏放得下）
         self.assertIn("height: auto", body)          # 不受全局 25pt 限制
         self.assertIn("border-color: #cfd8de", body)  # 网格线加深
-        self.assertRegex(css, r"\.expense-entry-table input\.expense-input \{[^}]*height: 34px")
+        # 输入框：不再单独画小方框（无边框、透明底），宽度撑满格子
+        inputs = re.findall(
+            r"\.expense-entry-table input\.expense-input \{([^}]*)\}", css
+        )
+        merged = "\n".join(inputs)
+        self.assertIn("border: 0", merged)
+        self.assertIn("background: transparent", merged)
+
+
+class ExpenseTableLayoutTests(SettlementFixtureMixin, TestCase):
+    """按月费用录入表：整张表一屏放下；网格线已分格，输入框不再单独画小方框。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="expense-layout", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "lay")
+        for row_no in (1, 2):
+            SalesLedgerLine.objects.create(
+                period=self.period, batch=self.batch, row_no=row_no,
+                out_month=self.period.month,
+                invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
+                invoice_month=self.period.month, channel="国内销售",
+                order_no=f"SO-{row_no}", customer_name="客户", sales_category="纱线",
+                material_code="11.01", material_name="产品", uom="kg",
+                quantity=Decimal("10"), terminal_amount=Decimal("1000"),
+                cost_amount=Decimal("600"),
+            )
+        self.css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+
+    def test_table_fits_container_no_horizontal_scroll(self):
+        # 用 table-layout: fixed + 100% 宽，列按容器等分，所以不会超出容器
+        block = re.search(
+            r"\.table-scroll > \.expense-entry-table \{([^}]*)\}", self.css
+        )
+        self.assertIsNotNone(block, "缺少费用表宽度规则")
+        body = block.group(1)
+        self.assertIn("width: 100%", body)
+        self.assertIn("min-width: 0", body)      # 覆盖全局 min-width:100% 的换行撑宽
+        self.assertIn("table-layout: fixed", body)
+
+    def test_number_columns_are_narrow(self):
+        # 数字列收窄，避免空荡荡的宽格子（原来每列 ~196px）
+        block = re.search(
+            r"\.expense-entry-table th \+ th,\s*\.expense-entry-table td \+ td \{([^}]*)\}",
+            self.css,
+        )
+        self.assertIsNotNone(block, "缺少数字列宽规则")
+        width = int(re.search(r"width: (\d+)px", block.group(1)).group(1))
+        self.assertLessEqual(width, 150)
+        self.assertGreaterEqual(width, 110)      # 仍要放得下 2,098,509.12
+
+    def test_input_has_no_separate_box(self):
+        # 输入框无边框、透明底：靠单元格网格线分格，不再单独画方框
+        blocks = re.findall(
+            r"\.expense-entry-table input\.expense-input \{([^}]*)\}", self.css
+        )
+        self.assertTrue(blocks, "缺少费用输入框样式")
+        body = "\n".join(blocks)   # 该选择器可能有多条规则，合并校验
+        self.assertIn("border: 0", body)
+        self.assertIn("background: transparent", body)
+        self.assertIn("width: 100%", body)
+        # 聚焦时才给个提示，仍然不画方框（用内阴影）
+        focus = re.search(
+            r"\.expense-entry-table input\.expense-input:focus \{([^}]*)\}", self.css
+        )
+        self.assertIsNotNone(focus)
+        self.assertIn("box-shadow", focus.group(1))
+        self.assertIn("outline: none", focus.group(1))
+
+    def test_row_height_reasonable_and_no_vertical_scroll(self):
+        # 行高适中（不跟数据列表压成 25 磅，也不回到 56px 那么高）
+        block = re.search(
+            r"\.expense-entry-table th, \.expense-entry-table td \{([^}]*)\}", self.css
+        )
+        self.assertIn("min-height: 46px", block.group(1))
+        self.assertIn("height: auto", block.group(1))
+
+    def test_timestamp_in_period_cell_is_short(self):
+        # 期间列里的录入时间用「月-日 时:分」，避免该格被省略号截断
+        tpl = (settings.BASE_DIR / "templates" / "settlement"
+               / "profit_statement.html").read_text(encoding="utf-8")
+        self.assertIn('item.updated_at|date:"m-d H:i"', tpl)
+        self.assertNotIn('item.updated_at|date:"Y-m-d H:i"', tpl)

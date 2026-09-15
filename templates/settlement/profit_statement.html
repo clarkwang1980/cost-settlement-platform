@@ -76,7 +76,7 @@
               <div class="expense-month-title">
                 <strong>{{ item.key }}</strong>
                 {% if item.has_values %}
-                <span class="pill pill-ok">已录入{% if item.updated_at %} · {{ item.updated_at|date:"Y-m-d H:i" }}{% endif %}</span>
+                <span class="pill pill-ok">已录入{% if item.updated_at %} · {{ item.updated_at|date:"m-d H:i" }}{% endif %}</span>
                 {% else %}
                 <span class="pill">未录入（按 0 处理）</span>
                 {% endif %}
