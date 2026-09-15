@@ -252,15 +252,27 @@ def profit_statement_view(request, period_id):
                 "该期间已锁账，不能修改损益表费用；如需调整请让管理员重开期间。",
             )
             return redirect(back_url)
+        # 只处理「本次提交里确实出现的」月份与字段：
+        # 页面过期（少列了某个月）或半截提交时，不会把已有的录入值清成 0。
         try:
             values_by_month = {}
             for month in months:
-                values_by_month[month] = {
-                    field: _parse_amount(request.POST.get(_field_name(month, field)), label)
+                submitted = {
+                    field: (label, request.POST[_field_name(month, field)])
                     for field, label in ALLOCATION_FIELDS
+                    if _field_name(month, field) in request.POST
                 }
+                if submitted:
+                    values_by_month[month] = {
+                        field: _parse_amount(raw_value, label)
+                        for field, (label, raw_value) in submitted.items()
+                    }
         except ValueError as exc:
             messages.error(request, str(exc))
+            return redirect(back_url)
+
+        if not values_by_month:
+            messages.error(request, "没有收到任何费用数据，本次未做修改。")
             return redirect(back_url)
 
         for month, values in values_by_month.items():

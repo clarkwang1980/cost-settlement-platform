@@ -266,7 +266,6 @@ th input, td input, th select, td select {
   line-height: 15px;
 }
 .expense-entry-table input.expense-input { width: 120px; height: 17px; }
-.expense-entry-table th, .expense-entry-table td { vertical-align: middle; }
 .expense-entry-table .expense-month-cell strong { font-size: 13px; line-height: 1.3; }
 .expense-entry-table .expense-month-title,
 .expense-entry-table .expense-month-meta { vertical-align: middle; }
@@ -373,11 +372,30 @@ th input, td input, th select, td select {
 .filter-grid .filter-field > span { color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field .multi-select > summary { font-size: 14px; font-weight: 400; color: var(--ink); }
 
-/* 按月费用录入：每个期间一行（期间逐一列出） */
+/* 按月费用录入：每个期间一行（期间逐一列出）。
+   这张表是「录入用」的，不跟数据列表一样压成 25 磅——行高放宽回之前的高度（约 56px），
+   网格线加深一档，输入框放大，便于逐格填写。 */
 .expense-entry-table { width: auto; min-width: 100%; }
-.expense-entry-table th, .expense-entry-table td { white-space: nowrap; vertical-align: middle; }
-.expense-entry-table th:first-child, .expense-entry-table td:first-child { min-width: 230px; }
-.expense-entry-table input.expense-input { width: 132px; text-align: right; }
+.expense-entry-table th, .expense-entry-table td {
+  height: auto;
+  min-height: 56px;
+  padding: 12px 12px;
+  white-space: nowrap;
+  vertical-align: middle;
+  border-color: #cfd8de;              /* 网格线更清楚 */
+}
+.expense-entry-table thead th { height: 46px; background: #e7edf2; }
+.expense-entry-table th:first-child, .expense-entry-table td:first-child { min-width: 240px; }
+.expense-entry-table input.expense-input {
+  width: 138px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 32px;
+  text-align: right;
+  border-radius: 6px;
+}
 .expense-entry-table .expense-month-title { display: inline-flex; align-items: center; gap: 8px; }
 .expense-entry-table .expense-month-cell strong { font-size: 13px; line-height: 1.2; color: var(--navy); }
 .expense-entry-table .expense-month-meta { display: inline; margin-left: 8px; font-size: 12px; white-space: nowrap; }

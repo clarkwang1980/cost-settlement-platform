@@ -4310,3 +4310,94 @@ class ProfitDetailFilterTests(SettlementFixtureMixin, TestCase):
         # 合计
         totals = row_totals(kept)
         self.assertEqual(totals["revenue"], Decimal("100.00"))
+
+
+class ExpenseSaveSafetyTests(SettlementFixtureMixin, TestCase):
+    """保存费用：只更新「提交里确实出现」的字段，绝不把未提交的录入值清成 0。
+
+    背景（2026-09-15）：一次只带一个字段的提交把 7 月已录数据清成了 0，
+    因此加此保护：过期页面/半截提交不再破坏已有数据。
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="expense-safety", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "safe")
+        for row_no in (1, 2):
+            SalesLedgerLine.objects.create(
+                period=self.period, batch=self.batch, row_no=row_no,
+                out_month=self.period.month,
+                invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
+                invoice_month=self.period.month, channel="国内销售",
+                order_no=f"SO-{row_no}", customer_name="客户", sales_category="纱线",
+                material_code="11.01", material_name="产品", uom="kg",
+                quantity=Decimal("10"), terminal_amount=Decimal("1000"),
+                cost_amount=Decimal("600"),
+            )
+        self.url = reverse("profit_statement", args=[self.period.id])
+        # 7 月已录好一套费用
+        self.expense = ProfitStatementExpense.objects.create(
+            period=self.period, month=self.period.month,
+            admin_expense=Decimal("2098509.12"), selling_expense=Decimal("265454.86"),
+            finance_expense=Decimal("169536.42"), non_operating_expense=Decimal("992.84"),
+        )
+
+    def _fresh(self):
+        return ProfitStatementExpense.objects.get(
+            period=self.period, month=self.period.month
+        )
+
+    def test_partial_submit_does_not_clear_other_fields(self):
+        # 只提交一个字段（模拟半截提交）：其它字段必须保持原值
+        self.client.force_login(self.user)
+        self.client.post(self.url, {"exp_2026-07_income_tax": "123"})
+        saved = self._fresh()
+        self.assertEqual(saved.income_tax, Decimal("123.00"))
+        self.assertEqual(saved.admin_expense, Decimal("2098509.12"))
+        self.assertEqual(saved.selling_expense, Decimal("265454.86"))
+        self.assertEqual(saved.finance_expense, Decimal("169536.42"))
+        self.assertEqual(saved.non_operating_expense, Decimal("992.84"))
+
+    def test_empty_submit_changes_nothing(self):
+        # 一个字段都没提交：直接不动数据
+        self.client.force_login(self.user)
+        response = self.client.post(self.url, {})
+        self.assertEqual(response.status_code, 302)
+        saved = self._fresh()
+        self.assertEqual(saved.admin_expense, Decimal("2098509.12"))
+        self.assertEqual(saved.selling_expense, Decimal("265454.86"))
+
+    def test_explicit_empty_value_still_clears(self):
+        # 字段出现但留空 = 用户主动清空 → 仍按 0 处理（保留原语义）
+        self.client.force_login(self.user)
+        self.client.post(self.url, {"exp_2026-07_admin_expense": ""})
+        self.assertEqual(self._fresh().admin_expense, Decimal("0.00"))
+        self.assertEqual(self._fresh().selling_expense, Decimal("265454.86"))
+
+    def test_full_form_submit_still_saves_everything(self):
+        # 完整表单提交（页面正常路径）照旧全部保存
+        self.client.force_login(self.user)
+        payload = {}
+        for field, _label in ALLOCATION_FIELDS:
+            payload[f"exp_2026-07_{field}"] = "1,000.50"
+        self.client.post(self.url, payload)
+        saved = self._fresh()
+        for field, _label in ALLOCATION_FIELDS:
+            self.assertEqual(getattr(saved, field), Decimal("1000.50"), field)
+
+    def test_expense_table_row_height_and_grid(self):
+        # 费用表：行高放宽（不跟随 25 磅）、网格线加深
+        css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+        blocks = re.findall(
+            r"\.expense-entry-table th, \.expense-entry-table td \{([^}]*)\}", css
+        )
+        self.assertTrue(blocks, "缺少费用表单元格样式")
+        body = "\n".join(blocks)      # 该选择器可能有多条规则，合起来校验
+        self.assertIn("min-height: 56px", body)      # 行高放宽
+        self.assertIn("height: auto", body)          # 不受全局 25pt 限制
+        self.assertIn("border-color: #cfd8de", body)  # 网格线加深
+        self.assertRegex(css, r"\.expense-entry-table input\.expense-input \{[^}]*height: 34px")
