@@ -1,5 +1,6 @@
 from pathlib import Path
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 
 from django.conf import settings
@@ -90,6 +91,10 @@ from settlement.services.workorder_costing import (
 from settlement.services.rollforward import (
     carry_forward_context,
     invalidate_downstream_periods,
+)
+from settlement.services.sales_voucher import (
+    build_sales_cost_statistics,
+    build_sales_voucher_data,
 )
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
@@ -815,6 +820,24 @@ def sales_uninvoiced(request, period_id):
             for row in rows
             if row.cross_period == (cross_period == "yes")
         ]
+
+    # 销售凭证：按「记账月份」筛选（默认当前期间月份）
+    voucher_month_raw = str(request.GET.get("voucher_month", "")).strip()
+    voucher_month = None
+    if voucher_month_raw:
+        try:
+            year, month_no = voucher_month_raw.split("-")
+            voucher_month = date(int(year), int(month_no), 1)
+        except (TypeError, ValueError):
+            voucher_month = None
+    voucher = build_sales_voucher_data(period, month=voucher_month)
+    voucher_page = Paginator(voucher["rows"], 200).get_page(
+        request.GET.get("vpage")
+    )
+    query = request.GET.copy()
+    query.pop("vpage", None)
+    voucher_page.querystring = query.urlencode()
+
     return render(
         request,
         "settlement/sales_uninvoiced.html",
@@ -824,6 +847,9 @@ def sales_uninvoiced(request, period_id):
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
             "statuses": ["全部未开票", "部分开票", "缺少出库成本"],
+            "voucher": voucher,
+            "voucher_page": voucher_page,
+            "statistics": build_sales_cost_statistics(period),
         },
     )
 

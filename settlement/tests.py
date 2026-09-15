@@ -57,6 +57,10 @@ from settlement.services.workorder_costing import (
     build_work_order_cost_summary,
 )
 from settlement.services.pulp_costing import collect_pulp_costs
+from settlement.services.sales_voucher import (
+    build_sales_cost_statistics,
+    build_sales_voucher_data,
+)
 from settlement.services.sales_uninvoiced import (
     build_goods_issued_rollforward,
     build_sales_uninvoiced_rows,
@@ -4582,3 +4586,170 @@ class PrintSupportTests(SettlementFixtureMixin, TestCase):
             ).content.decode("utf-8")
             self.assertIn("window.print()", html, name)
             self.assertIn('class="print-heading"', html, name)
+
+
+class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
+    """销售凭证 + 发出商品及销售成本统计表（月末已出库未开票页的两张新表）。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="voucher-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER, "vch")
+        self.may, self.june = date(2026, 5, 1), date(2026, 6, 1)
+
+    def _line(self, row_no, *, out_month, invoice_month=None, carry_type,
+              status="invoiced", cost="100.00", quantity="10", category="纱线"):
+        return SalesLedgerLine.objects.create(
+            period=self.period, batch=self.batch, row_no=row_no,
+            out_month=out_month,
+            invoice_status=status,
+            invoice_month=invoice_month,
+            channel="国内销售", order_no=f"SO-{row_no}",
+            customer_code="C1", customer_name="客户甲", sales_category=category,
+            material_code="11.01", material_name="产品", uom="kg",
+            quantity=Decimal(quantity), terminal_amount=Decimal("200.00"),
+            cost_amount=Decimal(cost), carry_type=carry_type,
+        )
+
+    # ── 销售凭证 ────────────────────────────────────────────────────────
+
+    def test_voucher_maps_carry_type_to_account(self):
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本")
+        self._line(2, out_month=self.june, invoice_month=self.period.month,
+                   carry_type="前期发货本期开票结转成本", cost="300.00")
+        self._line(3, out_month=self.period.month, carry_type="当月发货未开票挂发出商品",
+                   status="uninvoiced", cost="500.00")
+        self._line(4, out_month=self.period.month, carry_type="免费样品赠送计入销售费用",
+                   status="sample_free", cost="7.00")
+        data = build_sales_voucher_data(self.period)
+        self.assertEqual(data["month"], "2026-07")
+        self.assertEqual(data["totals"]["row_count"], 4)
+        rows = {row["carry_type"]: row for row in data["rows"]}
+        self.assertEqual(rows["当月发货当月开票结转成本"]["account"], "主营业务成本")
+        self.assertEqual(rows["前期发货本期开票结转成本"]["account"], "主营业务成本")
+        self.assertEqual(rows["当月发货未开票挂发出商品"]["account"], "发出商品")
+        self.assertEqual(rows["免费样品赠送计入销售费用"]["account"], "销售费用")
+        # 凭证抬头
+        self.assertIn("销售成本结转凭证", rows["当月发货当月开票结转成本"]["title"])
+        self.assertIn("发出商品", rows["当月发货未开票挂发出商品"]["title"])
+        # 金额 = 销售成本
+        self.assertEqual(data["totals"]["amount"], Decimal("907.00"))
+        # 开票期间为空时显示「—」
+        self.assertEqual(rows["当月发货未开票挂发出商品"]["invoice_month"], "—")
+
+    def test_voucher_voucher_month_rule(self):
+        # 前期发货本期开票按「开票月」记账，其余按「出库月」记账
+        self._line(1, out_month=self.may, invoice_month=self.period.month,
+                   carry_type="前期发货本期开票结转成本")
+        self._line(2, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本")
+        july = build_sales_voucher_data(self.period)
+        self.assertEqual([row["carry_type"] for row in july["rows"]],
+                         ["前期发货本期开票结转成本", "当月发货当月开票结转成本"])
+        may = build_sales_voucher_data(self.period, month=self.may)
+        self.assertEqual(may["totals"]["row_count"], 0)     # 该行不在 5 月记账
+        options = [item["value"] for item in july["months"]]
+        self.assertEqual(options, ["2026-07"])
+
+    def test_voucher_page_renders_and_switches_month(self):
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本")
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("<h2>销售凭证</h2>", html)
+        for header in ("抬头销售凭证", "会计科目", "结转类型", "销售大类", "出库期间",
+                       "开票状态", "开票期间", "数量", "金额"):
+            self.assertRegex(html, r"<th[^>]*>%s</th>" % header)
+        self.assertIn("销售成本结转凭证（当月发货当月开票）", html)
+        self.assertIn("主营业务成本", html)
+        self.assertIn('name="voucher_month"', html)
+
+    # ── 发出商品及销售成本统计表 ────────────────────────────────────────
+
+    def _stat_line_set(self):
+        # 5 月：发货 1000（未开票）、发货 2000（当月开票）
+        self._line(11, out_month=self.may, carry_type="当月发货未开票挂发出商品",
+                   status="uninvoiced", cost="1000.00")
+        self._line(12, out_month=self.may, invoice_month=self.may,
+                   carry_type="当月发货当月开票结转成本", cost="2000.00")
+        # 6 月：上月的 1000 里开票结转 600；当月发货未开票 400；样品 50
+        self._line(21, out_month=self.may, invoice_month=self.june,
+                   carry_type="前期发货本期开票结转成本", cost="600.00")
+        self._line(22, out_month=self.june, carry_type="当月发货未开票挂发出商品",
+                   status="uninvoiced", cost="400.00")
+        self._line(23, out_month=self.june, carry_type="免费样品赠送计入销售费用",
+                   status="sample_free", cost="50.00")
+
+    def test_statistics_rollforward_and_columns(self):
+        self._stat_line_set()
+        data = build_sales_cost_statistics(self.period, month_count=6)
+        self.assertEqual(data["month_headers"],
+                         ["2026年%d月" % m for m in range(7, 13)])
+        cells = {month["value"]: month["cells"] for month in data["months"]}
+        # 7 月：期初 = 5 月末余额（1000 未开票 − 600 开票结转）+ 6 月发货未开票 400 = 800
+        self.assertEqual(cells["2026-07"]["上月期末发出商品未开票成本"], Decimal("800.00"))
+        self.assertEqual(cells["2026-07"]["当月发货未开票挂发出商品"], Decimal("0.00"))
+        self.assertEqual(cells["2026-07"]["当月期末发出商品未开票成本"], Decimal("800.00"))
+        # 8-12 月：没有新数据，余额结转下去
+        self.assertEqual(cells["2026-12"]["上月期末发出商品未开票成本"], Decimal("800.00"))
+        self.assertEqual(cells["2026-12"]["当月期末发出商品未开票成本"], Decimal("800.00"))
+        # 行结构：3 个一级分类 + 子项
+        labels = [row["label"] for row in data["rows"] if row["level"] == "group"]
+        self.assertEqual(labels, ["一、本月销售成本", "二、发出商品逐月结转", "三、其他"])
+        items = [row["label"] for row in data["rows"] if row["level"] == "item"]
+        self.assertEqual(items, [
+            "当月发货当月开票结转成本", "前期发货本期开票结转成本", "本月主营业务成本合计",
+            "上月期末发出商品未开票成本", "当月发货未开票挂发出商品",
+            "前期发货本期开票结转成本", "当月期末发出商品未开票成本",
+            "免费样品赠送计入销售费用",
+        ])
+        # 每个子项都有 6 个月份的单元格
+        for row in data["rows"]:
+            if row["level"] == "item":
+                self.assertEqual(len(row["cells"]), 6, row["label"])
+
+    def test_statistics_main_cost_total_and_sample(self):
+        self._stat_line_set()
+        data = build_sales_cost_statistics(self.period)
+        cells = {month["value"]: month["cells"] for month in data["months"]}
+        # 7 月：本测试数据里没有 7 月开票/7 月发货的结转，所以主营业务成本为 0
+        self.assertEqual(cells["2026-07"]["当月发货当月开票结转成本"], Decimal("0.00"))
+        self.assertEqual(cells["2026-07"]["前期发货本期开票结转成本"], Decimal("0.00"))
+        self.assertEqual(cells["2026-07"]["本月主营业务成本合计"], Decimal("0.00"))
+        # 6 月口径（以 6 月为起点才看得到）：前期发货本期开票 600 + 样品 50
+        june_rows = build_sales_cost_statistics(
+            AccountingPeriod(month=self.june), month_count=1
+        )
+        june_cell = june_rows["months"][0]["cells"]
+        self.assertEqual(june_cell["前期发货本期开票结转成本"], Decimal("600.00"))
+        self.assertEqual(june_cell["本月主营业务成本合计"], Decimal("600.00"))
+        self.assertEqual(june_cell["免费样品赠送计入销售费用"], Decimal("50.00"))
+        # 样品 50 记在 6 月（出库月），不在 7 月列里 → 7 月样品为 0
+        self.assertEqual(cells["2026-07"]["免费样品赠送计入销售费用"], Decimal("0.00"))
+        # 以 6 月为起点的月份列
+        june_data = build_sales_cost_statistics(
+            AccountingPeriod(month=self.june), month_count=2
+        )
+        self.assertEqual(june_data["month_headers"], ["2026年6月", "2026年7月"])
+
+    def test_statistics_page_renders(self):
+        self._stat_line_set()
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("<h2>发出商品及销售成本统计表</h2>", html)
+        self.assertIn("序号", html)
+        self.assertIn("项目分类", html)
+        for label in ("一、本月销售成本", "二、发出商品逐月结转", "三、其他",
+                      "上月期末发出商品未开票成本", "当月期末发出商品未开票成本"):
+            self.assertIn(label, html)
+        for label in ("2026年%d月" % m for m in range(7, 13)):
+            self.assertIn(label, html)
+        # 期末余额结转下去 = 800.00 应出现在页面上
+        self.assertIn("800.00", html)
