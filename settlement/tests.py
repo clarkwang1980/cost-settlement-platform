@@ -3699,7 +3699,9 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         )
         block = re.search(r"\.summary-table th, \.summary-table td\s*\{([^}]*)\}", css)
         self.assertIsNotNone(block, "缺少汇总表单元格样式")
-        self.assertIn("border: 1px solid", block.group(1))
+        self.assertIn("padding", block.group(1))
+        # 网格线走全局规则，汇总表也覆盖到
+        self.assertRegex(css, r"th, td \{ border: 1px solid #e3e9ed; \}")
 
     def test_category_parenthetical_shows_short_name(self):
         # 销售大类带明细括注的只显示主体；括注明细写在表下说明里
