@@ -39,16 +39,18 @@ ACCOUNT_BY_CARRY = {
     CARRY_PRIOR_INVOICED: "主营业务成本",
 }
 
-#: 开票状态中文（台账取值 -> 显示）
+#: 开票状态中文（台账取值 -> 显示）；三个选项固定出现在筛选里
 INVOICE_STATUS_LABELS = {
-    "invoiced": "已开票",
-    "uninvoiced": "未开票",
+    "invoiced": "已开发票",
+    "uninvoiced": "未开发票",
     "sample_free": "样品免费",
 }
+INVOICE_STATUS_VALUES = ("invoiced", "uninvoiced", "sample_free")
 
-#: 销售大类显示顺序（用户指定），未列出的排在其后
-CATEGORY_ORDER = ("纱线", "面料", "纤维", "其他成品")
+#: 销售大类固定 5 个（各结转类型共用），每类都要出现（没有数据也显示 0）
+CATEGORY_ORDER = ("纱线", "面料", "纤维", "其他成品", "原料")
 ALL_LABEL = "全部"
+BLANK_LABEL = "（空白）"          # 下拉里的空白选项：不限制该字段
 
 #: 汇总表列（已去掉「抬头销售凭证」）
 VOUCHER_HEADERS = (
@@ -146,9 +148,10 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
                                 categories=None) -> dict:
     """销售结转成本凭证：按「结转类型 × 销售大类」汇总。
 
-    只统计两类结转成本（当月发货当月开票 / 前期发货本期开票）；
-    可按「记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类」筛选，
-    汇总数字跟随筛选条件重算。
+    - 只统计两类结转成本（当月发货当月开票 / 前期发货本期开票）；
+    - 每个结转类型都列全 5 个销售大类（纱线/面料/纤维/其他成品/原料），无数据时显示 0；
+    - 筛选：记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类；
+      每个筛选都可以「空白」= 不限制该字段（空字符串即不筛选）。
     """
     lines = [
         line for line in _ledger_lines()
@@ -177,20 +180,34 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
          "row_count": month_counter[value]}
         for value in sorted(month_counter)
     ]
-    out_options = _options(sorted(out_counter), out_counter)
-    invoice_options = _options(sorted(invoice_counter), invoice_counter)
-    status_options = _options(
-        [value for value in ("invoiced", "uninvoiced", "sample_free")
-         if value in status_counter],
-        status_counter,
-        labeler=lambda value: INVOICE_STATUS_LABELS.get(value, value),
+    out_options = (
+        [{"value": "", "label": BLANK_LABEL, "row_count": len(lines)}]
+        + _options(sorted(out_counter), out_counter)
     )
-    category_options = _options(
-        sorted(category_counter, key=_category_sort_key), category_counter
+    invoice_options = (
+        [{"value": "", "label": BLANK_LABEL, "row_count": len(lines)}]
+        + _options(sorted(invoice_counter), invoice_counter)
+    )
+    # 开票状态：三个选项固定列出（即使当前数据里没有）
+    status_options = [{"value": "", "label": BLANK_LABEL, "row_count": len(lines)}]
+    status_options += [
+        {
+            "value": value,
+            "label": INVOICE_STATUS_LABELS[value],
+            "row_count": status_counter.get(value, 0),
+        }
+        for value in INVOICE_STATUS_VALUES
+    ]
+    category_options = (
+        [{"value": "", "label": BLANK_LABEL, "row_count": len(lines)}]
+        + [
+            {"value": name, "label": name, "row_count": category_counter.get(name, 0)}
+            for name in CATEGORY_ORDER
+        ]
     )
 
-    # 当前筛选
-    selected = month or month_first(period.month)
+    # 当前筛选（空 = 不限制）
+    selected_month = month or month_first(period.month)
     out_set = {value for value in (out_months or []) if value}
     invoice_set = {value for value in (invoice_months or []) if value}
     status_set = {value for value in (statuses or []) if value}
@@ -208,7 +225,7 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
         lambda: {"quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0}
     )
     for line in lines:
-        if _voucher_month(line) != selected:
+        if _voucher_month(line) != selected_month:
             continue
         if out_set and month_label(line.out_month) not in out_set:
             continue
@@ -227,7 +244,7 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
         else:
             item["amount"] += Decimal(line.cost_amount)
 
-    def _row(level, carry_type, category, quantity, amount, missing=0, rows=0):
+    def _row(level, carry_type, category, item):
         return {
             "level": level,
             "account": ACCOUNT_BY_CARRY.get(carry_type, "主营业务成本"),
@@ -236,56 +253,39 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
             "out_month": out_label,
             "invoice_status": status_label,
             "invoice_month": invoice_label,
-            "quantity": quantity,
-            "amount": money(amount),
-            "missing_cost_rows": missing,
-            "source_rows": rows,
+            "quantity": item["quantity"],
+            "amount": money(item["amount"]),
+            "missing_cost_rows": item["missing"],
+            "source_rows": item["rows"],
         }
 
     rows = []
-    for carry in sorted({key[0] for key in buckets}, key=_carry_sort_key):
-        sub_quantity = ZERO
-        sub_amount = ZERO
-        sub_rows = sub_missing = 0
-        for category in sorted(
-            (key[1] for key in buckets if key[0] == carry), key=_category_sort_key
-        ):
-            item = buckets[(carry, category)]
-            rows.append(
-                _row("category", carry, category, item["quantity"], item["amount"],
-                     item["missing"], item["rows"])
-            )
-            sub_quantity += item["quantity"]
-            sub_amount += item["amount"]
-            sub_rows += item["rows"]
-            sub_missing += item["missing"]
-        rows.append(
-            _row("subtotal", carry, "小计", sub_quantity, sub_amount, sub_missing, sub_rows)
-        )
-
-    total_quantity = sum((row["quantity"] for row in rows if row["level"] == "category"), ZERO)
-    total_amount = sum(
-        (row["amount"] for row in rows if row["level"] == "category"), ZERO
-    )
-    total_rows = sum(row["source_rows"] for row in rows if row["level"] == "category")
-    total_missing = sum(
-        row["missing_cost_rows"] for row in rows if row["level"] == "category"
-    )
-    rows.append(
-        _row("total", "合计", "", total_quantity, total_amount, total_missing, total_rows)
-    )
+    grand = {"quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0}
+    for carry in CARRY_COST_TYPES:
+        subtotal = {"quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0}
+        for category in CATEGORY_ORDER:
+            item = buckets.get((carry, category)) or {
+                "quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0
+            }
+            rows.append(_row("category", carry, category, item))
+            for key in subtotal:
+                subtotal[key] += item[key]
+        rows.append(_row("subtotal", carry, "小计", subtotal))
+        for key in grand:
+            grand[key] += subtotal[key]
+    rows.append(_row("total", "合计", "", grand))
 
     return {
         "rows": rows,
         "months": months,
-        "month": month_label(selected),
+        "month": month_label(selected_month),
         "headers": VOUCHER_HEADERS,
         "totals": {
-            "quantity": money(total_quantity),
-            "amount": money(total_amount),
+            "quantity": money(grand["quantity"]),
+            "amount": money(grand["amount"]),
             "row_count": len(rows),
-            "source_rows": total_rows,
-            "missing_cost_rows": total_missing,
+            "source_rows": grand["rows"],
+            "missing_cost_rows": grand["missing"],
         },
         "out_options": out_options,
         "invoice_options": invoice_options,
@@ -295,13 +295,15 @@ def build_sales_voucher_summary(period, month=None, out_months=None,
         "selected_invoice": sorted(invoice_set),
         "selected_status": sorted(status_set),
         "selected_categories": sorted(category_set),
+        "out_label": out_label,
+        "status_label": status_label,
+        "invoice_label": invoice_label,
         "all_label": ALL_LABEL,
+        "blank_label": BLANK_LABEL,
         "has_filter": has_filter,
-        "empty": not any(row["level"] == "category" for row in rows),
+        "empty": False,
     }
 
-
-# ── 发出商品及销售成本统计表 ────────────────────────────────────────────
 
 def build_sales_cost_statistics(period, month_count: int = 6) -> dict:
     """发出商品及销售成本统计表：项目分类 × 月份（成本口径）。

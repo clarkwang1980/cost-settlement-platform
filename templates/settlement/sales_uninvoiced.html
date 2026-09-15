@@ -74,13 +74,14 @@
       <p class="eyebrow">SALES COST CARRY-FORWARD VOUCHER</p>
       <h2>销售结转成本凭证</h2>
       <p class="muted-text" style="margin:6px 0 0;">
-        只统计两类结转成本（当月发货当月开票结转成本 / 前期发货本期开票结转成本），
-        按「结转类型 × 销售大类」汇总；记账月份 <strong>{{ voucher.month }}</strong>、
-        来源台账 {{ voucher.totals.source_rows }} 行、汇总 {{ voucher.totals.row_count }} 行。
+        只统计两类结转成本，按「结转类型 × 销售大类」汇总（5 个销售大类每个结转类型都列全）。
+        <strong>筛选就在表里</strong>：出库期间 / 开票状态 / 开票期间 三列的每个单元格都是下拉，
+        选「（空白）」= 不限制该字段；改任意一格，其它格同步并按新条件重新汇总。
+        记账月份 <strong>{{ voucher.month }}</strong>、来源台账 {{ voucher.totals.source_rows }} 行。
       </p>
     </div>
     <form method="get" class="filter-actions" style="margin:0;">
-      {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+      {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vout' and key != 'vst' and key != 'vinv' and key != 'vcat' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
       <label class="muted-text">记账月份
         <select name="voucher_month" onchange="this.form.submit()">
           {% for item in voucher.months %}
@@ -92,101 +93,65 @@
     </form>
   </div>
 
-  <form method="get" class="filter-grid" style="align-items:end;gap:8px;flex-wrap:wrap;">
-    <input type="hidden" name="voucher_month" value="{{ voucher.month }}">
-    {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vout' and key != 'vinv' and key != 'vst' and key != 'vcat' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
-    <div class="filter-field">
-      <span>出库期间</span>
-      <details class="multi-select">
-        <summary><span class="multi-select-text">{% if voucher.selected_out %}{{ voucher.selected_out|join:"、" }}{% else %}全部{% endif %}</span></summary>
-        <div class="multi-select-panel">
-          {% for item in voucher.out_options %}
-          <label><input type="checkbox" name="vout" value="{{ item.value }}"{% if item.value in voucher.selected_out %} checked{% endif %}> {{ item.label }}（{{ item.row_count }} 行）</label>
-          {% endfor %}
-        </div>
-      </details>
-    </div>
-    <div class="filter-field">
-      <span>开票状态</span>
-      <details class="multi-select">
-        <summary><span class="multi-select-text">{% if voucher.selected_status %}{{ voucher.selected_status|join:"、" }}{% else %}全部{% endif %}</span></summary>
-        <div class="multi-select-panel">
-          {% for item in voucher.status_options %}
-          <label><input type="checkbox" name="vst" value="{{ item.value }}"{% if item.value in voucher.selected_status %} checked{% endif %}> {{ item.label }}（{{ item.row_count }} 行）</label>
-          {% endfor %}
-        </div>
-      </details>
-    </div>
-    <div class="filter-field">
-      <span>开票期间</span>
-      <details class="multi-select">
-        <summary><span class="multi-select-text">{% if voucher.selected_invoice %}{{ voucher.selected_invoice|join:"、" }}{% else %}全部{% endif %}</span></summary>
-        <div class="multi-select-panel">
-          {% for item in voucher.invoice_options %}
-          <label><input type="checkbox" name="vinv" value="{{ item.value }}"{% if item.value in voucher.selected_invoice %} checked{% endif %}> {{ item.label }}（{{ item.row_count }} 行）</label>
-          {% endfor %}
-        </div>
-      </details>
-    </div>
-    <div class="filter-field">
-      <span>销售大类</span>
-      <details class="multi-select">
-        <summary><span class="multi-select-text">{% if voucher.selected_categories %}{{ voucher.selected_categories|join:"、" }}{% else %}全部{% endif %}</span></summary>
-        <div class="multi-select-panel">
-          {% for item in voucher.category_options %}
-          <label><input type="checkbox" name="vcat" value="{{ item.value }}"{% if item.value in voucher.selected_categories %} checked{% endif %}> {{ item.label }}</label>
-          {% endfor %}
-        </div>
-      </details>
-    </div>
-    <button class="button primary" type="submit">确定</button>
-    {% if voucher.has_filter %}
-    <a class="button secondary" href="?{{ voucher_clear_query }}">清空筛选</a>
-    {% endif %}
-  </form>
-  <p class="muted-text" style="margin-top:8px;">
-    一个都不勾 = 全部；汇总数字跟随筛选重算。「出库期间 / 开票状态 / 开票期间」列显示当前筛选值（不勾时为「全部」）。
-  </p>
-
   {% if voucher.totals.missing_cost_rows %}
   <div class="message message-warning">
     有 {{ voucher.totals.missing_cost_rows }} 行没有销售成本（该产品当月没有库存计价），这些行的金额不含在内。
   </div>
   {% endif %}
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          {% for header in voucher.headers %}<th{% if forloop.counter0 >= 6 %} class="num"{% endif %}>{{ header }}</th>{% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-      {% for row in voucher_page.object_list %}
-        <tr{% if row.level == 'total' %} style="font-weight:700;background:#E6F0FB;"{% elif row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
-          {% if row.level == 'category' %}
-          <td>{{ row.account }}</td>
-          <td>{{ row.carry_type }}</td>
-          <td>{{ row.category }}</td>
-          <td>{{ row.out_month }}</td>
-          <td>{{ row.invoice_status }}</td>
-          <td>{{ row.invoice_month }}</td>
-          <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
-          {% else %}
-          <td colspan="2">{{ row.carry_type }}{% if row.level == 'subtotal' %}{% endif %}</td>
-          <td colspan="4">{% if row.level == 'subtotal' %}{{ row.category }}{% endif %}</td>
-          <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
-          {% endif %}
-        </tr>
-      {% empty %}
-        <tr><td colspan="8" class="empty-cell">当前筛选条件下没有数据。</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% include "settlement/_pagination.html" with page=voucher_page %}
+  <form method="get" id="voucher-filter-form">
+    <input type="hidden" name="voucher_month" value="{{ voucher.month }}">
+    {% for key, value in request.GET.items %}{% if key != 'voucher_month' and key != 'vout' and key != 'vst' and key != 'vinv' and key != 'vcat' and key != 'vpage' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+    <input type="hidden" name="vout" value="{{ voucher.selected_out|first|default:'' }}">
+    <input type="hidden" name="vst" value="{{ voucher.selected_status|first|default:'' }}">
+    <input type="hidden" name="vinv" value="{{ voucher.selected_invoice|first|default:'' }}">
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {% for header in voucher.headers %}<th{% if forloop.counter0 >= 5 %} class="num"{% endif %}>{{ header }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in voucher.rows %}
+          <tr{% if row.level == 'total' %} style="font-weight:700;background:#E6F0FB;"{% elif row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
+            <td>{{ row.account }}</td>
+            <td>{{ row.carry_type }}</td>
+            <td>{{ row.category }}</td>
+            <td class="vf-cell">
+              <select class="vf" data-field="vout" aria-label="出库期间">
+                {% for item in voucher.out_options %}
+                <option value="{{ item.value }}"{% if item.value == voucher.selected_out|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="vf-cell">
+              <select class="vf" data-field="vst" aria-label="开票状态">
+                {% for item in voucher.status_options %}
+                <option value="{{ item.value }}"{% if item.value == voucher.selected_status|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="vf-cell">
+              <select class="vf" data-field="vinv" aria-label="开票期间">
+                {% for item in voucher.invoice_options %}
+                <option value="{{ item.value }}"{% if item.value == voucher.selected_invoice|first|default:"" %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
+            <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
+  <p class="muted-text">
+    口径：金额为销售成本（结转成本口径）；「小计」= 该结转类型合计，「合计」= 两大类总计。
+    出库期间 / 开票状态 / 开票期间三列显示的是当前筛选条件（「（空白）」= 不限制）。
+  </p>
 </section>
 
 <section class="section-card">
@@ -296,5 +261,23 @@
       }
     });
   });
+</script>
+<script>
+  // 销售结转成本凭证：表内筛选（3 列每个单元格都是下拉，改一个其它同步）
+  (function () {
+    var form = document.getElementById("voucher-filter-form");
+    if (!form) { return; }
+    function apply(field, value) {
+      var input = form.querySelector('input[name="' + field + '"]');
+      if (input) { input.value = value; }
+      form.querySelectorAll('select[data-field="' + field + '"]').forEach(function (sel) {
+        sel.value = value;
+      });
+      form.submit();
+    }
+    form.querySelectorAll("select.vf").forEach(function (sel) {
+      sel.addEventListener("change", function () { apply(sel.dataset.field, sel.value); });
+    });
+  })();
 </script>
 {% endblock %}
