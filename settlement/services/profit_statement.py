@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -72,6 +73,23 @@ EXPENSE_TOTAL_FIELDS = tuple(field for field, _label in ALLOCATION_FIELDS)
 
 #: 渠道归集：台账留空的一律进「未分类」，保证行数不丢
 UNCLASSIFIED_CHANNEL = "未分类"
+
+#: 销售大类带明细括注时，表内只显示主体（如「其他成品（手套、服装、床垫等）」→「其他成品」）；
+#: 括注里的具体品类（手套/袜子/服装/床垫 等）改在页面表下说明里交代。
+CATEGORY_DETAIL_HINT = "（手套、袜子、服装、床垫等）"
+_TRAILING_PAREN = re.compile(r"[（(][^（）()]*[）)]\s*$")
+
+
+def category_label(value) -> str:
+    """销售大类显示名：去掉结尾的括注明细；空值归「未分类」。"
+
+    「其他成品（手套、服装、床垫等）」→「其他成品」；分组/筛选/显示都用这个名称，
+    所以带不同括注的同一主体会被归到一起。
+    """
+    text = (value or "").strip()
+    if not text:
+        return UNCLASSIFIED_CHANNEL
+    return _TRAILING_PAREN.sub("", text).strip() or text
 CHANNEL_ORDER = ("国内销售", "国外销售", UNCLASSIFIED_CHANNEL)
 UNINVOICED_LABEL = "(未开票)"
 
@@ -320,7 +338,7 @@ def build_profit_statement(period, expenses=None) -> dict:
             "company": line.company,
             "order_no": line.order_no,
             "customer": line.customer_name or line.customer_code,
-            "category": line.sales_category,
+            "category": category_label(line.sales_category),
             "code": line.material_code,
             "name": line.material_name,
             "spec": line.specification,
@@ -349,7 +367,7 @@ def build_profit_statement(period, expenses=None) -> dict:
             "month_out_key": month_label(out_month),
             "month_invoice_key": month_label(line.invoice_month) or UNINVOICED_LABEL,
             "channel_key": (line.channel or "").strip() or UNCLASSIFIED_CHANNEL,
-            "category_key": (line.sales_category or "").strip() or UNCLASSIFIED_CHANNEL,
+            "category_key": category_label(line.sales_category),
         }
         for key in TOTAL_KEYS:
             sums[key] += row[key]

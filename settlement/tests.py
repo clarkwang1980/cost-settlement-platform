@@ -65,6 +65,7 @@ from settlement.services.profit_statement import (
     ALLOCATION_FIELDS,
     HEADERS,
     build_category_summary,
+    category_label,
     build_profit_statement,
     build_summary,
     summary_category_options,
@@ -3528,7 +3529,7 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         )
 
     def test_profit_table_has_scroll_wrapper_and_sticky_header(self):
-        # 逐行损益表：外层是可滚动的容器，配 sticky 表头样式（表头固定）＋紧凑列宽
+        # 损益明细表：外层是可滚动的容器，配 sticky 表头样式（表头固定）＋紧凑列宽
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"), category="纱线")
         client = self.client
         client.force_login(self.user)
@@ -3536,9 +3537,9 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         html = client.get(url).content.decode("utf-8")
         self.assertIn('class="table-scroll profit-table-wrap"', html)
         self.assertIn('class="data-table profit-table"', html)
-        self.assertIn("逐行损益", html)
-        # 逐行损益这张表不再依赖内联的横向滚动
-        section = html[html.index("逐行损益"):]
+        self.assertIn("损益明细表", html)
+        # 损益明细表不再依赖内联的横向滚动
+        section = html[html.index("损益明细表"):]
         section = section[:section.index("</section>")]
         self.assertNotIn('style="overflow-x:auto;"', section)
         self.assertIn("profit-table-wrap", section)
@@ -3647,6 +3648,113 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
         # 汇总表自己带滚动容器，不再依赖内联的横向滚动
         self.assertNotIn('style="overflow-x:auto;"', section)
         self.assertIn("summary-table-wrap", section)
+
+    # ──────────────── 2026-09-15 用户要求的四项调整 ────────────────
+
+    def test_expense_input_shows_thousands_separator(self):
+        # 按月费用录入：金额带分节号显示；带分节号的值能原样回写
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        self._expense(self.period.month, admin_expense=Decimal("2098509.12"))
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        html = client.get(url).content.decode("utf-8")
+        self.assertIn('value="2,098,509.12"', html)
+        self.assertIn('inputmode="decimal"', html)
+        # 不能用 type=number：浏览器会把带逗号的值当非法值清空
+        cell = html[html.index("exp_2026-07_admin_expense"):]
+        cell = cell[: cell.index(">") + 1]
+        self.assertIn('type="text"', cell)
+        self.assertNotIn('type="number"', html)
+
+        # 原样回写：千分位 / 半角逗号 / 普通数字都能存对
+        response = client.post(url, {
+            "exp_2026-07_admin_expense": "2,098,509.12",
+            "exp_2026-07_selling_expense": "1,234.5",
+            "exp_2026-07_finance_expense": "987",
+        })
+        self.assertRedirects(response, url)
+        saved = ProfitStatementExpense.objects.get(
+            period=self.period, month=self.period.month
+        )
+        self.assertEqual(saved.admin_expense, Decimal("2098509.12"))
+        self.assertEqual(saved.selling_expense, Decimal("1234.50"))
+        self.assertEqual(saved.finance_expense, Decimal("987.00"))
+        # 回显仍然是分节号
+        html = client.get(url).content.decode("utf-8")
+        self.assertIn('value="2,098,509.12"', html)
+        self.assertIn('value="1,234.50"', html)
+
+    def test_summary_table_has_grid_lines(self):
+        # 损益汇总表加网格线（行列分隔清楚）
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        client = self.client
+        client.force_login(self.user)
+        html = client.get(
+            reverse("profit_statement", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn('class="data-table summary-table"', html)
+        css = (settings.BASE_DIR / "static" / "settlement" / "app.css").read_text(
+            encoding="utf-8"
+        )
+        block = re.search(r"\.summary-table th, \.summary-table td\s*\{([^}]*)\}", css)
+        self.assertIsNotNone(block, "缺少汇总表单元格样式")
+        self.assertIn("border: 1px solid", block.group(1))
+
+    def test_category_parenthetical_shows_short_name(self):
+        # 销售大类带明细括注的只显示主体；括注明细写在表下说明里
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"),
+                   category="其他成品（手套、服装、床垫等）")
+        self._line(2, revenue=Decimal("500"), cost=Decimal("250"), category="纱线")
+        data = build_profit_statement(self.period)
+
+        # 明细行与筛选选项都用主体名
+        cats = {row["category"] for row in data["rows"]}
+        self.assertIn("其他成品", cats)
+        self.assertNotIn("其他成品（手套、服装、床垫等）", cats)
+        options = [item["value"] for item in summary_category_options(data["rows"])]
+        self.assertEqual(options, ["其他成品", "纱线"])  # 按收入倒序（其他成品 1000 > 纱线 500）
+        # 带不同括注的同一主体归到一起
+        self.assertEqual(summary_category_options(data["rows"])[1]["row_count"], 1)
+
+        client = self.client
+        client.force_login(self.user)
+        url = reverse("profit_statement", args=[self.period.id])
+        html = client.get(url).content.decode("utf-8")
+        summary_section = html[html.index("<h2>损益汇总表</h2>"):]
+        summary_section = summary_section[: summary_section.index("</section>")]
+        detail_section = html[html.index("<h2>损益明细表"):]
+        detail_section = detail_section[: detail_section.index("</section>")]
+        for section in (summary_section, detail_section):
+            self.assertIn("<td>其他成品</td>", section)
+            self.assertNotIn("其他成品（手套", section)
+        # 括注明细落在汇总表下方的说明里
+        self.assertIn("（手套、袜子、服装、床垫等）", summary_section)
+        self.assertIn("手套、袜子、服装、床垫", summary_section)
+        # 筛选用主体名，合计跟着筛
+        response = client.get(url + "?basis=out&cat=其他成品")
+        self.assertEqual(response.context["selected_categories"], ["其他成品"])
+        self.assertEqual(response.context["summary"]["grand_total"]["revenue"],
+                         Decimal("1000.00"))
+
+    def test_category_label_helper(self):
+        # 归类显示规则：去掉结尾括注；空值归未分类；无括注原样保留
+        self.assertEqual(category_label("其他成品（手套、服装、床垫等）"), "其他成品")
+        self.assertEqual(category_label("其他成品(手套)"), "其他成品")
+        self.assertEqual(category_label("纱线"), "纱线")
+        self.assertEqual(category_label("  "), "未分类")
+        self.assertEqual(category_label("（全括注）"), "（全括注）")  # 全被吃掉时保留原名
+
+    def test_detail_section_renamed_to_detail_table(self):
+        # 「逐行损益」改名为「损益明细表」（行数统计保留）
+        self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
+        client = self.client
+        client.force_login(self.user)
+        html = client.get(
+            reverse("profit_statement", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("<h2>损益明细表（共 1 行，本页 1 行）</h2>", html)
+        self.assertNotIn("逐行损益", html)
 
     def test_locked_period_keeps_expenses_unchanged(self):
         self._line(1, revenue=Decimal("1000"), cost=Decimal("600"))
@@ -3774,7 +3882,7 @@ class TableScrollContainerTests(SettlementFixtureMixin, TestCase):
         tpl = path.read_text(encoding="utf-8")
         self.assertIn('<div class="table-scroll">', tpl)
         self.assertNotIn("overflow-x:auto", tpl)
-        # 页面上确实存在统一容器（汇总表 / 逐行损益，都带额外定位类）
+        # 页面上确实存在统一容器（损益汇总表 / 损益明细表，都带额外定位类）
         html = self._html("profit_statement")
         self.assertIn('class="table-scroll', html)
         self.assertNotIn('style="overflow-x:auto;"', html)

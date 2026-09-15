@@ -84,7 +84,7 @@
               <div class="muted-text expense-month-meta">终端销售收入 {{ item.revenue|thousands }} · 台账 {{ item.row_count }} 行</div>
             </td>
             {% for field in item.fields %}
-            <td><input class="expense-input" name="{{ field.name }}" type="number" step="0.01" value="{{ field.value|floatformat:2 }}"></td>
+            <td><input class="expense-input" name="{{ field.name }}" type="text" inputmode="decimal" autocomplete="off" value="{{ field.value|thousands }}"></td>
             {% endfor %}
           </tr>
           {% endfor %}
@@ -211,7 +211,7 @@
   </div>
   <p class="muted-text">
     「小计」= 该渠道小计；期间行的渠道列显示「小计」= 该期间合计；最后一行是{% if summary.has_filter %}当前筛选条件{% else %}全部期间{% endif %}合计。
-    销售渠道取自台账「销售渠道」列（国内销售 / 国外销售），该列留空的行归入「未分类」；销售大类取台账「销售大类」。
+    销售渠道取自台账「销售渠道」列（国内销售 / 国外销售），该列留空的行归入「未分类」；销售大类取台账「销售大类」，带明细括注的（手套、袜子、服装、床垫等）表内只显示主体名称，例如「其他成品」。
   </p>
 </section>
 
@@ -219,7 +219,7 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">BY ORDER LINE</p>
-      <h2>逐行损益（共 {{ data.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
+      <h2>损益明细表（共 {{ data.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
     </div>
     <span class="pill">合计行按全月计算</span>
   </div>
@@ -312,6 +312,7 @@
     <li>汇总可切换【按出库期间】/【按开票期间】：只改分组口径，每行的金额不变；未开票的行在开票期间视图里归入「(未开票)」。</li>
     <li>损益汇总表只有一张（期间 × 销售渠道 × 销售大类）：可按 期间 / 销售渠道 / 销售大类 勾选筛选，小计与合计按筛选条件重算；末行「合计」= 当前筛选条件合计。打开页面默认只看当月（当前期间所属月份），点「显示全部」看全部期间。</li>
     <li>销售渠道直接取台账「销售渠道」列（国内销售 / 国外销售，由你的台账按终端客户口径给出）；该列留空的行归入「未分类」。</li>
+    <li>销售大类取台账「销售大类」；带明细括注的（如 手套、袜子、服装、床垫 等）按主体归类显示——台账写「其他成品（手套、服装、床垫等）」，页面与导出统一显示「其他成品」。</li>
     <li>汇总表列名「期间」随口径变化：按出库期间显示出库月份，按开票期间显示开票月份（未开票归「(未开票)」）。</li>
     <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>
   </ul>
