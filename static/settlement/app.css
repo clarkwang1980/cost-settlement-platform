@@ -470,10 +470,18 @@ th input, td input, th select, td select {
    2) 滚动容器（表格框）全部展开——否则只会打印出框里看得见的那几行；
    3) 单元格取消省略号截断——省略号会把内容吃掉，打印时改为完整显示（必要时换行）；
    4) 表头跨页重复；A4 横向更适合宽报表。 */
+/* 板块级「打印本表」按钮（屏幕上显示、打印时隐藏） */
+.section-print { white-space: nowrap; }
+
 .print-heading { display: none; }
 
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
+
+  /* 「就地打印某一块」：只显示被点的那块，其余不打印 */
+  body.print-focus section:not(.is-print-target),
+  body.print-focus .section-card:not(.is-print-target) { display: none !important; }
+  .section-print { display: none !important; }
 
   html, body { background: #fff; }
   .topbar, .period-nav, .footer, .messages, .message,

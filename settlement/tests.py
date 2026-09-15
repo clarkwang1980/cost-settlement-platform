@@ -4504,13 +4504,26 @@ class PrintSupportTests(SettlementFixtureMixin, TestCase):
             encoding="utf-8"
         )
 
-    def test_base_has_print_button_and_heading(self):
-        # 顶部有「打印」按钮；打印抬头在页面上不显示、打印时才出现
-        self.assertIn("window.print()", self.base_tpl)
+    def test_section_print_buttons_are_added_next_to_each_table(self):
+        # 打印按钮放在「想打印的那一块」旁边：自动为每个含表格的板块注入「打印本表」
+        self.assertIn("window.printSection", self.base_tpl)
+        self.assertIn("addSectionPrintButtons", self.base_tpl)
+        self.assertIn("section-print", self.base_tpl)
+        # 没有标题行的板块也会补一个标题行，按钮才有地方放
+        self.assertIn("section-heading", self.base_tpl)
+        # 按钮本身 no-print，打印时不会被印出来
+        self.assertIn("no-print", self.base_tpl)
+        self.assertIn(".section-print { white-space: nowrap; }", self.css)
+
+    def test_topbar_has_no_global_print_button(self):
+        # 顶部不再放整页打印按钮（用户要求放在具体板块旁边）
+        self.assertNotIn('class="link-button no-print" type="button" onclick="window.print()"',
+                         self.base_tpl)
+
+    def test_print_heading_still_present(self):
+        # 打印抬头在页面上不显示、打印时才出现（含打印时间）
         self.assertIn('class="print-heading"', self.base_tpl)
         self.assertIn(".print-heading { display: none; }", self.css)
-        # 按钮本身打上 no-print，打印时不会被印出来
-        self.assertRegex(self.base_tpl, r'class="[^"]*no-print[^"]*"[^>]*onclick="window\.print\(\)"')
 
     def test_print_heading_filled_by_script(self):
         # 抬头里的标题/时间由脚本填（含打印前 beforeprint 兜底）
@@ -4535,6 +4548,9 @@ class PrintSupportTests(SettlementFixtureMixin, TestCase):
         self.assertIn("display: table-header-group", css)
         # A4 横向
         self.assertIn("size: A4 landscape", css)
+        # 单块打印：点某块的按钮时只打印那一块
+        self.assertIn("body.print-focus", css)
+        self.assertIn(".is-print-target", css)
 
     def test_profit_statement_page_has_print_button(self):
         self.client.force_login(self.user)
