@@ -4924,3 +4924,50 @@ class SalesUninvoicedDetailLayoutTests(SettlementFixtureMixin, TestCase):
         for label in ("发出商品跨月滚动勾稽", "销售结转成本凭证",
                       "发出商品及销售成本统计表", "截至月末仍未开票的销售出库明细"):
             self.assertIn(label, html)
+
+
+class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
+    """销售结转成本凭证：说明改为「数据来源」，且不再显示旧的统计/筛选说明。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="voucher-note", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.client.force_login(self.user)
+
+    def test_note_shows_data_sources(self):
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        for text in (
+            "数据来源",
+            "销售台账",
+            "结转类型 / 销售大类 / 数量",
+            "销售成本",
+            "销售数量 × 该产品月末加权平均价",
+            "库存计价",
+            "历史单位成本",
+            "会计科目 / 记账月份",
+            "有数量、金额为 0",
+        ):
+            self.assertIn(text, html, text)
+
+    def test_old_note_is_removed(self):
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        for text in (
+            "统计三类结转，按「结转类型 × 销售大类」汇总",
+            "三个结转类型块的筛选各自独立",
+            "来源台账",
+        ):
+            self.assertNotIn(text, html, text)
+
+    def test_keeps_filters_and_summary_note(self):
+        html = self.client.get(
+            reverse("sales_uninvoiced", args=[self.period.id])
+        ).content.decode("utf-8")
+        # 表内筛选与合计说明仍在
+        for text in ("记账月份", "（空白）", "小计", "合计", "默认筛选"):
+            self.assertIn(text, html, text)
