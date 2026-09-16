@@ -587,12 +587,13 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                 zero_amount_rows += 1
             label = "%s %s" % (carry, row["category"])
             if group == "category":
+                # 摘要只写结转类型（不带销售大类）；大类体现在科目名里
                 entries.append(
                     {
                         "level": "line",
-                        "summary": label,
+                        "summary": carry,
                         "account": "%s—%s" % (debit_account, row["category"]),
-                        "aux": "销售大类：%s" % row["category"],
+                        "aux": "",
                         "debit": amount,
                         "credit": ZERO,
                         "quantity": quantity,
@@ -603,9 +604,9 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                 credit_entries.append(
                     {
                         "level": "line",
-                        "summary": label,
+                        "summary": carry,
                         "account": "%s—%s" % (credit_account, row["category"]),
-                        "aux": "销售大类：%s" % row["category"],
+                        "aux": "",
                         "debit": ZERO,
                         "credit": amount,
                         "quantity": quantity,
@@ -739,7 +740,7 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
             "missing_cost_rows": missing_rows,
         },
         "checks": checks,
-        "headers": ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+        "headers": ["摘要", "科目", "数量", "借方", "贷方"],
         "status_options": summary["status_options"],
         "out_options": summary["out_options"],
         "invoice_options": summary["invoice_options"],

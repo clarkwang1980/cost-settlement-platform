@@ -866,7 +866,9 @@ def voucher_center(request, period_id):
         "settlement/voucher_center.html",
         {
             "period": period,
-            "voucher_center": build_voucher_center(period),
+            "voucher_center": build_voucher_center(
+                period, sales_month=request.GET.get("sales_month")
+            ),
         },
     )
 
@@ -3750,15 +3752,15 @@ def _listing_rows(request, period, kind):
             for _row in _block["entries"]:
                 _rows.append(
                     (
-                        _row["summary"], _row["account"], _row["aux"],
-                        _row["debit"], _row["credit"], _row["quantity"],
-                        _row["source_rows"],
+                        _voucher["month"], _row["summary"], _row["account"],
+                        _row["quantity"], _row["debit"], _row["credit"],
                     )
                 )
         _rows.append(
             (
-                "合计", "", "", _voucher["totals"]["debit"],
-                _voucher["totals"]["credit"], _voucher["totals"]["quantity"], "",
+                _voucher["month"], "合计", "",
+                _voucher["totals"]["quantity"], _voucher["totals"]["debit"],
+                _voucher["totals"]["credit"],
             )
         )
         _status_labels = {
@@ -3767,7 +3769,7 @@ def _listing_rows(request, period, kind):
         sheets.append(
             (
                 "凭证分录",
-                ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+                ["凭证期间", "摘要", "科目", "数量", "借方", "贷方"],
                 _rows,
             )
         )

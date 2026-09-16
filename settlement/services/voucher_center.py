@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from settlement.services.purchase_voucher import build_purchase_voucher
@@ -26,9 +27,16 @@ def _cell(text, num=False):
     return {"text": text, "num": num}
 
 
-def _sales_card(period):
+def _sales_card(period, month=None):
     # 按销售大类展开（与明细页默认一致）：贷方「库存商品—纱线」「发出商品—面料」都看得见
-    voucher = build_sales_voucher_entries(period, group="category")
+    target = None
+    if month:
+        try:
+            year, month_no = str(month).split("-")
+            target = date(int(year), int(month_no), 1)
+        except (TypeError, ValueError):
+            target = None
+    voucher = build_sales_voucher_entries(period, month=target, group="category")
     totals = voucher["totals"]
     entries = []
     for block in voucher["blocks"]:
@@ -39,14 +47,12 @@ def _sales_card(period):
                     "cells": [
                         _cell(row["summary"]),
                         _cell(row["account"]),
-                        _cell(row["aux"]),
-                        _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
-                        _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
                         _cell(
                             "{:,.3f}".format(row["quantity"]) if row["quantity"] else "",
                             True,
                         ),
-                        _cell("{:,}".format(row["source_rows"]) if row["source_rows"] else "", True),
+                        _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
+                        _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
                     ],
                 }
             )
@@ -63,7 +69,7 @@ def _sales_card(period):
         checks.append(
             {
                 "level": "warning",
-                "text": "记账月份 %s 没有参与汇总的销售台账行。" % voucher["month"],
+                "text": "凭证期间 %s 没有参与结转的销售台账行。" % voucher["month"],
             }
         )
     return {
@@ -77,25 +83,23 @@ def _sales_card(period):
                 "贷方 库存商品／发出商品，借贷两侧都按销售大类展开。",
         "url_name": "sales_cost_voucher",
         "export_kind": "sales_voucher",
-        "metrics": [
-            _metric("凭证期间", voucher["month"]),
-            _metric("借方合计", "{:,.2f}".format(totals["debit"])),
-            _metric("贷方合计", "{:,.2f}".format(totals["credit"])),
-            _metric("结转金额合计", "{:,.2f}".format(
-                voucher["summary_totals"]["amount"])),
-            _metric("参与结转台账行数", "{:,}".format(totals["source_rows"])),
-            _metric("结转类型", "%d 类" % len(CARRY_COST_TYPES)),
-        ],
+        # 汇总字段按要求去掉；凭证期间保留，并做成可筛选字段（卡片上的下拉）
+        "metrics": [],
+        "month": voucher["month"],
+        "month_filter": {
+            "param": "sales_month",
+            "value": voucher["month"],
+            "options": [
+                {"value": item["value"], "label": item["label"]}
+                for item in voucher["months"]
+            ],
+        },
         "entry_headers": list(voucher["headers"]),
         "entries": entries,
-        "balance": {
-            "debit": totals["debit"],
-            "credit": totals["credit"],
-            "balanced": totals["balanced"],
-            "label": "借贷",
-        },
+        "balance": None,
         "checks": checks,
     }
+
 
 
 def _purchase_card(period):
@@ -175,8 +179,11 @@ def _planned(key, title, eyebrow, note):
     }
 
 
-def build_voucher_center(period):
-    """本期凭证中心数据：已实现 2 类 + 规划中 3 类。"""
+def build_voucher_center(period, sales_month=None):
+    """本期凭证中心数据：已实现 2 类 + 规划中 3 类。
+
+    sales_month：销售凭证卡片上「凭证期间」的筛选（选哪个期间就出哪个期间的销售凭证）。
+    """
     # 按建议的生成顺序排列：暂估回冲 → 投料 → 制造费用 → 完工入库 → 销售结转
     cards = [_purchase_card(period)]
     cards.append(
@@ -207,7 +214,7 @@ def build_voucher_center(period):
             "工单完工成本）与浆粕单独归集需先确认；本地 7 月两条口径相差 362.57 万。",
         )
     )
-    cards.append(_sales_card(period))
+    cards.append(_sales_card(period, month=sales_month))
 
     # 顺序号：页面按这个顺序展示，末尾的「建议的凭证生成顺序」也用它
     for index, card in enumerate(cards, start=1):

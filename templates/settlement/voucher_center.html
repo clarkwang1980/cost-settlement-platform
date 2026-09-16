@@ -50,10 +50,24 @@
     </div>
     <div class="heading-actions">
       {% if card.status == 'ready' %}
-      <span class="pill {% if card.balance and card.balance.balanced %}success{% else %}danger{% endif %}">
-        {% if card.balance %}{{ card.balance.label }} {{ card.balance.debit|floatformat:2|thousands }} / {{ card.balance.credit|floatformat:2|thousands }}{% endif %}
+      {% if card.month_filter %}
+      <form method="get" class="filter-actions" style="margin:0;">
+        <label class="muted-text">凭证期间
+          <select name="{{ card.month_filter.param }}" onchange="this.form.submit()">
+            {% for item in card.month_filter.options %}
+            <option value="{{ item.value }}"{% if item.value == card.month_filter.value %} selected{% endif %}>{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <noscript><button class="button secondary" type="submit">切换</button></noscript>
+      </form>
+      {% endif %}
+      {% if card.balance %}
+      <span class="pill {% if card.balance.balanced %}success{% else %}danger{% endif %}">
+        {{ card.balance.label }} {{ card.balance.debit|floatformat:2|thousands }} / {{ card.balance.credit|floatformat:2|thousands }}
       </span>
-      <a class="button secondary" href="{% url card.url_name period.id %}">打开明细</a>
+      {% endif %}
+      <a class="button secondary" href="{% url card.url_name period.id %}{% if card.month %}?voucher_month={{ card.month }}{% endif %}">打开明细</a>
       <a class="button secondary" href="{% url 'export_listing' period.id card.export_kind %}">导出Excel</a>
       {% else %}
       <span class="pill warning">规划中</span>

@@ -32,15 +32,6 @@
   </div>
 </section>
 
-<section class="summary-strip six">
-  <article><span>凭证期间</span><strong>{{ voucher.month|default:"—" }}</strong></article>
-  <article><span>借方合计</span><strong>{{ voucher.totals.debit|floatformat:2|thousands }}</strong></article>
-  <article><span>贷方合计</span><strong>{{ voucher.totals.credit|floatformat:2|thousands }}</strong></article>
-  <article><span>结转金额合计</span><strong>{{ voucher.summary_totals.amount|floatformat:2|thousands }}</strong></article>
-  <article><span>结转数量合计</span><strong>{{ voucher.totals.quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>无成本行数</span><strong class="{% if voucher.totals.missing_cost_rows %}danger-text{% endif %}">{{ voucher.totals.missing_cost_rows }}</strong></article>
-</section>
-
 {% if voucher.checks %}
 <section class="section-card">
   <div class="section-heading">
@@ -48,7 +39,6 @@
       <p class="eyebrow">PRE-CHECKS</p>
       <h2>生成前检查</h2>
     </div>
-    <span class="pill {% if voucher.totals.balanced %}success{% else %}danger{% endif %}">借贷{{ voucher.totals.balanced|yesno:"平衡,不平衡" }}</span>
   </div>
   {% for check in voucher.checks %}
   <div class="message message-{% if check.level == 'blocking' %}error{% elif check.level == 'warning' %}warning{% else %}info{% endif %}">
@@ -63,13 +53,6 @@
     <div>
       <p class="eyebrow">VOUCHER ENTRIES</p>
       <h2>凭证分录（不含税）</h2>
-      <p class="muted-text" style="margin:6px 0 0;">
-        凭证期间 {{ voucher.month }}　借方合计 {{ voucher.totals.debit|floatformat:2|thousands }}　
-        贷方合计 {{ voucher.totals.credit|floatformat:2|thousands }}　
-        差额 {{ voucher.totals.difference|floatformat:2|thousands }}　
-        分录 {{ voucher.totals.line_count }} 行　
-        参与结转台账行数 {{ voucher.totals.source_rows }}
-      </p>
       <p class="muted-text" style="margin:6px 0 0;">{{ voucher.voucher_note }}</p>
     </div>
   </div>
@@ -94,20 +77,17 @@
         <tr{% if row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
           <td>{{ row.summary }}</td>
           <td>{% if row.account %}{{ row.account }}{% endif %}</td>
-          <td class="muted-text">{{ row.aux }}</td>
+          <td class="num">{% if row.quantity %}{{ row.quantity|floatformat:3|thousands }}{% endif %}</td>
           <td class="num">{% if row.debit %}{{ row.debit|floatformat:2|thousands }}{% endif %}</td>
           <td class="num">{% if row.credit %}{{ row.credit|floatformat:2|thousands }}{% endif %}</td>
-          <td class="num">{% if row.quantity %}{{ row.quantity|floatformat:3|thousands }}{% endif %}</td>
-          <td class="num">{{ row.source_rows }}</td>
         </tr>
         {% endfor %}
         {% endfor %}
         <tr style="font-weight:700;background:#E6F0FB;">
-          <td>合计</td><td></td><td></td>
+          <td>合计</td><td></td>
+          <td class="num">{{ voucher.totals.quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ voucher.totals.debit|floatformat:2|thousands }}</td>
           <td class="num">{{ voucher.totals.credit|floatformat:2|thousands }}</td>
-          <td class="num">{{ voucher.totals.quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ voucher.totals.source_rows }}</td>
         </tr>
       </tbody>
     </table>
@@ -117,6 +97,7 @@
     贷方：库存商品（当月发货的）／发出商品（以前月份已挂发出商品、本期开票结转的）。
     <strong>借贷两侧都按销售大类展开</strong>（如「库存商品—纱线」「发出商品—面料」）。
     每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置。
+    「凭证期间」在上方下拉里选择，选哪个期间就出哪个期间的凭证。
   </p>
 </section>
 

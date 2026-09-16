@@ -4791,9 +4791,7 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         section = html[idx:html.index("</table>", idx)]
         heads = [re.sub(r"<[^>]+>", "", h).strip()
                  for h in re.findall(r"<th[^>]*>(.*?)</th>", section, re.S)]
-        self.assertEqual(
-            heads, ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"]
-        )
+        self.assertEqual(heads, ["摘要", "科目", "数量", "借方", "贷方"])
         # 附件里三块的下拉参数名互不相同（保留原有独立筛选）
         for name in ("vout0", "vst0", "vinv0", "vout1", "vst1", "vinv1",
                      "vout2", "vst2", "vinv2"):
@@ -4888,6 +4886,42 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(debit_by_cat, credit_by_cat)
 
 
+    def test_sales_voucher_slim_format(self):
+        """新格式：摘要不带销售大类、无辅助核算/来源行数、数量在借方前、凭证期间可筛选。"""
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
+        data = build_sales_voucher_entries(self.period)
+        self.assertEqual(list(data["headers"]), ["摘要", "科目", "数量", "借方", "贷方"])
+        for block in data["blocks"]:
+            for row in block["entries"]:
+                # 摘要只有结转类型，不带销售大类
+                self.assertNotIn("纱线", row["summary"])
+                if row["level"] == "line" and row["account"]:
+                    self.assertIn("—", row["account"])
+        # 凭证中心卡片：无汇总字段、无借贷 pill、凭证期间是筛选
+        center = build_voucher_center(self.period)
+        card = {item["key"]: item for item in center["cards"]}["sales"]
+        self.assertEqual(card["metrics"], [])
+        self.assertIsNone(card["balance"])
+        self.assertEqual(
+            card["entry_headers"], ["摘要", "科目", "数量", "借方", "贷方"]
+        )
+        self.assertEqual(card["month_filter"]["param"], "sales_month")
+        self.assertTrue(card["month_filter"]["options"])
+        # 凭证中心页面渲染
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("voucher_center", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn('name="sales_month"', html)
+        self.assertIn("凭证期间", html)
+        self.assertNotIn("参与结转台账行数", html)
+        # 切期间后卡片只出该期间的数据
+        june = {item["key"]: item
+                for item in build_voucher_center(
+                    self.period, sales_month="2026-06")["cards"]}["sales"]
+        self.assertEqual(june["month"], "2026-06")
+
     def test_voucher_keeps_raw_sales_category(self):
         """销售大类保留台账原值：带括号的写法不能被归一成「其他成品」。"""
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
@@ -4919,10 +4953,17 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(
             categories, {"其他成品（手套、服装、床垫等）", "其他成品（毯子）"}
         )
-        # 辅助核算用同一个原值
-        aux = {row["aux"] for block in data["blocks"] for row in block["entries"]
-               if row["level"] == "line" and row["debit"] > 0}
-        self.assertTrue(all("其他成品" in item for item in aux))
+        # 科目名与摘要里的大类处理：科目带原值，摘要不带（辅助核算列已按要求去掉）
+        self.assertEqual(
+            {row["aux"] for block in data["blocks"] for row in block["entries"]
+             if row["level"] == "line"}, {""}
+        )
+        debit_accounts = {
+            row["account"] for block in data["blocks"] for row in block["entries"]
+            if row["level"] == "line" and row["debit"] > 0
+        }
+        self.assertTrue(all("其他成品" in item for item in debit_accounts),
+                        debit_accounts)
         # 默认（fixed）口径仍按老规则归一，未受影响
         fixed = build_sales_voucher_summary(self.period)
         fixed_categories = {
@@ -5602,8 +5643,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         data = build_voucher_center(self.period)
         cards = {card["key"]: card for card in data["cards"]}
         self.assertEqual(
-            cards["sales"]["entry_headers"],
-            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+            cards["sales"]["entry_headers"], ["摘要", "科目", "数量", "借方", "贷方"]
         )
         self.assertEqual(
             cards["purchase"]["entry_headers"],
@@ -5640,10 +5680,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             for h in re.findall(r"<th[^>]*>(.*?)</th>", detail_body, re.S)
         ]
 
-        self.assertEqual(
-            detail_heads,
-            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
-        )
+        self.assertEqual(detail_heads, ["摘要", "科目", "数量", "借方", "贷方"])
         self.assertEqual(center_heads, detail_heads)
 
         # 首行第一列是会计科目（不是结转类型）
@@ -5664,11 +5701,14 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         html = self.client.get(
             reverse("sales_cost_voucher", args=[self.period.id])
         ).content.decode("utf-8")
-        for text in ("<h1>销售结转成本凭证</h1>", "summary-strip",
+        for text in ("<h1>销售结转成本凭证</h1>",
                      "生成前检查", "<h2>凭证分录（不含税）</h2>",
                      "<h2>附件：结转类型 × 销售大类（含表内筛选）</h2>",
                      "取数口径与说明", "voucher-filter-form", "凭证期间"):
             self.assertIn(text, html, text)
+        # 汇总卡与借贷 pill 按要求去掉
+        self.assertNotIn("summary-strip", html)
+        self.assertNotIn("参与结转台账行数", html)
         # 采购凭证页也是同一套结构，保证两页格式一致
         purchase = self.client.get(
             reverse("purchase_accrual_voucher", args=[self.period.id])
