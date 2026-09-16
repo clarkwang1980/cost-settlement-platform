@@ -66,6 +66,8 @@
       <span class="pill {% if card.balance.balanced %}success{% else %}danger{% endif %}">
         {{ card.balance.label }} {{ card.balance.debit|floatformat:2|thousands }} / {{ card.balance.credit|floatformat:2|thousands }}
       </span>
+      {% elif card.month %}
+      <span class="pill">凭证期间 {{ card.month }}</span>
       {% endif %}
       <a class="button secondary" href="{% url card.url_name period.id %}{% if card.month %}?voucher_month={{ card.month }}{% endif %}">打开明细</a>
       <a class="button secondary" href="{% url 'export_listing' period.id card.export_kind %}">导出Excel</a>

@@ -9,21 +9,30 @@
     <p>本月到货本月到票直接入账；本月到货月末未到票暂估；前期暂估本月到票回冲原暂估并按票入账。金额口径不含税。</p>
   </div>
   <div class="heading-actions">
+    <label class="muted-text">凭证期间
+      <select onchange="location.href=this.value" aria-label="凭证期间">
+        {% for item in period_options %}
+        <option value="{% url 'purchase_accrual_voucher' item.id %}"{% if item.id == period.id %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <form method="get" class="filter-actions" style="margin:0;">
+      <input type="hidden" name="supplier" value="{{ voucher.filter.supplier }}">
+      <input type="hidden" name="material" value="{{ voucher.filter.material }}">
+      <label class="muted-text">科目粒度
+        <select name="group" onchange="this.form.submit()">
+          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>按物料大类 / 供应商展开</option>
+          <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每类一行）</option>
+        </select>
+      </label>
+      <noscript><button class="button secondary" type="submit">切换</button></noscript>
+    </form>
     <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
     <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'purchase_reversal_report' period.id %}">暂估回冲明细</a>
     <a class="button secondary" href="{% url 'sales_cost_voucher' period.id %}">销售结转成本凭证</a>
   </div>
-</section>
-
-<section class="summary-strip six">
-  <article><span>本月到货金额</span><strong>{{ voucher.summary.receipt_amount|floatformat:2|thousands }}</strong></article>
-  <article><span>① 到货到票直接入账</span><strong>{{ voucher.summary.same_month_amount|floatformat:2|thousands }}</strong></article>
-  <article><span>② 到货未到票（暂估）</span><strong>{{ voucher.summary.accrual_amount|floatformat:2|thousands }}</strong></article>
-  <article><span>③ 冲回原暂估</span><strong>{{ voucher.summary.reversal_amount|floatformat:2|thousands }}</strong></article>
-  <article><span>本月价差</span><strong class="{% if voucher.summary.difference_total %}danger-text{% endif %}">{{ voucher.summary.difference_total|floatformat:2|thousands }}</strong></article>
-  <article><span>月末暂估余额</span><strong>{{ voucher.summary.ending_balance|floatformat:2|thousands }}</strong></article>
 </section>
 
 {% if voucher.checks %}
@@ -33,7 +42,6 @@
       <p class="eyebrow">PRE-CHECKS</p>
       <h2>生成前检查</h2>
     </div>
-    <span class="pill {% if voucher.totals.balanced %}success{% else %}danger{% endif %}">借贷{{ voucher.totals.balanced|yesno:"平衡,不平衡" }}</span>
   </div>
   {% for check in voucher.checks %}
   <div class="message message-{% if check.level == 'blocking' %}error{% elif check.level == 'warning' %}warning{% else %}info{% endif %}">
@@ -48,36 +56,15 @@
     <div>
       <p class="eyebrow">VOUCHER ENTRIES</p>
       <h2>凭证分录（不含税）</h2>
-      <p class="muted-text" style="margin:6px 0 0;">
-        记账月份 {{ voucher.month }}　借方合计 {{ voucher.totals.debit|floatformat:2|thousands }}　
-        贷方合计 {{ voucher.totals.credit|floatformat:2|thousands }}　
-        差额 {{ voucher.totals.difference|floatformat:2|thousands }}　分录 {{ voucher.totals.line_count }} 行
-      </p>
+      <p class="muted-text" style="margin:6px 0 0;">{{ voucher.voucher_note }}</p>
     </div>
-    <form method="get" class="filter-actions" style="margin:0;">
-      <input type="hidden" name="supplier" value="{{ voucher.filter.supplier }}">
-      <input type="hidden" name="material" value="{{ voucher.filter.material }}">
-      <label class="muted-text">科目粒度
-        <select name="group" onchange="this.form.submit()">
-          <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每类一行）</option>
-          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>按物料大类 / 供应商展开</option>
-        </select>
-      </label>
-      <noscript><button class="button secondary" type="submit">切换</button></noscript>
-    </form>
   </div>
 
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th style="min-width:260px;">摘要</th>
-          <th style="min-width:190px;">科目</th>
-          <th style="min-width:170px;">辅助核算</th>
-          <th class="num">借方</th>
-          <th class="num">贷方</th>
-          <th class="num">数量</th>
-          <th class="num">来源行数</th>
+          {% for header in voucher.headers %}<th{% if forloop.counter0 >= 2 %} class="num"{% endif %}>{{ header }}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
@@ -86,20 +73,17 @@
         <tr{% if row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
           <td>{{ row.summary }}</td>
           <td>{% if row.account %}{{ row.account }}{% endif %}</td>
-          <td class="muted-text">{{ row.aux }}</td>
+          <td class="num">{% if row.quantity %}{{ row.quantity|floatformat:3|thousands }}{% endif %}</td>
           <td class="num">{% if row.debit %}{{ row.debit|floatformat:2|thousands }}{% endif %}</td>
           <td class="num">{% if row.credit %}{{ row.credit|floatformat:2|thousands }}{% endif %}</td>
-          <td class="num">{% if row.quantity %}{{ row.quantity|floatformat:3|thousands }}{% endif %}</td>
-          <td class="num">{{ row.source_rows }}</td>
         </tr>
         {% endfor %}
         {% endfor %}
         <tr style="font-weight:700;background:#E6F0FB;">
-          <td>合计</td><td></td><td></td>
+          <td>合计</td><td></td>
+          <td class="num">{{ voucher.totals.quantity|floatformat:3|thousands }}</td>
           <td class="num">{{ voucher.totals.debit|floatformat:2|thousands }}</td>
           <td class="num">{{ voucher.totals.credit|floatformat:2|thousands }}</td>
-          <td class="num">{{ voucher.totals.quantity|floatformat:3|thousands }}</td>
-          <td></td>
         </tr>
       </tbody>
     </table>

@@ -42,6 +42,14 @@ SAME_MONTH = "same_month"
 ACCRUAL = "accrual"
 REVERSAL = "reversal"
 
+#: 凭证分录口径说明（页面上展示）
+VOUCHER_NOTE = (
+    "借：原材料（本月到货，按合同暂估价计入存货）；"
+    "贷：应付账款—XX供应商（本月到票的部分）／应付账款—暂估应付（月末仍未到票的部分）。"
+    "以前月份暂估本月到票的：借 应付账款—暂估应付（冲原暂估）／贷 应付账款—XX供应商，"
+    "发票价与暂估价不同时差额进材料成本差异。"
+)
+
 BLOCK_TITLES = {
     SAME_MONTH: "① 本月到货 + 本月到票",
     ACCRUAL: "② 本月到货 + 月末未到票",
@@ -218,9 +226,8 @@ def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff,
         )
     debit_total = sum((row["debit"] for row in rows), ZERO)
     credit_total = sum((row["credit"] for row in rows), ZERO)
-    quantity = sum(
-        (row["quantity"] for row in rows if row["debit"] > ZERO), ZERO
-    )
+    # 数量＝借方维度（物料大类）汇总，含金额为 0 的行；两种科目粒度下保持一致
+    quantity = sum((item["quantity"] for item in debit_map.values()), ZERO)
     # 来源行数只算一侧（借贷两侧是同一批单据，不能相加）
     debit_rows = sum(row["source_rows"] for row in rows if row["debit"] > ZERO)
     credit_rows = sum(row["source_rows"] for row in rows if row["credit"] > ZERO)
@@ -605,6 +612,9 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
             "unpriced_rows": missing_price,
         },
         "checks": checks,
+        # 分录表列与口径说明（与销售结转成本凭证一致）
+        "headers": ["摘要", "科目", "数量", "借方", "贷方"],
+        "voucher_note": VOUCHER_NOTE,
         "receipt_rows": filtered_receipts,
         "reversal_rows": filtered_reversals,
         "balance_rows": filtered_balance,

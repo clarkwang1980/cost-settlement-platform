@@ -5477,9 +5477,20 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
             "附件2：暂估回冲明细",
             "附件3：应付账款—暂估应付余额表",
             "暂估账龄（按到货月份）",
+            "凭证期间",
         ):
             self.assertIn(text, html, text)
         self.assertIn("1,000.00", html)
+        # 与销售结转成本凭证同格式：无汇总卡、无借贷 pill、5 列分录
+        self.assertNotIn("summary-strip", html)
+        self.assertNotIn("借贷平衡", html)
+        idx = html.index("<h2>凭证分录（不含税）</h2>")
+        section = html[idx:html.index("</table>", idx)]
+        heads = [
+            re.sub(r"<[^>]+>", "", h).strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", section, re.S)
+        ]
+        self.assertEqual(heads, ["摘要", "科目", "数量", "借方", "贷方"])
 
         export = self.client.get(
             reverse("export_listing", args=[self.period.id, "purchase_voucher"])
@@ -5487,6 +5498,13 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(export.status_code, 200)
         workbook = load_workbook(BytesIO(export.content))
         self.assertEqual(workbook.sheetnames[0], "凭证分录")
+        header_row = [
+            cell for cell in next(workbook["凭证分录"].iter_rows(values_only=True))
+        ]
+        self.assertEqual(
+            list(header_row),
+            ["凭证期间", "摘要", "科目", "数量", "借方", "贷方"],
+        )
         for name in ("附件1-本月到货明细", "附件2-暂估回冲明细",
                      "附件3-应付暂估余额", "附件4-暂估账龄"):
             self.assertIn(name, workbook.sheetnames)
@@ -5576,8 +5594,9 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             [step["key"] for step in data["steps"]], keys
         )
         purchase = {card["key"]: card for card in data["cards"]}["purchase"]
-        self.assertEqual(purchase["balance"]["debit"], purchase["balance"]["credit"])
-        self.assertTrue(purchase["balance"]["balanced"])
+        # 与销售卡片一致：不展示汇总字段与借贷 pill
+        self.assertIsNone(purchase["balance"])
+        self.assertEqual(purchase["metrics"], [])
         self.assertTrue(purchase["entries"])
         self.assertTrue(data["all_balanced"])
 
@@ -5646,9 +5665,10 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             cards["sales"]["entry_headers"], ["摘要", "科目", "数量", "借方", "贷方"]
         )
         self.assertEqual(
-            cards["purchase"]["entry_headers"],
-            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+            cards["purchase"]["entry_headers"], ["摘要", "科目", "数量", "借方", "贷方"]
         )
+        self.assertEqual(cards["purchase"]["metrics"], [])
+        self.assertIsNone(cards["purchase"]["balance"])
         for key in ("sales", "purchase"):
             width = len(cards[key]["entry_headers"])
             for row in cards[key]["entries"]:
@@ -5713,8 +5733,9 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         purchase = self.client.get(
             reverse("purchase_accrual_voucher", args=[self.period.id])
         ).content.decode("utf-8")
-        for text in ("summary-strip", "生成前检查", "<h2>凭证分录（不含税）</h2>"):
+        for text in ("生成前检查", "<h2>凭证分录（不含税）</h2>", "凭证期间"):
             self.assertIn(text, purchase, text)
+        self.assertNotIn("summary-strip", purchase)
 
     def test_nav_has_single_voucher_center_entry(self):
         """导航合并成一个「凭证中心」入口，明细页保留返回入口。"""

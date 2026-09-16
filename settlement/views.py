@@ -882,7 +882,7 @@ def purchase_accrual_voucher(request, period_id):
     凭证金额不随明细筛选变化（借贷必须相等）；筛选只过滤下面三张附件。
     """
     period = get_object_or_404(AccountingPeriod, id=period_id)
-    group = str(request.GET.get("group", "")).strip() or "single"
+    group = str(request.GET.get("group", "")).strip() or "category"
     voucher = build_purchase_voucher(
         period,
         group=group,
@@ -895,6 +895,11 @@ def purchase_accrual_voucher(request, period_id):
         {
             "period": period,
             "voucher": voucher,
+            # 凭证期间＝核算期间：下拉可直接切到别的期间看那个期间的凭证
+            "period_options": [
+                {"id": item.id, "label": str(item)}
+                for item in AccountingPeriod.objects.order_by("month")
+            ],
         },
     )
 
@@ -3645,7 +3650,7 @@ def _listing_rows(request, period, kind):
         # 采购暂估 / 暂估回冲凭证：凭证分录 + 三张附件（与页面口径一致）
         _pv = build_purchase_voucher(
             period,
-            group=request.GET.get("group", "") or "single",
+            group=request.GET.get("group", "") or "category",
             detail_supplier=request.GET.get("supplier", ""),
             detail_material=request.GET.get("material", ""),
         )
@@ -3654,25 +3659,24 @@ def _listing_rows(request, period, kind):
             for _row in _block["rows"]:
                 _rows.append(
                     (
+                        _pv["month"],
                         _row["summary"],
                         _row["account"],
-                        _row["aux"],
+                        _row["quantity"],
                         _row["debit"],
                         _row["credit"],
-                        _row["quantity"],
-                        _row["source_rows"],
                     )
                 )
         _rows.append(
             (
-                "合计", "", "", _pv["totals"]["debit"], _pv["totals"]["credit"],
-                _pv["totals"]["quantity"], "",
+                _pv["month"], "合计", "", _pv["totals"]["quantity"],
+                _pv["totals"]["debit"], _pv["totals"]["credit"],
             )
         )
         sheets.append(
             (
                 "凭证分录",
-                ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+                ["凭证期间", "摘要", "科目", "数量", "借方", "贷方"],
                 _rows,
             )
         )

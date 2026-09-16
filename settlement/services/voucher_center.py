@@ -103,26 +103,23 @@ def _sales_card(period, month=None):
 
 
 def _purchase_card(period):
-    voucher = build_purchase_voucher(period, group="single")
-    summary = voucher["summary"]
+    # 与销售凭证卡片同格式：按物料大类 / 供应商展开，5 列（摘要｜科目｜数量｜借方｜贷方）
+    voucher = build_purchase_voucher(period, group="category")
     entries = []
     for block in voucher["blocks"]:
         for row in block["rows"]:
-            # 与采购凭证明细页保持一致的 7 列
             entries.append(
                 {
                     "level": row["level"],
                     "cells": [
                         _cell(row["summary"]),
                         _cell(row["account"]),
-                        _cell(row["aux"]),
-                        _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
-                        _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
                         _cell(
                             "{:,.3f}".format(row["quantity"]) if row["quantity"] else "",
                             True,
                         ),
-                        _cell("{:,}".format(row["source_rows"]) if row["source_rows"] else "", True),
+                        _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
+                        _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
                     ],
                 }
             )
@@ -136,27 +133,13 @@ def _purchase_card(period):
                 "价差进材料成本差异。期初暂估台账余额只提示、不入账。",
         "url_name": "purchase_accrual_voucher",
         "export_kind": "purchase_voucher",
-        "metrics": [
-            _metric("记账月份", voucher["month"]),
-            _metric("本月到货金额", "{:,.2f}".format(summary["receipt_amount"])),
-            _metric("① 到货到票入账", "{:,.2f}".format(summary["same_month_amount"])),
-            _metric("② 到货未到票暂估", "{:,.2f}".format(summary["accrual_amount"])),
-            _metric("③ 冲回原暂估", "{:,.2f}".format(summary["reversal_amount"])),
-            _metric(
-                "本月价差",
-                "{:,.2f}".format(summary["difference_total"]),
-                tone="danger" if summary["difference_total"] else "",
-            ),
-            _metric("月末暂估余额", "{:,.2f}".format(summary["ending_balance"])),
-        ],
-        "entry_headers": ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+        # 汇总字段与借贷 pill 与销售卡片一致，不再展示；凭证期间＝核算期间（用顶部期间导航切换）
+        "metrics": [],
+        "month": voucher["month"],
+        "month_filter": None,
+        "entry_headers": list(voucher["headers"]),
         "entries": entries,
-        "balance": {
-            "debit": voucher["totals"]["debit"],
-            "credit": voucher["totals"]["credit"],
-            "balanced": voucher["totals"]["balanced"],
-            "label": "借贷",
-        },
+        "balance": None,
         "checks": voucher["checks"],
     }
 
