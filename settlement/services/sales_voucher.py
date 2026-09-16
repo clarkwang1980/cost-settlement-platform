@@ -551,7 +551,7 @@ CREDIT_ACCOUNT_BY_CARRY = {
 VOUCHER_NOTE = (
     "数据来源：销售台账。结转类型与销售大类都取台账原值；"
     "金额取台账「销售成本」列（结算后按销售数量 × 月末加权平均价回填）。"
-    "借方 主营业务成本／发出商品、贷方 库存商品／发出商品，借贷两侧都按销售大类展开。"
+    "借方 主营业务成本（只分国内/国外销售）／发出商品、贷方 库存商品／发出商品（按销售大类）。"
 )
 
 
@@ -619,6 +619,7 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
 
         entries = []
         credit_entries = []
+        channel_totals = {}   # 主营业务成本按渠道（国内/国外）累计，跨大类合并
         block_quantity = ZERO
         block_amount = ZERO
         block_rows = 0
@@ -635,40 +636,31 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                 zero_amount_rows += 1
             category_label_text = row.get("category_label") or row["category"]
             if group == "category":
-                # 借方：主营业务成本再按销售渠道分国内/国外；其余科目不拆渠道
-                debit_rows = []
+                # 借方：主营业务成本只按销售渠道分国内/国外（不带销售大类），跨大类合并；
+                # 其余科目（发出商品）不拆渠道，仍按销售大类
                 if debit_account in CHANNEL_SPLIT_ACCOUNTS and row.get("channels"):
                     for item in row["channels"]:
-                        debit_rows.append(
-                            (
-                                "%s—%s—%s" % (
-                                    debit_account,
-                                    item["channel"] or CHANNEL_UNCLASSIFIED,
-                                    category_label_text,
-                                ),
-                                item["amount"],
-                                item["quantity"],
-                            )
+                        account_name = "%s—%s" % (
+                            debit_account,
+                            item["channel"] or CHANNEL_UNCLASSIFIED,
                         )
+                        bucket = channel_totals.setdefault(
+                            account_name,
+                            {"amount": ZERO, "quantity": ZERO, "rows": 0},
+                        )
+                        bucket["amount"] += item["amount"]
+                        bucket["quantity"] += item["quantity"]
+                        bucket["rows"] += row.get("source_rows", 0)
                 else:
-                    debit_rows.append(
-                        (
-                            "%s—%s" % (debit_account, category_label_text),
-                            amount,
-                            quantity,
-                        )
-                    )
-                # 摘要只写结转类型（不带销售大类）；大类体现在科目名里
-                for account_name, row_amount, row_quantity in debit_rows:
                     entries.append(
                         {
                             "level": "line",
                             "summary": carry,
-                            "account": account_name,
+                            "account": "%s—%s" % (debit_account, category_label_text),
                             "aux": "",
-                            "debit": row_amount,
+                            "debit": amount,
                             "credit": ZERO,
-                            "quantity": row_quantity,
+                            "quantity": quantity,
                             "source_rows": row.get("source_rows", 0),
                         }
                     )
@@ -685,6 +677,20 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                         "source_rows": 0,
                     }
                 )
+        # 借方渠道行（主营业务成本—国内销售 / —国外销售），每块各一行
+        for account_name, bucket in channel_totals.items():
+            entries.append(
+                {
+                    "level": "line",
+                    "summary": carry,
+                    "account": account_name,
+                    "aux": "",
+                    "debit": money(bucket["amount"]),
+                    "credit": ZERO,
+                    "quantity": bucket["quantity"],
+                    "source_rows": bucket["rows"],
+                }
+            )
         if block_amount == ZERO and block_quantity == ZERO:
             # 该块在当前筛选下没有数据：整块跳过
             continue

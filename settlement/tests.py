@@ -4824,17 +4824,14 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(blocks["前期发货本期开票结转成本"]["credit_account"], "发出商品")
         self.assertEqual(blocks["当月发货未开票挂发出商品"]["debit_account"], "发出商品")
         self.assertEqual(blocks["当月发货未开票挂发出商品"]["credit_account"], "库存商品")
-        # 借方按销售大类展开
-        # 借方「主营业务成本」按销售渠道分国内/国外
-        categories = {
+        # 借方只到销售渠道（销售大类体现在贷方与附件里）
+        # 借方「主营业务成本」只按销售渠道分国内/国外（不带销售大类），每块合并一行
+        categories = [
             row["account"]
             for row in blocks["当月发货当月开票结转成本"]["entries"]
             if row["level"] == "line" and row["debit"] > 0
-        }
-        self.assertEqual(
-            categories,
-            {"主营业务成本—国内销售—纱线", "主营业务成本—国内销售—面料"},
-        )
+        ]
+        self.assertEqual(categories, ["主营业务成本—国内销售"])
         # 附件表并列显示借贷科目
         self.assertEqual(
             list(data["summary_headers"])[:2], ["会计科目", "贷方科目"]
@@ -4886,18 +4883,16 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         )
         # 借贷两侧逐大类金额一致
         block1 = blocks["当月发货当月开票结转成本"]
-
-        def _by_category(side):
-            totals = {}
-            for row in block1["entries"]:
-                if row["level"] != "line" or not row[side]:
-                    continue
-                # 「主营业务成本—国内销售—纱线」取最后一段做销售大类
-                category = row["account"].split("—")[-1]
-                totals[category] = totals.get(category, Decimal("0")) + row[side]
-            return totals
-
-        self.assertEqual(_by_category("debit"), _by_category("credit"))
+        # 借贷两侧合计一致（借方按渠道、贷方按销售大类）
+        debit_sum = sum(
+            (row["debit"] for row in block1["entries"] if row["level"] == "line"),
+            Decimal("0"),
+        )
+        credit_sum = sum(
+            (row["credit"] for row in block1["entries"] if row["level"] == "line"),
+            Decimal("0"),
+        )
+        self.assertEqual(debit_sum, credit_sum)
 
 
     def test_sales_voucher_slim_format(self):
@@ -4945,14 +4940,21 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
                    carry_type="当月发货当月开票结转成本", cost="50.00",
                    category="其他成品（毯子）")
         data = build_sales_voucher_entries(self.period)
-        accounts = {
+        # 借方只到渠道；销售大类体现在贷方（去掉结尾括号）
+        debit_accounts = {
             row["account"]
             for block in data["blocks"]
             for row in block["entries"]
             if row["level"] == "line" and row["debit"] > 0
         }
-        # 科目名去掉结尾括号（「其他成品（…）」→「其他成品」）
-        self.assertEqual(accounts, {"主营业务成本—国内销售—其他成品"})
+        self.assertEqual(debit_accounts, {"主营业务成本—国内销售"})
+        credit_accounts = {
+            row["account"]
+            for block in data["blocks"]
+            for row in block["entries"]
+            if row["level"] == "line" and row["credit"] > 0
+        }
+        self.assertEqual(credit_accounts, {"库存商品—其他成品"})
         # 两个原值各自成行（分组没有被合并），只是显示名都去掉了括号
         raw_categories = {
             row["category"]
@@ -4973,12 +4975,10 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             {row["aux"] for block in data["blocks"] for row in block["entries"]
              if row["level"] == "line"}, {""}
         )
-        debit_accounts = {
-            row["account"] for block in data["blocks"] for row in block["entries"]
-            if row["level"] == "line" and row["debit"] > 0
-        }
-        self.assertTrue(all("其他成品" in item for item in debit_accounts),
-                        debit_accounts)
+        # 借方只到渠道，不带销售大类（大类在贷方与附件里）
+        self.assertTrue(
+            all("其他成品" not in item for item in debit_accounts), debit_accounts
+        )
         # 默认（fixed）口径仍按老规则归一，未受影响
         fixed = build_sales_voucher_summary(self.period)
         fixed_categories = {
@@ -5454,7 +5454,8 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
         )
         single = build_purchase_voucher(self.period, group="single")
         category = build_purchase_voucher(self.period, group="category")
-        self.assertLess(
+        # 科目都已汇总（原材料不分大类、应付账款不分供应商），两种模式结构一致
+        self.assertEqual(
             single["totals"]["line_count"], category["totals"]["line_count"]
         )
         single_accounts = {
@@ -5471,8 +5472,10 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
             for row in block["rows"]
             if row["level"] == "line"
         }
-        self.assertIn("原材料—原料", category_accounts)
-        self.assertIn("原材料—包装物", category_accounts)
+        self.assertIn("原材料", category_accounts)
+        # 原材料不再按物料大类拆（原料 / 包装物 都不出现）
+        self.assertNotIn("原材料—原料", category_accounts)
+        self.assertNotIn("原材料—包装物", category_accounts)
         self.assertEqual(single["totals"]["debit"], category["totals"]["debit"])
 
     def test_purchase_voucher_period_filter(self):
@@ -5493,6 +5496,20 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(
             self.client.get(url, {"voucher_month": "2026-13"}).status_code, 200
         )
+
+    def test_purchase_material_is_consolidated(self):
+        """原材料不分物料大类（原料/纱线/面料…），汇总一行。"""
+        self._match_invoice(
+            invoice_no="PI-PV-11", quantity=Decimal("100"), unit_price=Decimal("10")
+        )
+        data = build_purchase_voucher(self.period, group="category")
+        material_accounts = {
+            row["account"]
+            for block in data["blocks"]
+            for row in block["rows"]
+            if row["level"] == "line" and (row["account"] or "").startswith("原材料")
+        }
+        self.assertEqual(material_accounts, {"原材料"})
 
     def test_purchase_credit_is_consolidated(self):
         """应付账款类科目（含暂估应付）不按供应商展开，汇总一行。"""
@@ -5765,7 +5782,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             re.sub(r"<[^>]+>", "", c).strip()
             for c in re.findall(r"<td[^>]*>(.*?)</td>", first_tr, re.S)
         ]
-        # 中心与明细页同口径（按销售大类展开）：摘要＝结转类型 + 大类，科目带大类
+        # 中心与明细页同口径：摘要＝结转类型 + 大类，科目借方到渠道、贷方带销售大类
         self.assertTrue(cells[0].startswith("当月发货当月开票结转成本"), cells[0])
         self.assertTrue(cells[1].startswith("主营业务成本—"), cells[1])
 

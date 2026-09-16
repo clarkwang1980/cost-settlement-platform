@@ -44,7 +44,7 @@ REVERSAL = "reversal"
 
 #: 凭证分录口径说明（页面上展示）
 VOUCHER_NOTE = (
-    "借：原材料（本月到货，按合同暂估价计入存货）；"
+    "借：原材料（本月到货，按合同暂估价计入存货，不区分物料大类）；"
     "贷：应付账款—XX供应商（本月到票的部分）／应付账款—暂估应付（月末仍未到票的部分）。"
     "以前月份暂估本月到票的：借 应付账款—暂估应付（冲原暂估）／贷 应付账款—XX供应商，"
     "发票价与暂估价不同时差额进材料成本差异。"
@@ -200,8 +200,10 @@ def _expand(mapping, account, side, group, label, summary, aux_note):
     return rows
 
 
-#: 这些科目不按辅助对象展开（应付账款类只出一行，不按供应商拆）
-CONSOLIDATED_ACCOUNTS = ("应付账款",)
+#: 这些科目不按辅助对象展开，只出一行：
+#: - 原材料：不分物料大类（原料 / 纱线 / 面料 …），汇总一行
+#: - 应付账款（含暂估应付）：不按供应商拆
+CONSOLIDATED_ACCOUNTS = ("原材料", "应付账款")
 
 
 def _is_consolidated(account):
@@ -210,7 +212,7 @@ def _is_consolidated(account):
 
 def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff, group):
     rows = []
-    # 借方：原材料按物料大类展开；应付账款类（如冲回暂估）汇总一行
+    # 借方：原材料汇总一行（不分物料大类）；应付账款类（如冲回暂估）同样汇总一行
     rows += _expand(
         debit_map, debit_account, "debit",
         "single" if _is_consolidated(debit_account) else group,
@@ -238,7 +240,7 @@ def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff,
         )
     debit_total = sum((row["debit"] for row in rows), ZERO)
     credit_total = sum((row["credit"] for row in rows), ZERO)
-    # 数量＝借方维度（物料大类）汇总，含金额为 0 的行；两种科目粒度下保持一致
+    # 数量＝借方汇总（原材料不再按物料大类拆），含金额为 0 的行；两种科目粒度下保持一致
     quantity = sum((item["quantity"] for item in debit_map.values()), ZERO)
     # 来源行数只算一侧（借贷两侧是同一批单据，不能相加）
     debit_rows = sum(row["source_rows"] for row in rows if row["debit"] > ZERO)

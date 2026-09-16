@@ -29,7 +29,8 @@ def _cell(text, num=False):
 
 
 def _sales_card(period, month=None):
-    # 按销售大类展开（与明细页默认一致）：贷方「库存商品—纱线」「发出商品—面料」都看得见
+    # 与明细页默认一致（group=category）：贷方按销售大类展开看得到「库存商品—纱线」，
+    # 借方「主营业务成本」只到销售渠道（国内/国外）
     target = None
     if month:
         try:
@@ -80,8 +81,9 @@ def _sales_card(period, month=None):
         "status": "ready",
         "status_label": "已实现",
         "note": "数据来源：销售台账。结转类型与销售大类都取台账原值；金额取台账「销售成本」列"
-                "（结算后按销售数量 × 月末加权平均价回填）。借方 主营业务成本／发出商品、"
-                "贷方 库存商品／发出商品，借贷两侧都按销售大类展开。",
+                "（结算后按销售数量 × 月末加权平均价回填）。"
+                "借方 主营业务成本（只分国内/国外销售）／发出商品、"
+                "贷方 库存商品／发出商品（按销售大类展开）。",
         "url_name": "sales_cost_voucher",
         "export_kind": "sales_voucher",
         # 汇总字段按要求去掉；凭证期间保留，并做成可筛选字段（卡片上的下拉）
@@ -119,7 +121,7 @@ def _period_by_month(period, month):
 
 
 def _purchase_card(period, month=None):
-    # 与销售凭证卡片同格式：按物料大类展开、贷方汇总一行，5 列（摘要｜科目｜数量｜借方｜贷方）
+    # 与销售凭证卡片同格式：原材料与应付账款都汇总一行，5 列（摘要｜科目｜数量｜借方｜贷方）
     target = _period_by_month(period, month)
     voucher = build_purchase_voucher(target, group="category")
     entries = []

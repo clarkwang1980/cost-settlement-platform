@@ -19,7 +19,7 @@
       </label>
       <label class="muted-text">科目粒度
         <select name="group" onchange="this.form.submit()">
-          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>借方按销售大类展开</option>
+          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>借方按销售渠道展开（国内/国外）</option>
           <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每块借贷各一行）</option>
         </select>
       </label>
@@ -93,8 +93,8 @@
   </div>
   <p class="muted-text">{{ voucher.voucher_note }}</p>
   <p class="muted-text">
-    借方「主营业务成本」按销售渠道分国内/国外（如「主营业务成本—国内销售—纱线」）；
-    贷方为「库存商品—纱线」「发出商品—面料」。
+    借方「主营业务成本」只按销售渠道分国内/国外（如「主营业务成本—国内销售」，不再细分销售大类）；
+    借方「发出商品」与贷方「库存商品」「发出商品」按销售大类（如「库存商品—纱线」）。
     每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置；
     凭证期间在上方下拉里选择。
   </p>
@@ -192,7 +192,9 @@
     <li><strong>数量</strong>：取台账「销售数量」列；台账里销售数量为空或 0 的行在导入时就被跳过，不参与结转。</li>
     <li><strong>会计科目</strong>：借方 主营业务成本（同月开票、前期发货本期开票）／发出商品（未开票）；
       贷方 库存商品（同月开票、未开票）／发出商品（前期发货本期开票）。
-      借贷两侧都按销售大类展开（「库存商品—纱线」「发出商品—面料」），附件表并列显示借贷科目。</li>
+      借方「主营业务成本」只按销售渠道分国内/国外（如「主营业务成本—国内销售」，不再细分销售大类）；
+      贷方「库存商品」「发出商品」与借方「发出商品」按销售大类（如「库存商品—纱线」「发出商品—面料」），
+      附件表并列显示借贷科目。</li>
     <li><strong>销售大类</strong>：<strong>保留台账原值，不合并、不改写</strong>
       （例如「其他成品（手套、服装、床垫等）」原样显示），科目名按「科目—销售大类」展开，辅助核算也用它。</li>
     <li><strong>没有成本的行</strong>（该产品当月没有库存计价）：数量照算、金额按 0 计，

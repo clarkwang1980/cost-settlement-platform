@@ -19,12 +19,6 @@
           {% endfor %}
         </select>
       </label>
-      <label class="muted-text">科目粒度
-        <select name="group" onchange="this.form.submit()">
-          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>按物料大类展开</option>
-          <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每类一行）</option>
-        </select>
-      </label>
       <noscript><button class="button secondary" type="submit">切换</button></noscript>
     </form>
     <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
