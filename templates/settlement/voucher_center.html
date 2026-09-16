@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}凭证中心 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">VOUCHER CENTER</p>
+    <h1>凭证中心</h1>
+    <p>本核算期间的全部成本凭证：已实现的可以直接查看分录与明细并导出；规划中的列出取数口径。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_center' period.id %}">报表导出</a>
+    <a class="button secondary" href="{% url 'reconciliation' period.id %}">勾稽异常</a>
+  </div>
+</section>
+
+<section class="summary-strip six">
+  <article><span>记账月份</span><strong>{{ voucher_center.month }}</strong></article>
+  <article><span>已实现凭证</span><strong>{{ voucher_center.ready_count }} 类</strong></article>
+  <article><span>规划中凭证</span><strong>{{ voucher_center.planned_count }} 类</strong></article>
+  <article><span>分录行数合计</span><strong>{{ voucher_center.entry_count }}</strong></article>
+  <article><span>借贷平衡</span><strong class="{% if voucher_center.all_balanced %}success{% else %}danger-text{% endif %}">{{ voucher_center.all_balanced|yesno:"平衡,有异常" }}</strong></article>
+  <article><span>阻断提醒</span><strong class="{% if voucher_center.blocking %}danger-text{% endif %}">{{ voucher_center.blocking|length }}</strong></article>
+</section>
+
+{% if voucher_center.blocking or voucher_center.warnings %}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">PRE-CHECKS</p>
+      <h2>生成前检查（全部凭证汇总）</h2>
+    </div>
+  </div>
+  {% for check in voucher_center.blocking %}
+  <div class="message message-error">{{ check.text }}</div>
+  {% endfor %}
+  {% for check in voucher_center.warnings %}
+  <div class="message message-warning">{{ check.text }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% for card in voucher_center.cards %}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">{{ card.eyebrow }}</p>
+      <h2>{{ card.title }}</h2>
+      <p class="muted-text" style="margin:6px 0 0;">{{ card.note }}</p>
+    </div>
+    <div class="heading-actions">
+      {% if card.status == 'ready' %}
+      <span class="pill {% if card.balance and card.balance.balanced %}success{% else %}danger{% endif %}">
+        {% if card.balance %}{{ card.balance.label }} {{ card.balance.debit|floatformat:2|thousands }} / {{ card.balance.credit|floatformat:2|thousands }}{% endif %}
+      </span>
+      <a class="button secondary" href="{% url card.url_name period.id %}">打开明细</a>
+      <a class="button secondary" href="{% url 'export_listing' period.id card.export_kind %}">导出Excel</a>
+      {% else %}
+      <span class="pill warning">规划中</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if card.metrics %}
+  <div class="summary-strip compact">
+    {% for item in card.metrics %}
+    <article><span>{{ item.label }}</span><strong class="{% if item.tone %}danger-text{% endif %}">{{ item.value }}</strong></article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for check in card.checks %}
+  {% if check.level == 'blocking' %}
+  <div class="message message-error">{{ check.text }}</div>
+  {% elif check.level == 'warning' %}
+  <div class="message message-warning">{{ check.text }}</div>
+  {% else %}
+  <div class="message message-info">{{ check.text }}</div>
+  {% endif %}
+  {% endfor %}
+
+  {% if card.entries %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for header in card.entry_headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in card.entries %}
+        <tr{% if row.level == 'total' %} style="font-weight:700;background:#E6F0FB;"{% elif row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
+          {% for cell in row.cells %}
+          <td{% if cell.num %} class="num"{% endif %}>{{ cell.text }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">ORDER OF WORK</p>
+      <h2>建议的凭证生成顺序</h2>
+    </div>
+  </div>
+  <p class="muted-text" style="margin:0 0 8px;">
+    先保证前置条件（各车间结转收敛、勾稽通过或差异已确认、无阻断异常），再按下面顺序出凭证：
+  </p>
+  <ol class="muted-text" style="margin:0;padding-left:22px;">
+    <li>采购暂估 / 回冲凭证（本月到货与到票）</li>
+    <li>生产领料（投料）凭证</li>
+    <li>制造费用 / 人工结转凭证</li>
+    <li>完工入库结转凭证</li>
+    <li>销售结转成本凭证（月末）</li>
+  </ol>
+  <p class="muted-text" style="margin:8px 0 0;">
+    说明：暂估与回冲是同一批数据的两个方向，建议在同一次操作里一起生成；
+    销售结转凭证依赖完工入库后的库存计价，所以排在最后。
+  </p>
+</section>
+{% endblock %}

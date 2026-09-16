@@ -9,6 +9,7 @@
     <p>本月到货本月到票直接入账；本月到货月末未到票暂估；前期暂估本月到票回冲原暂估并按票入账。金额口径不含税。</p>
   </div>
   <div class="heading-actions">
+    <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
     <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'purchase_reversal_report' period.id %}">暂估回冲明细</a>

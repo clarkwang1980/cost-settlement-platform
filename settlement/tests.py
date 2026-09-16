@@ -50,6 +50,7 @@ from settlement.services.costing import (
 from settlement.services.imports import create_import_batch, process_batch
 from settlement.services.matching import auto_match_all
 from settlement.services.purchase_voucher import build_purchase_voucher
+from settlement.services.voucher_center import build_voucher_center
 from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
     build_purchase_difference_rows,
@@ -5298,6 +5299,112 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(full["totals"], filtered["totals"])
         self.assertEqual(filtered["receipt_rows"], [])
         self.assertTrue(filtered["filter"]["active"])
+
+
+class VoucherCenterTests(SettlementFixtureMixin, TestCase):
+    """凭证中心：一页列出全部凭证（已实现 2 类 + 规划中 3 类）。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="vc-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.INVENTORY, "vc")
+        self.material = Material.objects.create(code="RM-VC", name="凭证中心原料", uom="kg")
+
+    def _receipt(self, quantity=Decimal("100"), unit_price=Decimal("10")):
+        txn = self.create_txn(
+            self.period,
+            self.batch,
+            txn_date=date(2026, 7, 5),
+            document_no="GR-VC",
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=self.material,
+            quantity=quantity,
+            supplier_code="SUP-VC",
+            supplier_name="凭证中心供应商",
+        )
+        txn.unit_price = unit_price
+        txn.amount = (quantity * unit_price).quantize(Decimal("0.01"))
+        txn.price_source = "手工暂估"
+        txn.category_name = "原料"
+        txn.save()
+        return txn
+
+    def test_center_lists_ready_and_planned_vouchers(self):
+        self._receipt()
+        data = build_voucher_center(self.period)
+        self.assertEqual(data["ready_count"], 2)
+        self.assertEqual(data["planned_count"], 3)
+        keys = [card["key"] for card in data["cards"]]
+        self.assertEqual(
+            keys,
+            ["sales", "purchase", "material_issue", "manufacturing_overhead",
+             "production_receipt"],
+        )
+        purchase = {card["key"]: card for card in data["cards"]}["purchase"]
+        self.assertEqual(purchase["balance"]["debit"], purchase["balance"]["credit"])
+        self.assertTrue(purchase["balance"]["balanced"])
+        self.assertTrue(purchase["entries"])
+        self.assertTrue(data["all_balanced"])
+
+    def test_center_aggregates_blocking_checks(self):
+        material = Material.objects.create(code="RM-VC2", name="无价原料", uom="kg")
+        self.create_txn(
+            self.period,
+            self.batch,
+            txn_date=date(2026, 7, 6),
+            document_no="GR-VC2",
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=material,
+            quantity=Decimal("5"),
+            supplier_code="SUP-VC",
+            supplier_name="凭证中心供应商",
+        )
+        data = build_voucher_center(self.period)
+        self.assertTrue(data["blocking"])
+        self.assertTrue(
+            any("没有暂估单价" in check["text"] for check in data["blocking"])
+        )
+
+    def test_center_page_renders_every_voucher(self):
+        self._receipt()
+        self.client.force_login(self.user)
+        url = reverse("voucher_center", args=[self.period.id])
+        html = self.client.get(url).content.decode("utf-8")
+        for text in (
+            "<h1>凭证中心</h1>",
+            "销售结转成本凭证",
+            "采购暂估 / 回冲凭证",
+            "生产领料（投料）凭证",
+            "制造费用 / 人工结转凭证",
+            "完工入库结转凭证",
+            "建议的凭证生成顺序",
+        ):
+            self.assertIn(text, html, text)
+        # 已实现的凭证给出打开明细与导出入口
+        self.assertIn(reverse("sales_cost_voucher", args=[self.period.id]), html)
+        self.assertIn(reverse("purchase_accrual_voucher", args=[self.period.id]), html)
+        self.assertIn(
+            reverse("export_listing", args=[self.period.id, "purchase_voucher"]), html
+        )
+
+    def test_nav_has_single_voucher_center_entry(self):
+        """导航合并成一个「凭证中心」入口，明细页保留返回入口。"""
+        self.client.force_login(self.user)
+        center = reverse("voucher_center", args=[self.period.id])
+        html = self.client.get(center).content.decode("utf-8")
+        self.assertIn("凭证中心", html)
+        self.assertNotIn(
+            ">结转成本凭证</a>", html
+        )
+        for name in ("sales_cost_voucher", "purchase_accrual_voucher"):
+            detail = self.client.get(
+                reverse(name, args=[self.period.id])
+            ).content.decode("utf-8")
+            self.assertIn(center, detail, name)
 
 
 class KeepScrollPositionTests(TestCase):

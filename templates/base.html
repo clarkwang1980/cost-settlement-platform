@@ -43,8 +43,7 @@
         <a href="{% url 'purchase_summary' period.id %}">回冲汇总</a>
         <a href="{% url 'sales_matches' period.id %}">销售核销核对</a>
         <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
-        <a href="{% url 'sales_cost_voucher' period.id %}">结转成本凭证</a>
-        <a href="{% url 'purchase_accrual_voucher' period.id %}">暂估回冲凭证</a>
+        <a href="{% url 'voucher_center' period.id %}">凭证中心</a>
         <a href="{% url 'profit_statement' period.id %}">损益表</a>
         <a href="{% url 'work_order_matches' period.id %}">工单匹配</a>
         <a href="{% url 'work_order_report' period.id %}">生产工单</a>

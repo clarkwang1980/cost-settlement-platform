@@ -95,6 +95,7 @@ from settlement.services.rollforward import (
     invalidate_downstream_periods,
 )
 from settlement.services.purchase_voucher import build_purchase_voucher
+from settlement.services.voucher_center import build_voucher_center
 from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
     block_param_names,
@@ -846,6 +847,20 @@ def sales_uninvoiced(request, period_id):
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
             "statistics": build_sales_cost_statistics(period),
+        },
+    )
+
+
+@login_required
+def voucher_center(request, period_id):
+    """凭证中心：本期间全部成本凭证一览（已实现的可打开明细/导出，规划中的列取数口径）。"""
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    return render(
+        request,
+        "settlement/voucher_center.html",
+        {
+            "period": period,
+            "voucher_center": build_voucher_center(period),
         },
     )
 
