@@ -115,6 +115,7 @@
   <p class="muted-text">
     借方：主营业务成本（当月发货当月开票、前期发货本期开票）／发出商品（当月发货未开票）；
     贷方：库存商品（当月发货的）／发出商品（以前月份已挂发出商品、本期开票结转的）。
+    <strong>借贷两侧都按销售大类展开</strong>（如「库存商品—纱线」「发出商品—面料」）。
     每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置。
   </p>
 </section>
@@ -146,6 +147,7 @@
         {% for row in voucher.summary_rows %}
           <tr{% if row.level == 'total' %} style="font-weight:700;background:#E6F0FB;"{% elif row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
             <td>{{ row.account }}</td>
+            <td>{{ row.credit_account }}</td>
             <td>{{ row.carry_type }}</td>
             <td>{{ row.category }}</td>
             {% if row.block_index >= 0 %}
@@ -209,7 +211,8 @@
       取不到才退回本期加权价。</li>
     <li><strong>数量</strong>：取台账「销售数量」列；台账里销售数量为空或 0 的行在导入时就被跳过，不参与结转。</li>
     <li><strong>会计科目</strong>：借方 主营业务成本（同月开票、前期发货本期开票）／发出商品（未开票）；
-      贷方 库存商品（同月开票、未开票）／发出商品（前期发货本期开票）。</li>
+      贷方 库存商品（同月开票、未开票）／发出商品（前期发货本期开票）。
+      借贷两侧都按销售大类展开（「库存商品—纱线」「发出商品—面料」），附件表并列显示借贷科目。</li>
     <li><strong>销售大类</strong>：<strong>保留台账原值，不合并、不改写</strong>
       （例如「其他成品（手套、服装、床垫等）」原样显示），科目名按「科目—销售大类」展开，辅助核算也用它。</li>
     <li><strong>没有成本的行</strong>（该产品当月没有库存计价）：数量照算、金额按 0 计，

@@ -570,6 +570,7 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
         )
 
         entries = []
+        credit_entries = []
         block_quantity = ZERO
         block_amount = ZERO
         block_rows = 0
@@ -598,6 +599,19 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                         "source_rows": row.get("source_rows", 0),
                     }
                 )
+                # 贷方同样按销售大类展开：库存商品—纱线 / 发出商品—面料 …
+                credit_entries.append(
+                    {
+                        "level": "line",
+                        "summary": label,
+                        "account": "%s—%s" % (credit_account, row["category"]),
+                        "aux": "销售大类：%s" % row["category"],
+                        "debit": ZERO,
+                        "credit": amount,
+                        "quantity": quantity,
+                        "source_rows": 0,
+                    }
+                )
         if block_amount == ZERO and block_quantity == ZERO:
             # 该块在当前筛选下没有数据：整块跳过
             continue
@@ -614,19 +628,20 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
                     "source_rows": block_rows,
                 }
             )
-        # 贷方一行（金额＝该块合计）
-        entries.append(
-            {
-                "level": "line",
-                "summary": carry,
-                "account": credit_account,
-                "aux": condition if group == "single" else "",
-                "debit": ZERO,
-                "credit": block_amount,
-                "quantity": block_quantity,
-                "source_rows": 0,
-            }
-        )
+            # 科目汇总模式：贷方一行（金额＝该块合计）
+            credit_entries.append(
+                {
+                    "level": "line",
+                    "summary": carry,
+                    "account": credit_account,
+                    "aux": condition,
+                    "debit": ZERO,
+                    "credit": block_amount,
+                    "quantity": block_quantity,
+                    "source_rows": 0,
+                }
+            )
+        entries.extend(credit_entries)
         block_debit = sum((item["debit"] for item in entries), ZERO)
         block_credit = sum((item["credit"] for item in entries), ZERO)
         entries.append(
@@ -730,8 +745,17 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
         "invoice_options": summary["invoice_options"],
         "blank_label": summary["blank_label"],
         "voucher_note": VOUCHER_NOTE,
-        "summary_rows": summary["rows"],
-        "summary_headers": summary["headers"],
+        "summary_rows": [
+            {
+                **row,
+                # 附件里同时给出贷方科目，借贷两侧的科目都看得见
+                "credit_account": CREDIT_ACCOUNT_BY_CARRY.get(
+                    row.get("carry_type"), ""
+                ),
+            }
+            for row in summary["rows"]
+        ],
+        "summary_headers": ("会计科目", "贷方科目") + tuple(summary["headers"][1:]),
         "summary_totals": summary["totals"],
         "sample_credit_account": "销售费用",
         "sample_carry_type": CARRY_SAMPLE,

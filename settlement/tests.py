@@ -4833,6 +4833,13 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             if row["level"] == "line" and row["debit"] > 0
         }
         self.assertEqual(categories, {"主营业务成本—纱线", "主营业务成本—面料"})
+        # 附件表并列显示借贷科目
+        self.assertEqual(
+            list(data["summary_headers"])[:2], ["会计科目", "贷方科目"]
+        )
+        for row in data["summary_rows"]:
+            if row["level"] == "category" and row["block_index"] >= 0:
+                self.assertTrue(row["credit_account"])
         # 科目汇总模式：每块借贷各一行
         single = build_sales_voucher_entries(self.period, group="single")
         self.assertTrue(single["totals"]["balanced"])
@@ -4841,14 +4848,44 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             single["totals"]["line_count"], data["totals"]["line_count"]
         )
         self.assertEqual(single["totals"]["debit"], data["totals"]["debit"])
+        # 贷方也按销售大类展开
         self.assertEqual(
             {
                 row["account"]
                 for row in blocks["当月发货当月开票结转成本"]["entries"]
                 if row["level"] == "line" and row["credit"] > 0
             },
-            {"库存商品"},
+            {"库存商品—纱线", "库存商品—面料"},
         )
+        self.assertEqual(
+            {
+                row["account"]
+                for row in blocks["前期发货本期开票结转成本"]["entries"]
+                if row["level"] == "line" and row["credit"] > 0
+            },
+            {"发出商品—面料"},
+        )
+        self.assertEqual(
+            {
+                row["account"]
+                for row in blocks["当月发货未开票挂发出商品"]["entries"]
+                if row["level"] == "line" and row["credit"] > 0
+            },
+            {"库存商品—纤维"},
+        )
+        # 借贷两侧逐大类金额一致
+        block1 = blocks["当月发货当月开票结转成本"]
+        debit_by_cat = {
+            row["account"].split("—", 1)[1]: row["debit"]
+            for row in block1["entries"]
+            if row["level"] == "line" and row["debit"] > 0
+        }
+        credit_by_cat = {
+            row["account"].split("—", 1)[1]: row["credit"]
+            for row in block1["entries"]
+            if row["level"] == "line" and row["credit"] > 0
+        }
+        self.assertEqual(debit_by_cat, credit_by_cat)
 
 
     def test_voucher_keeps_raw_sales_category(self):

@@ -3774,12 +3774,13 @@ def _listing_rows(request, period, kind):
         sheets.append(
             (
                 "附件-结转类型与销售大类",
-                ["凭证期间", "会计科目", "结转类型", "销售大类", "出库期间",
-                 "开票状态", "开票期间", "数量", "金额"],
+                ["凭证期间", "会计科目", "贷方科目", "结转类型", "销售大类",
+                 "出库期间", "开票状态", "开票期间", "数量", "金额"],
                 (
                     (
                         _voucher["month"] if row["block_index"] >= 0 else "",
                         row["account"],
+                        row.get("credit_account", ""),
                         row["carry_type"],
                         row["category"],
                         row["block_out"] if row["block_index"] >= 0 else "",
