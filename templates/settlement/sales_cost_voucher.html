@@ -11,6 +11,7 @@
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'export_listing' period.id 'sales_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">月末已出库未开票</a>
+    <a class="button secondary" href="{% url 'purchase_accrual_voucher' period.id %}">采购暂估/回冲凭证</a>
     <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
   </div>
 </section>

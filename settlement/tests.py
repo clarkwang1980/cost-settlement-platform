@@ -49,6 +49,7 @@ from settlement.services.costing import (
 )
 from settlement.services.imports import create_import_batch, process_batch
 from settlement.services.matching import auto_match_all
+from settlement.services.purchase_voucher import build_purchase_voucher
 from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
     build_purchase_difference_rows,
@@ -4997,6 +4998,306 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
         # 表内筛选与合计说明仍在
         for text in ("记账月份", "（空白）", "小计", "合计", "默认筛选"):
             self.assertIn(text, html, text)
+
+
+class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
+    """采购暂估 / 暂估回冲凭证：三笔分录、价差、期初台账与页面渲染。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="pv-tester", password="test-password"
+        )
+        self.period = AccountingPeriod.objects.create(month=date(2026, 7, 1))
+        self.batch = self.create_batch(self.period, ImportBatch.Kind.INVENTORY, "pv")
+        self.contract_batch = self.create_batch(
+            self.period, ImportBatch.Kind.PURCHASE_CONTRACT, "pv-contract"
+        )
+        self.invoice_batch = self.create_batch(
+            self.period, ImportBatch.Kind.PURCHASE_INVOICE, "pv-invoice"
+        )
+        self.material = Material.objects.create(
+            code="RM-PV", name="暂估原料", uom="kg"
+        )
+        self.contract = PurchaseContractLine.objects.create(
+            period=self.period,
+            batch=self.contract_batch,
+            contract_no="PC-PV",
+            contract_date=date(2026, 7, 1),
+            supplier_code="SUP-PV",
+            supplier_name="暂估供应商",
+            material_code=self.material.code,
+            material_name=self.material.name,
+            quantity=Decimal("100"),
+            remaining_quantity=Decimal("100"),
+            unit_price_excl_tax=Decimal("10"),
+        )
+        self.receipt = self.create_txn(
+            self.period,
+            self.batch,
+            txn_date=date(2026, 7, 5),
+            document_no="GR-PV",
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=self.material,
+            quantity=Decimal("100"),
+            supplier_code="SUP-PV",
+            supplier_name="暂估供应商",
+            contract_no="PC-PV",
+        )
+        self.receipt.unit_price = Decimal("10")
+        self.receipt.amount = Decimal("1000.00")
+        self.receipt.price_source = "合同暂估"
+        self.receipt.category_name = "原料"
+        self.receipt.save()
+        MatchAllocation.objects.create(
+            period=self.period,
+            kind=MatchAllocation.Kind.PURCHASE_CONTRACT,
+            inventory_transaction=self.receipt,
+            contract_line=self.contract,
+            matched_quantity=Decimal("100"),
+            unit_price=Decimal("10"),
+            amount=Decimal("1000.00"),
+        )
+
+    def _match_invoice(self, *, invoice_no, quantity, unit_price, target=None):
+        line = PurchaseInvoiceLine.objects.create(
+            period=self.period,
+            batch=self.invoice_batch,
+            invoice_no=invoice_no,
+            invoice_date=date(2026, 7, 20),
+            invoice_period=date(2026, 7, 1),
+            supplier_code="SUP-PV",
+            supplier_name="暂估供应商",
+            material_code=self.material.code,
+            material_name=self.material.name,
+            quantity=quantity,
+            remaining_quantity=Decimal("0"),
+            unit_price_excl_tax=unit_price,
+            amount_excl_tax=(quantity * unit_price).quantize(Decimal("0.01")),
+        )
+        allocation = MatchAllocation.objects.create(
+            period=self.period,
+            kind=MatchAllocation.Kind.PURCHASE_INVOICE,
+            purchase_invoice_line=line,
+            matched_quantity=quantity,
+            unit_price=unit_price,
+            amount=(quantity * unit_price).quantize(Decimal("0.01")),
+        )
+        if target is not None:
+            allocation.opening_purchase_accrual = target
+        else:
+            allocation.inventory_transaction = self.receipt
+        allocation.save()
+        return line
+
+    def _opening_accrual(self, *, quantity, unit_price, remaining):
+        batch = self.create_batch(
+            self.period, ImportBatch.Kind.OPENING_PURCHASE_ACCRUAL, "pv-opening"
+        )
+        return OpeningPurchaseAccrual.objects.create(
+            period=self.period,
+            batch=batch,
+            original_period=date(2026, 4, 1),
+            document_date=date(2026, 4, 10),
+            document_no="GR-OLD",
+            supplier_code="SUP-PV",
+            supplier_name="暂估供应商",
+            material_code=self.material.code,
+            material_name=self.material.name,
+            original_quantity=quantity,
+            opening_quantity=quantity,
+            provisional_unit_price=unit_price,
+            opening_amount=(quantity * unit_price).quantize(Decimal("0.01")),
+            remaining_quantity=remaining,
+        )
+
+    def _extra_receipt(self, *, code, category, supplier, quantity, unit_price):
+        material = Material.objects.create(code=code, name=code, uom="kg")
+        txn = self.create_txn(
+            self.period,
+            self.batch,
+            txn_date=date(2026, 7, 6),
+            document_no="GR-%s" % code,
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=material,
+            quantity=quantity,
+            supplier_code="SUP-%s" % code,
+            supplier_name=supplier,
+        )
+        txn.unit_price = unit_price
+        txn.amount = (quantity * unit_price).quantize(Decimal("0.01"))
+        txn.price_source = "手工暂估"
+        txn.category_name = category
+        txn.save()
+        return txn
+
+    def test_same_month_invoice_splits_into_direct_and_accrual(self):
+        """同月到货、只到票一部分：已到票走①、未到票走②，差额进材料成本差异。"""
+        self._match_invoice(
+            invoice_no="PI-PV-1", quantity=Decimal("60"), unit_price=Decimal("12")
+        )
+        data = build_purchase_voucher(self.period)
+        summary = data["summary"]
+        self.assertEqual(summary["receipt_amount"], Decimal("1000.00"))
+        self.assertEqual(summary["same_month_amount"], Decimal("600.00"))
+        self.assertEqual(summary["accrual_amount"], Decimal("400.00"))
+        self.assertEqual(
+            summary["same_month_amount"] + summary["accrual_amount"],
+            summary["receipt_amount"],
+        )
+        self.assertEqual(summary["same_month_difference"], Decimal("120.00"))
+        self.assertTrue(data["totals"]["balanced"])
+        self.assertEqual(data["totals"]["difference"], Decimal("0.00"))
+
+        first = {block["key"]: block for block in data["blocks"]}["same_month"]
+        self.assertEqual(first["debit_total"], Decimal("720.00"))
+        self.assertEqual(first["credit_total"], Decimal("720.00"))
+        accounts = [row["account"] for row in first["rows"] if row["level"] == "line"]
+        self.assertIn("材料成本差异", accounts)
+
+    def test_reversal_block_clears_opening_accrual(self):
+        """③ 前期暂估本月到票：借暂估应付 / 贷应付账款，差额进材料成本差异。"""
+        opening = self._opening_accrual(
+            quantity=Decimal("50"), unit_price=Decimal("8"), remaining=Decimal("0")
+        )
+        self._match_invoice(
+            invoice_no="PI-PV-2", quantity=Decimal("50"), unit_price=Decimal("9"),
+            target=opening,
+        )
+        data = build_purchase_voucher(self.period)
+        summary = data["summary"]
+        self.assertEqual(summary["reversal_amount"], Decimal("400.00"))
+        self.assertEqual(summary["reversal_invoice_amount"], Decimal("450.00"))
+        self.assertEqual(summary["reversal_difference"], Decimal("50.00"))
+        self.assertEqual(summary["opening_count"], 1)
+        self.assertTrue(data["totals"]["balanced"])
+
+        block = {item["key"]: item for item in data["blocks"]}["reversal"]
+        debit_rows = [
+            row for row in block["rows"]
+            if row["debit"] > 0 and row["account"].startswith("应付账款")
+        ]
+        self.assertEqual(
+            {row["account"] for row in debit_rows}, {"应付账款—暂估应付—暂估供应商"}
+        )
+        # 价差单独一行，进材料成本差异
+        diff_rows = [row for row in block["rows"] if row["account"] == "材料成本差异"]
+        self.assertEqual(len(diff_rows), 1)
+        self.assertEqual(diff_rows[0]["debit"], Decimal("50.00"))
+
+    def test_opening_balance_reported_but_not_posted(self):
+        """期初暂估台账未核销：只提示与展示，不进凭证金额。"""
+        self._opening_accrual(
+            quantity=Decimal("50"), unit_price=Decimal("8"), remaining=Decimal("50")
+        )
+        data = build_purchase_voucher(self.period)
+        summary = data["summary"]
+        self.assertEqual(summary["opening_balance"], Decimal("400.00"))
+        self.assertEqual(summary["current_balance"], Decimal("1000.00"))
+        self.assertEqual(summary["ending_balance"], Decimal("1400.00"))
+        # 凭证只包含本月到货 1000（未到票暂估），不含期初台账的 400
+        self.assertEqual(data["totals"]["debit"], Decimal("1000.00"))
+        self.assertTrue(
+            any("期初暂估台账" in check["text"] for check in data["checks"])
+        )
+
+    def test_missing_price_is_blocking_check(self):
+        """没有暂估单价的入库行：给出阻断提示，且不产生金额。
+
+        用没有任何合同的新物料，避免「同物料合同价兜底」把价格补上。
+        """
+        material = Material.objects.create(code="RM-NOPRICE", name="无价原料", uom="kg")
+        txn = self.create_txn(
+            self.period,
+            self.batch,
+            txn_date=date(2026, 7, 7),
+            document_no="GR-NOPRICE",
+            business_type="采购入库",
+            direction=InventoryTransaction.Direction.IN,
+            material=material,
+            quantity=Decimal("5"),
+            supplier_code="SUP-PV",
+            supplier_name="暂估供应商",
+        )
+        data = build_purchase_voucher(self.period)
+        self.assertIn("blocking", [check["level"] for check in data["checks"]])
+        self.assertTrue(
+            any("没有暂估单价" in check["text"] for check in data["checks"])
+        )
+        statuses = [row["status"] for row in data["receipt_rows"]]
+        self.assertIn("缺少暂估价格", statuses)
+        self.assertEqual(data["summary"]["unpriced_rows"], 1)
+        self.assertIsNone(txn.unit_price)
+
+    def test_group_modes(self):
+        """汇总模式合并成科目行；展开模式按物料大类 / 供应商分行。"""
+        self._extra_receipt(
+            code="RM-PV2", category="包装物", supplier="另一个供应商",
+            quantity=Decimal("20"), unit_price=Decimal("5"),
+        )
+        single = build_purchase_voucher(self.period, group="single")
+        category = build_purchase_voucher(self.period, group="category")
+        self.assertLess(
+            single["totals"]["line_count"], category["totals"]["line_count"]
+        )
+        single_accounts = {
+            row["account"]
+            for block in single["blocks"]
+            for row in block["rows"]
+            if row["level"] == "line"
+        }
+        self.assertIn("原材料", single_accounts)
+        self.assertIn("应付账款—暂估应付", single_accounts)
+        category_accounts = {
+            row["account"]
+            for block in category["blocks"]
+            for row in block["rows"]
+            if row["level"] == "line"
+        }
+        self.assertIn("原材料—原料", category_accounts)
+        self.assertIn("原材料—包装物", category_accounts)
+        self.assertEqual(single["totals"]["debit"], category["totals"]["debit"])
+
+    def test_page_and_export(self):
+        self._match_invoice(
+            invoice_no="PI-PV-3", quantity=Decimal("100"), unit_price=Decimal("10")
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("purchase_accrual_voucher", args=[self.period.id])
+        )
+        html = response.content.decode("utf-8")
+        for text in (
+            "<h1>采购暂估 / 回冲凭证</h1>",
+            "① 本月到货 + 本月到票",
+            "② 本月到货 + 月末未到票",
+            "③ 前期暂估 + 本月到票",
+            "附件1：本月到货明细",
+            "附件2：暂估回冲明细",
+            "附件3：应付账款—暂估应付余额表",
+            "暂估账龄（按到货月份）",
+        ):
+            self.assertIn(text, html, text)
+        self.assertIn("1,000.00", html)
+
+        export = self.client.get(
+            reverse("export_listing", args=[self.period.id, "purchase_voucher"])
+        )
+        self.assertEqual(export.status_code, 200)
+        workbook = load_workbook(BytesIO(export.content))
+        self.assertEqual(workbook.sheetnames[0], "凭证分录")
+        for name in ("附件1-本月到货明细", "附件2-暂估回冲明细",
+                     "附件3-应付暂估余额", "附件4-暂估账龄"):
+            self.assertIn(name, workbook.sheetnames)
+
+    def test_filter_only_affects_attachments(self):
+        """附件筛选不改变凭证金额。"""
+        full = build_purchase_voucher(self.period)
+        filtered = build_purchase_voucher(self.period, detail_supplier="不存在的供应商")
+        self.assertEqual(full["totals"], filtered["totals"])
+        self.assertEqual(filtered["receipt_rows"], [])
+        self.assertTrue(filtered["filter"]["active"])
 
 
 class KeepScrollPositionTests(TestCase):

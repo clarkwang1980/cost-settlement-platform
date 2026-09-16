@@ -94,6 +94,7 @@ from settlement.services.rollforward import (
     carry_forward_context,
     invalidate_downstream_periods,
 )
+from settlement.services.purchase_voucher import build_purchase_voucher
 from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
     block_param_names,
@@ -845,6 +846,32 @@ def sales_uninvoiced(request, period_id):
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
             "statistics": build_sales_cost_statistics(period),
+        },
+    )
+
+
+@login_required
+def purchase_accrual_voucher(request, period_id):
+    """采购暂估 / 暂估回冲凭证（独立页面）。
+
+    业务原理：本月到货本月到票 → 直接入账；本月到货月末未到票 → 暂估；
+    前期暂估本月到票 → 冲回原暂估 + 按票入账（价差进材料成本差异）。
+    凭证金额不随明细筛选变化（借贷必须相等）；筛选只过滤下面三张附件。
+    """
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    group = str(request.GET.get("group", "")).strip() or "single"
+    voucher = build_purchase_voucher(
+        period,
+        group=group,
+        detail_supplier=request.GET.get("supplier", ""),
+        detail_material=request.GET.get("material", ""),
+    )
+    return render(
+        request,
+        "settlement/purchase_accrual_voucher.html",
+        {
+            "period": period,
+            "voucher": voucher,
         },
     )
 
@@ -2795,6 +2822,7 @@ LISTING_EXPORTS = {
     "sales_invoice": {"title": "销售发票匹配"},
     "sales_uninvoiced": {"title": "月末已出库未开票"},
     "sales_voucher": {"title": "销售结转成本凭证"},
+    "purchase_voucher": {"title": "采购暂估回冲凭证"},
     "sales_ledger": {"title": "销售台账（成本·毛利）"},
     "profit_statement": {"title": "损益表"},
     "work_order_match": {"title": "工单匹配"},
@@ -3587,6 +3615,103 @@ def _listing_rows(request, period, kind):
                     )
                     for r in rows
                 ),
+            )
+        )
+
+    elif kind == "purchase_voucher":
+        # 采购暂估 / 暂估回冲凭证：凭证分录 + 三张附件（与页面口径一致）
+        _pv = build_purchase_voucher(
+            period,
+            group=request.GET.get("group", "") or "single",
+            detail_supplier=request.GET.get("supplier", ""),
+            detail_material=request.GET.get("material", ""),
+        )
+        _rows = []
+        for _block in _pv["blocks"]:
+            for _row in _block["rows"]:
+                _rows.append(
+                    (
+                        _row["summary"],
+                        _row["account"],
+                        _row["aux"],
+                        _row["debit"],
+                        _row["credit"],
+                        _row["quantity"],
+                        _row["source_rows"],
+                    )
+                )
+        _rows.append(
+            (
+                "合计", "", "", _pv["totals"]["debit"], _pv["totals"]["credit"],
+                _pv["totals"]["quantity"], "",
+            )
+        )
+        sheets.append(
+            (
+                "凭证分录",
+                ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+                _rows,
+            )
+        )
+        sheets.append(
+            (
+                "附件1-本月到货明细",
+                ["入库单号", "入库日期", "到货月份", "供应商", "物料编码", "物料名称",
+                 "物料大类", "入库数量", "入库金额", "暂估单价", "单价来源",
+                 "本次到票数量", "已到票金额", "未到票数量", "暂估金额", "状态"],
+                [
+                    (
+                        r["document_no"], r["document_date"],
+                        r["receipt_month"].strftime("%Y-%m") if r["receipt_month"] else "",
+                        r["supplier"], r["material_code"], r["material_name"],
+                        r["category"], r["quantity"], r["amount"],
+                        r["provisional_unit_price"], r["price_source"],
+                        r["matched_quantity"], r["matched_amount"],
+                        r["unmatched_quantity"], r["unmatched_amount"], r["status"],
+                    )
+                    for r in _pv["receipt_rows"]
+                ],
+            )
+        )
+        sheets.append(
+            (
+                "附件2-暂估回冲明细",
+                ["发票号", "开票日期", "开票期间", "供应商", "核销对象", "入库单号",
+                 "到货月份", "物料编码", "物料名称", "核销数量", "暂估单价", "暂估金额",
+                 "发票单价", "发票金额", "价差"],
+                [
+                    (
+                        r["invoice_no"], r["invoice_date"],
+                        r["invoice_period"].strftime("%Y-%m") if r["invoice_period"] else "",
+                        r["supplier"], r["target_type"], r["document_no"],
+                        r["receipt_month"].strftime("%Y-%m") if r["receipt_month"] else "",
+                        r["material_code"], r["material_name"], r["matched_quantity"],
+                        r["provisional_unit_price"], r["provisional_amount"],
+                        r["invoice_unit_price"], r["invoice_amount"],
+                        r["difference_amount"],
+                    )
+                    for r in _pv["reversal_rows"]
+                ],
+            )
+        )
+        sheets.append(
+            (
+                "附件3-应付暂估余额",
+                ["供应商", "未到票数量", "暂估余额", "行数"],
+                [
+                    (r["supplier"], r["quantity"], r["amount"], r["rows"])
+                    for r in _pv["balance_rows"]
+                ],
+            )
+        )
+        sheets.append(
+            (
+                "附件4-暂估账龄",
+                ["到货月份", "暂估金额", "行数", "占比%"],
+                [
+                    (r["month"], r["amount"], r["rows"], round(r["ratio"], 2))
+                    for r in _pv["aging_rows"]
+                ],
             )
         )
 
@@ -5236,6 +5361,9 @@ def export_center(request, period_id):
                  "desc": "销售发票及核销的出库/期初发出商品明细"},
                 {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
                  "desc": "截止月末仍未开票的销售出库及发出商品成本"},
+                {"kind": "purchase_voucher", "name": "采购暂估回冲凭证",
+                 "desc": "本月到货到票直接入账 / 到货未到票暂估 / 前期暂估本月到票回冲，"
+                         "含凭证分录、本月到货明细、回冲明细、应付暂估余额表与账龄表"},
                 {"kind": "sales_voucher", "name": "销售结转成本凭证",
                  "desc": "按「结转类型 × 销售大类」汇总的结转成本凭证（会计科目、数量、金额），"
                          "含各结转类型小计与合计；会计条件与凭证页面当前的筛选一致"},

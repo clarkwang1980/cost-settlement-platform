@@ -65,6 +65,11 @@ urlpatterns = [
         name="purchase_accruals",
     ),
     path(
+        "periods/<int:period_id>/purchase-accrual-voucher/",
+        views.purchase_accrual_voucher,
+        name="purchase_accrual_voucher",
+    ),
+    path(
         "periods/<int:period_id>/purchase-differences/",
         views.purchase_differences,
         name="purchase_differences",
