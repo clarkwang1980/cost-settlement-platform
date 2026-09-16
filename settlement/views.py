@@ -867,7 +867,9 @@ def voucher_center(request, period_id):
         {
             "period": period,
             "voucher_center": build_voucher_center(
-                period, sales_month=request.GET.get("sales_month")
+                period,
+                sales_month=request.GET.get("sales_month"),
+                purchase_month=request.GET.get("purchase_month"),
             ),
         },
     )
@@ -883,8 +885,22 @@ def purchase_accrual_voucher(request, period_id):
     """
     period = get_object_or_404(AccountingPeriod, id=period_id)
     group = str(request.GET.get("group", "")).strip() or "category"
+    # 凭证期间筛选：voucher_month=YYYY-MM，默认当前核算期间
+    raw_month = str(request.GET.get("voucher_month", "")).strip()
+    target_period = period
+    if raw_month:
+        try:
+            year, month_no = raw_month.split("-")
+            target_period = (
+                AccountingPeriod.objects.filter(
+                    month=date(int(year), int(month_no), 1)
+                ).first()
+                or period
+            )
+        except (TypeError, ValueError):
+            target_period = period
     voucher = build_purchase_voucher(
-        period,
+        target_period,
         group=group,
         detail_supplier=request.GET.get("supplier", ""),
         detail_material=request.GET.get("material", ""),
@@ -894,10 +910,11 @@ def purchase_accrual_voucher(request, period_id):
         "settlement/purchase_accrual_voucher.html",
         {
             "period": period,
+            "target_period": target_period,
             "voucher": voucher,
-            # 凭证期间＝核算期间：下拉可直接切到别的期间看那个期间的凭证
             "period_options": [
-                {"id": item.id, "label": str(item)}
+                {"id": item.id, "value": item.month.strftime("%Y-%m"),
+                 "label": str(item)}
                 for item in AccountingPeriod.objects.order_by("month")
             ],
         },

@@ -200,15 +200,27 @@ def _expand(mapping, account, side, group, label, summary, aux_note):
     return rows
 
 
+#: 这些科目不按辅助对象展开（应付账款类只出一行，不按供应商拆）
+CONSOLIDATED_ACCOUNTS = ("应付账款",)
+
+
+def _is_consolidated(account):
+    return any(account.startswith(name) for name in CONSOLIDATED_ACCOUNTS)
+
+
 def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff, group):
     rows = []
+    # 借方：原材料按物料大类展开；应付账款类（如冲回暂估）汇总一行
     rows += _expand(
-        debit_map, debit_account, "debit", group, "物料大类",
-        BLOCK_TITLES[key], "（明细见附件）",
+        debit_map, debit_account, "debit",
+        "single" if _is_consolidated(debit_account) else group,
+        "物料大类", BLOCK_TITLES[key],
+        "" if _is_consolidated(debit_account) else "（明细见附件）",
     )
+    # 贷方：应付账款 / 应付账款—暂估应付 不按供应商展开，汇总一行
     rows += _expand(
-        credit_map, credit_account, "credit", group, "供应商",
-        BLOCK_TITLES[key], "（供应商明细见附件）",
+        credit_map, credit_account, "credit", "single", "供应商",
+        BLOCK_TITLES[key], "",
     )
     diff_amount = money(diff["amount"]) if diff else ZERO
     if diff_amount != ZERO:

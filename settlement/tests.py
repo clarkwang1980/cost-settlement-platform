@@ -4825,12 +4825,16 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(blocks["当月发货未开票挂发出商品"]["debit_account"], "发出商品")
         self.assertEqual(blocks["当月发货未开票挂发出商品"]["credit_account"], "库存商品")
         # 借方按销售大类展开
+        # 借方「主营业务成本」按销售渠道分国内/国外
         categories = {
             row["account"]
             for row in blocks["当月发货当月开票结转成本"]["entries"]
             if row["level"] == "line" and row["debit"] > 0
         }
-        self.assertEqual(categories, {"主营业务成本—纱线", "主营业务成本—面料"})
+        self.assertEqual(
+            categories,
+            {"主营业务成本—国内销售—纱线", "主营业务成本—国内销售—面料"},
+        )
         # 附件表并列显示借贷科目
         self.assertEqual(
             list(data["summary_headers"])[:2], ["会计科目", "贷方科目"]
@@ -4871,19 +4875,29 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             },
             {"库存商品—纤维"},
         )
+        # 借方是发出商品，不按渠道拆
+        self.assertEqual(
+            {
+                row["account"]
+                for row in blocks["当月发货未开票挂发出商品"]["entries"]
+                if row["level"] == "line" and row["debit"] > 0
+            },
+            {"发出商品—纤维"},
+        )
         # 借贷两侧逐大类金额一致
         block1 = blocks["当月发货当月开票结转成本"]
-        debit_by_cat = {
-            row["account"].split("—", 1)[1]: row["debit"]
-            for row in block1["entries"]
-            if row["level"] == "line" and row["debit"] > 0
-        }
-        credit_by_cat = {
-            row["account"].split("—", 1)[1]: row["credit"]
-            for row in block1["entries"]
-            if row["level"] == "line" and row["credit"] > 0
-        }
-        self.assertEqual(debit_by_cat, credit_by_cat)
+
+        def _by_category(side):
+            totals = {}
+            for row in block1["entries"]:
+                if row["level"] != "line" or not row[side]:
+                    continue
+                # 「主营业务成本—国内销售—纱线」取最后一段做销售大类
+                category = row["account"].split("—")[-1]
+                totals[category] = totals.get(category, Decimal("0")) + row[side]
+            return totals
+
+        self.assertEqual(_by_category("debit"), _by_category("credit"))
 
 
     def test_sales_voucher_slim_format(self):
@@ -4937,22 +4951,23 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             for row in block["entries"]
             if row["level"] == "line" and row["debit"] > 0
         }
-        self.assertEqual(
-            accounts,
-            {
-                "主营业务成本—其他成品（手套、服装、床垫等）",
-                "主营业务成本—其他成品（毯子）",
-            },
-        )
-        # 两个原值各自成行（没有被并成一行）
-        categories = {
+        # 科目名去掉结尾括号（「其他成品（…）」→「其他成品」）
+        self.assertEqual(accounts, {"主营业务成本—国内销售—其他成品"})
+        # 两个原值各自成行（分组没有被合并），只是显示名都去掉了括号
+        raw_categories = {
             row["category"]
             for row in data["summary_rows"]
             if row["level"] == "category"
         }
         self.assertEqual(
-            categories, {"其他成品（手套、服装、床垫等）", "其他成品（毯子）"}
+            raw_categories, {"其他成品（手套、服装、床垫等）", "其他成品（毯子）"}
         )
+        shown = {
+            row["category_label"]
+            for row in data["summary_rows"]
+            if row["level"] == "category"
+        }
+        self.assertEqual(shown, {"其他成品"})
         # 科目名与摘要里的大类处理：科目带原值，摘要不带（辅助核算列已按要求去掉）
         self.assertEqual(
             {row["aux"] for block in data["blocks"] for row in block["entries"]
@@ -5378,8 +5393,9 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
             row for row in block["rows"]
             if row["debit"] > 0 and row["account"].startswith("应付账款")
         ]
+        # 应付账款类科目汇总一行，不带供应商
         self.assertEqual(
-            {row["account"] for row in debit_rows}, {"应付账款—暂估应付—暂估供应商"}
+            {row["account"] for row in debit_rows}, {"应付账款—暂估应付"}
         )
         # 价差单独一行，进材料成本差异
         diff_rows = [row for row in block["rows"] if row["account"] == "材料成本差异"]
@@ -5458,6 +5474,45 @@ class PurchaseAccrualVoucherTests(SettlementFixtureMixin, TestCase):
         self.assertIn("原材料—原料", category_accounts)
         self.assertIn("原材料—包装物", category_accounts)
         self.assertEqual(single["totals"]["debit"], category["totals"]["debit"])
+
+    def test_purchase_voucher_period_filter(self):
+        """凭证期间筛选：voucher_month 可切到别的核算期间，页面按该期间出凭证。"""
+        june = AccountingPeriod.objects.create(month=date(2026, 6, 1))
+        self.client.force_login(self.user)
+        url = reverse("purchase_accrual_voucher", args=[self.period.id])
+        html = self.client.get(url).content.decode("utf-8")
+        self.assertIn('name="voucher_month"', html)
+        self.assertIn('value="2026-06"', html)
+        self.assertIn('value="2026-07" selected', html)
+        # 切到 6 月（该期间没有采购入库）：页面照常渲染，凭证为空
+        june_html = self.client.get(
+            url, {"voucher_month": "2026-06"}
+        ).content.decode("utf-8")
+        self.assertIn('value="2026-06" selected', june_html)
+        self.assertEqual(june.id, june.id)  # 期间对象可用
+        self.assertEqual(
+            self.client.get(url, {"voucher_month": "2026-13"}).status_code, 200
+        )
+
+    def test_purchase_credit_is_consolidated(self):
+        """应付账款类科目（含暂估应付）不按供应商展开，汇总一行。"""
+        self._match_invoice(
+            invoice_no="PI-PV-9", quantity=Decimal("100"), unit_price=Decimal("10")
+        )
+        data = build_purchase_voucher(self.period, group="category")
+        for block in data["blocks"]:
+            for row in block["rows"]:
+                if row["level"] != "line" or not row["account"]:
+                    continue
+                self.assertNotIn("—神马", row["account"])
+                if row["account"].startswith("应付账款"):
+                    # 不带供应商后缀
+                    self.assertIn(
+                        row["account"],
+                        {"应付账款", "应付账款—暂估应付"},
+                        row["account"],
+                    )
+        self.assertTrue(data["totals"]["balanced"])
 
     def test_page_and_export(self):
         self._match_invoice(

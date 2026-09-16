@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import re
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date
@@ -125,9 +126,30 @@ def _voucher_month(line) -> date | None:
 
 
 def voucher_category(value) -> str:
-    """凭证用的销售大类：保留台账原值（不合并、不改写），仅空值归「未分类」。"""
+    """凭证分组用的销售大类：保留台账原值（不同写法不合并），空值归「未分类」。"""
     text = (value or "").strip()
     return text or category_label("")
+
+
+_TRAILING_PAREN = re.compile(r"[（(][^（）()]*[）)]\s*$")
+
+
+def voucher_category_label(value) -> str:
+    """凭证科目/附件里显示的销售大类：去掉结尾括号注释。
+
+    例：「其他成品（手套、服装、床垫等）」→「其他成品」。
+    只改显示，不改分组（不同原值不会被合并成一行）。
+    """
+    text = (value or "").strip()
+    if not text:
+        return category_label("")
+    return _TRAILING_PAREN.sub("", text).strip() or text
+
+
+#: 按销售渠道再拆的科目（借方的「主营业务成本」分国内/国外）
+CHANNEL_SPLIT_ACCOUNTS = ("主营业务成本",)
+#: 渠道显示名（台账原值直接用；空值归「未分类」）
+CHANNEL_UNCLASSIFIED = "未分类"
 
 
 def _category_sort_key(name):
@@ -277,7 +299,10 @@ def build_sales_voucher_summary(period, month=None, block_filters=None,
 
     # 按块汇总
     def _blank():
-        return {"quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0}
+        return {
+            "quantity": ZERO, "amount": ZERO, "rows": 0, "missing": 0,
+            "channels": {},
+        }
 
     rows = []
     grand = _blank()
@@ -308,6 +333,15 @@ def build_sales_voucher_summary(period, month=None, block_filters=None,
                 item["missing"] += 1
             else:
                 item["amount"] += Decimal(line.cost_amount)
+            # 同一大类再按销售渠道拆一份（借方主营业务成本分国内/国外用）
+            channel = (line.channel or "").strip() or CHANNEL_UNCLASSIFIED
+            channel_item = item["channels"].setdefault(
+                channel, {"quantity": ZERO, "amount": ZERO, "rows": 0}
+            )
+            channel_item["quantity"] += line.quantity or ZERO
+            channel_item["rows"] += 1
+            if line.cost_amount is not None:
+                channel_item["amount"] += Decimal(line.cost_amount)
 
         # 该块的筛选当前值 + 参数名，挂在每一行上（模板按行渲染下拉并回显选中项）
         block_info = {
@@ -333,14 +367,27 @@ def build_sales_voucher_summary(period, month=None, block_filters=None,
                     "account": block["account"],
                     "carry_type": carry,
                     "category": category,
+                    "category_label": voucher_category_label(category),
                     "quantity": item["quantity"],
                     "amount": money(item["amount"]),
                     "missing_cost_rows": item["missing"],
                     "source_rows": item["rows"],
+                    "channels": [
+                        {
+                            "channel": key,
+                            "quantity": value["quantity"],
+                            "amount": money(value["amount"]),
+                            "rows": value["rows"],
+                        }
+                        for key, value in sorted(
+                            item["channels"].items(),
+                            key=lambda pair: -pair[1]["amount"],
+                        )
+                    ],
                     **block_info,
                 }
             )
-            for key in subtotal:
+            for key in ("quantity", "amount", "rows", "missing"):
                 subtotal[key] += item[key]
         rows.append(
             {
@@ -355,7 +402,7 @@ def build_sales_voucher_summary(period, month=None, block_filters=None,
                 **block_info,
             }
         )
-        for key in grand:
+        for key in ("quantity", "amount", "rows", "missing"):
             grand[key] += subtotal[key]
 
     rows.append(
@@ -502,8 +549,9 @@ CREDIT_ACCOUNT_BY_CARRY = {
 
 #: 建议的凭证生成序（页面提示用）
 VOUCHER_NOTE = (
-    "借：主营业务成本（当月发货当月开票、前期发货本期开票）/ 发出商品（当月发货未开票）；"
-    "贷：库存商品（当月发货的）或 发出商品（以前月份已挂发出商品、本期开票结转的）。"
+    "数据来源：销售台账。结转类型与销售大类都取台账原值；"
+    "金额取台账「销售成本」列（结算后按销售数量 × 月末加权平均价回填）。"
+    "借方 主营业务成本／发出商品、贷方 库存商品／发出商品，借贷两侧都按销售大类展开。"
 )
 
 
@@ -585,27 +633,51 @@ def build_sales_voucher_entries(period, month=None, block_filters=None,
             missing_rows += row.get("missing_cost_rows", 0)
             if amount == ZERO and quantity != ZERO:
                 zero_amount_rows += 1
-            label = "%s %s" % (carry, row["category"])
+            category_label_text = row.get("category_label") or row["category"]
             if group == "category":
+                # 借方：主营业务成本再按销售渠道分国内/国外；其余科目不拆渠道
+                debit_rows = []
+                if debit_account in CHANNEL_SPLIT_ACCOUNTS and row.get("channels"):
+                    for item in row["channels"]:
+                        debit_rows.append(
+                            (
+                                "%s—%s—%s" % (
+                                    debit_account,
+                                    item["channel"] or CHANNEL_UNCLASSIFIED,
+                                    category_label_text,
+                                ),
+                                item["amount"],
+                                item["quantity"],
+                            )
+                        )
+                else:
+                    debit_rows.append(
+                        (
+                            "%s—%s" % (debit_account, category_label_text),
+                            amount,
+                            quantity,
+                        )
+                    )
                 # 摘要只写结转类型（不带销售大类）；大类体现在科目名里
-                entries.append(
-                    {
-                        "level": "line",
-                        "summary": carry,
-                        "account": "%s—%s" % (debit_account, row["category"]),
-                        "aux": "",
-                        "debit": amount,
-                        "credit": ZERO,
-                        "quantity": quantity,
-                        "source_rows": row.get("source_rows", 0),
-                    }
-                )
-                # 贷方同样按销售大类展开：库存商品—纱线 / 发出商品—面料 …
+                for account_name, row_amount, row_quantity in debit_rows:
+                    entries.append(
+                        {
+                            "level": "line",
+                            "summary": carry,
+                            "account": account_name,
+                            "aux": "",
+                            "debit": row_amount,
+                            "credit": ZERO,
+                            "quantity": row_quantity,
+                            "source_rows": row.get("source_rows", 0),
+                        }
+                    )
+                # 贷方按销售大类一行（库存商品—纱线 / 发出商品—面料 …）
                 credit_entries.append(
                     {
                         "level": "line",
                         "summary": carry,
-                        "account": "%s—%s" % (credit_account, row["category"]),
+                        "account": "%s—%s" % (credit_account, category_label_text),
                         "aux": "",
                         "debit": ZERO,
                         "credit": amount,

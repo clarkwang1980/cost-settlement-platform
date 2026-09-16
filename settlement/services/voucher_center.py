@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from settlement.models import AccountingPeriod
 from settlement.services.purchase_voucher import build_purchase_voucher
 from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
@@ -102,9 +103,25 @@ def _sales_card(period, month=None):
 
 
 
-def _purchase_card(period):
-    # 与销售凭证卡片同格式：按物料大类 / 供应商展开，5 列（摘要｜科目｜数量｜借方｜贷方）
-    voucher = build_purchase_voucher(period, group="category")
+def _period_by_month(period, month):
+    """按 YYYY-MM 找核算期间；找不到就用当前期间。"""
+    if month:
+        try:
+            year, month_no = str(month).split("-")
+            found = AccountingPeriod.objects.filter(
+                month=date(int(year), int(month_no), 1)
+            ).first()
+            if found:
+                return found
+        except (TypeError, ValueError):
+            pass
+    return period
+
+
+def _purchase_card(period, month=None):
+    # 与销售凭证卡片同格式：按物料大类展开、贷方汇总一行，5 列（摘要｜科目｜数量｜借方｜贷方）
+    target = _period_by_month(period, month)
+    voucher = build_purchase_voucher(target, group="category")
     entries = []
     for block in voucher["blocks"]:
         for row in block["rows"]:
@@ -133,10 +150,17 @@ def _purchase_card(period):
                 "价差进材料成本差异。期初暂估台账余额只提示、不入账。",
         "url_name": "purchase_accrual_voucher",
         "export_kind": "purchase_voucher",
-        # 汇总字段与借贷 pill 与销售卡片一致，不再展示；凭证期间＝核算期间（用顶部期间导航切换）
+        # 汇总字段与借贷 pill 与销售卡片一致，不再展示；凭证期间做成筛选字段
         "metrics": [],
         "month": voucher["month"],
-        "month_filter": None,
+        "month_filter": {
+            "param": "purchase_month",
+            "value": voucher["month"],
+            "options": [
+                {"value": item.month.strftime("%Y-%m"), "label": str(item)}
+                for item in AccountingPeriod.objects.order_by("month")
+            ],
+        },
         "entry_headers": list(voucher["headers"]),
         "entries": entries,
         "balance": None,
@@ -162,13 +186,13 @@ def _planned(key, title, eyebrow, note):
     }
 
 
-def build_voucher_center(period, sales_month=None):
+def build_voucher_center(period, sales_month=None, purchase_month=None):
     """本期凭证中心数据：已实现 2 类 + 规划中 3 类。
 
-    sales_month：销售凭证卡片上「凭证期间」的筛选（选哪个期间就出哪个期间的销售凭证）。
+    sales_month / purchase_month：两张卡片各自「凭证期间」的筛选（选哪个期间就出哪个期间的凭证）。
     """
     # 按建议的生成顺序排列：暂估回冲 → 投料 → 制造费用 → 完工入库 → 销售结转
-    cards = [_purchase_card(period)]
+    cards = [_purchase_card(period, month=purchase_month)]
     cards.append(
         _planned(
             "material_issue",

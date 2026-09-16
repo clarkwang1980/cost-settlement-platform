@@ -9,19 +9,19 @@
     <p>本月到货本月到票直接入账；本月到货月末未到票暂估；前期暂估本月到票回冲原暂估并按票入账。金额口径不含税。</p>
   </div>
   <div class="heading-actions">
-    <label class="muted-text">凭证期间
-      <select onchange="location.href=this.value" aria-label="凭证期间">
-        {% for item in period_options %}
-        <option value="{% url 'purchase_accrual_voucher' item.id %}"{% if item.id == period.id %} selected{% endif %}>{{ item.label }}</option>
-        {% endfor %}
-      </select>
-    </label>
     <form method="get" class="filter-actions" style="margin:0;">
       <input type="hidden" name="supplier" value="{{ voucher.filter.supplier }}">
       <input type="hidden" name="material" value="{{ voucher.filter.material }}">
+      <label class="muted-text">凭证期间
+        <select name="voucher_month" onchange="this.form.submit()">
+          {% for item in period_options %}
+          <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <label class="muted-text">科目粒度
         <select name="group" onchange="this.form.submit()">
-          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>按物料大类 / 供应商展开</option>
+          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>按物料大类展开</option>
           <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每类一行）</option>
         </select>
       </label>

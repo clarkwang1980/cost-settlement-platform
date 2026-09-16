@@ -6,7 +6,7 @@
   <div>
     <p class="eyebrow">SALES COST CARRY-FORWARD VOUCHER</p>
     <h1>销售结转成本凭证</h1>
-    <p>数据来源：销售台账（结转类型由台账带来，金额由平台结算后按销售数量 × 月末加权平均价回填）。金额口径不含税。</p>
+    <p>按结转类型与销售大类汇总的结转成本凭证；借方主营业务成本按销售渠道分国内/国外，贷方按销售大类。</p>
   </div>
   <div class="heading-actions">
     <form method="get" class="filter-actions" style="margin:0;">
@@ -53,7 +53,6 @@
     <div>
       <p class="eyebrow">VOUCHER ENTRIES</p>
       <h2>凭证分录（不含税）</h2>
-      <p class="muted-text" style="margin:6px 0 0;">{{ voucher.voucher_note }}</p>
     </div>
   </div>
 
@@ -92,12 +91,12 @@
       </tbody>
     </table>
   </div>
+  <p class="muted-text">{{ voucher.voucher_note }}</p>
   <p class="muted-text">
-    借方：主营业务成本（当月发货当月开票、前期发货本期开票）／发出商品（当月发货未开票）；
-    贷方：库存商品（当月发货的）／发出商品（以前月份已挂发出商品、本期开票结转的）。
-    <strong>借贷两侧都按销售大类展开</strong>（如「库存商品—纱线」「发出商品—面料」）。
-    每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置。
-    「凭证期间」在上方下拉里选择，选哪个期间就出哪个期间的凭证。
+    借方「主营业务成本」按销售渠道分国内/国外（如「主营业务成本—国内销售—纱线」）；
+    贷方为「库存商品—纱线」「发出商品—面料」。
+    每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置；
+    凭证期间在上方下拉里选择。
   </p>
 </section>
 
