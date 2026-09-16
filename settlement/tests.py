@@ -61,6 +61,7 @@ from settlement.services.workorder_costing import (
 from settlement.services.pulp_costing import collect_pulp_costs
 from settlement.services.sales_voucher import (
     build_sales_cost_statistics,
+    build_sales_voucher_entries,
     build_sales_voucher_summary,
 )
 from settlement.services.sales_uninvoiced import (
@@ -4774,29 +4775,102 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
                 BLOCK1: {"out": "1999-01", "status": "zzz", "invoice": "1999-01"},
             })), "500.00")
 
-    def test_voucher_page_renders_per_block_filters_and_left_aligned(self):
+    def test_voucher_page_renders_entries_and_block_filters(self):
+        """凭证页＝凭证分录格式：借贷列、三块取数条件、附件里的三块独立筛选。"""
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
                    carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
         self.client.force_login(self.user)
         # 凭证已拆成独立页面
         url = reverse("sales_cost_voucher", args=[self.period.id])
         html = self.client.get(url).content.decode("utf-8")
-        self.assertIn("<h2>销售结转成本凭证</h2>", html)
-        # 三块的下拉参数名互不相同
+        self.assertIn("<h1>销售结转成本凭证</h1>", html)
+        self.assertIn("<h2>凭证分录（不含税）</h2>", html)
+        self.assertIn("<h2>附件：结转类型 × 销售大类（含表内筛选）</h2>", html)
+        # 表头＝凭证分录口径
+        idx = html.index("<h2>凭证分录（不含税）</h2>")
+        section = html[idx:html.index("</table>", idx)]
+        heads = [re.sub(r"<[^>]+>", "", h).strip()
+                 for h in re.findall(r"<th[^>]*>(.*?)</th>", section, re.S)]
+        self.assertEqual(
+            heads, ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"]
+        )
+        # 附件里三块的下拉参数名互不相同（保留原有独立筛选）
         for name in ("vout0", "vst0", "vinv0", "vout1", "vst1", "vinv1",
                      "vout2", "vst2", "vinv2"):
             self.assertIn('name="%s"' % name, html)
         # 默认选中项：块0 已开发票 + 当月
         self.assertIn('value="invoiced" selected', html)
-        # 后三列靠左（开票期间 / 数量 / 金额 不带 num 类）
-        idx = html.index("<h2>销售结转成本凭证</h2>")
-        section = html[html.rindex("<section", 0, idx):]
-        section = section[:section.index("</section>")]
-        body = section[section.index("<tbody>"):section.index("</tbody>")]
-        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
-            attrs = re.findall(r"<td([^>]*)>", tr)
-            for attr in attrs[-3:]:
-                self.assertNotIn("num", attr)
+        # 带出借贷科目
+        self.assertIn("库存商品", html)
+
+    def test_voucher_entries_accounts_and_balance(self):
+        """三类结转的借贷科目与金额：借＝贷，转类型决定贷方是库存商品还是发出商品。"""
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
+        self._line(2, out_month=self.june, invoice_month=self.period.month,
+                   carry_type="前期发货本期开票结转成本", cost="200.00", category="面料")
+        self._line(3, out_month=self.period.month,
+                   carry_type="当月发货未开票挂发出商品", status="uninvoiced",
+                   cost="300.00", category="纤维")
+        # 同一块再来一个销售大类，用来区分「按大类展开」与「科目汇总」
+        self._line(4, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="50.00", category="面料")
+        data = build_sales_voucher_entries(self.period)
+        self.assertTrue(data["totals"]["balanced"])
+        self.assertEqual(data["totals"]["debit"], Decimal("650.00"))
+        self.assertEqual(data["totals"]["credit"], Decimal("650.00"))
+        blocks = {b["carry_type"]: b for b in data["blocks"]}
+        self.assertEqual(blocks["当月发货当月开票结转成本"]["debit_account"], "主营业务成本")
+        self.assertEqual(blocks["当月发货当月开票结转成本"]["credit_account"], "库存商品")
+        self.assertEqual(blocks["前期发货本期开票结转成本"]["debit_account"], "主营业务成本")
+        self.assertEqual(blocks["前期发货本期开票结转成本"]["credit_account"], "发出商品")
+        self.assertEqual(blocks["当月发货未开票挂发出商品"]["debit_account"], "发出商品")
+        self.assertEqual(blocks["当月发货未开票挂发出商品"]["credit_account"], "库存商品")
+        # 借方按销售大类展开
+        categories = {
+            row["account"]
+            for row in blocks["当月发货当月开票结转成本"]["entries"]
+            if row["level"] == "line" and row["debit"] > 0
+        }
+        self.assertEqual(categories, {"主营业务成本—纱线", "主营业务成本—面料"})
+        # 科目汇总模式：每块借贷各一行
+        single = build_sales_voucher_entries(self.period, group="single")
+        self.assertTrue(single["totals"]["balanced"])
+        # 科目汇总模式：每块借贷各一行，比按大类展开少行
+        self.assertLess(
+            single["totals"]["line_count"], data["totals"]["line_count"]
+        )
+        self.assertEqual(single["totals"]["debit"], data["totals"]["debit"])
+        self.assertEqual(
+            {
+                row["account"]
+                for row in blocks["当月发货当月开票结转成本"]["entries"]
+                if row["level"] == "line" and row["credit"] > 0
+            },
+            {"库存商品"},
+        )
+
+    def test_voucher_period_filter_selects_month(self):
+        """凭证期间筛选：选哪个期间就只出该期间的凭证。"""
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
+        self._line(2, out_month=self.june, invoice_month=self.june,
+                   carry_type="当月发货当月开票结转成本", cost="500.00", category="面料")
+        current = build_sales_voucher_entries(self.period)
+        self.assertEqual(current["month"], "2026-07")
+        self.assertEqual(current["totals"]["debit"], Decimal("100.00"))
+        june = build_sales_voucher_entries(self.period, month=self.june)
+        self.assertEqual(june["month"], "2026-06")
+        self.assertEqual(june["totals"]["debit"], Decimal("500.00"))
+        # 页面上的凭证期间下拉含两个期间，且当前期间被选中
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("sales_cost_voucher", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertIn("凭证期间", html)
+        self.assertIn('name="voucher_month"', html)
+        self.assertIn('value="2026-06"', html)
+        self.assertIn('value="2026-07" selected', html)
 
     def test_voucher_export_listing(self):
         """销售结转成本凭证可单独导出 Excel。"""
@@ -4944,13 +5018,14 @@ class SalesUninvoicedDetailLayoutTests(SettlementFixtureMixin, TestCase):
     def test_voucher_section_moved_to_own_page(self):
         """销售结转成本凭证已拆成独立页：本页只留跳转，独立页有完整凭证表。"""
         html = self.client.get(self.url).content.decode("utf-8")
-        self.assertNotIn("<h2>销售结转成本凭证</h2>", html)
+        self.assertNotIn("<h2>凭证分录（不含税）</h2>", html)
         self.assertNotIn("voucher-filter-form", html)
         self.assertIn(reverse("sales_cost_voucher", args=[self.period.id]), html)
 
         voucher_url = reverse("sales_cost_voucher", args=[self.period.id])
         voucher_html = self.client.get(voucher_url).content.decode("utf-8")
-        self.assertIn("<h2>销售结转成本凭证</h2>", voucher_html)
+        self.assertIn("<h1>销售结转成本凭证</h1>", voucher_html)
+        self.assertIn("<h2>凭证分录（不含税）</h2>", voucher_html)
         self.assertIn("voucher-filter-form", voucher_html)
 
 
@@ -4971,13 +5046,15 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
         for text in (
             "数据来源",
             "销售台账",
-            "结转类型 / 销售大类 / 数量",
+            "结转类型",
             "销售成本",
             "销售数量 × 该产品月末加权平均价",
             "库存计价",
             "历史单位成本",
-            "会计科目 / 记账月份",
+            "凭证期间（记账月份）",
             "有数量、金额为 0",
+            "库存商品",
+            "发出商品",
         ):
             self.assertIn(text, html, text)
 
@@ -5312,6 +5389,32 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         self.batch = self.create_batch(self.period, ImportBatch.Kind.INVENTORY, "vc")
         self.material = Material.objects.create(code="RM-VC", name="凭证中心原料", uom="kg")
 
+    def _sales_line(self, row_no=1, *, carry_type="当月发货当月开票结转成本",
+                    category="纱线", quantity="10", cost="100.00",
+                    out_month=None, invoice_month=None, status="invoiced"):
+        batch = self.create_batch(self.period, ImportBatch.Kind.SALES_LEDGER,
+                                  "vc-sales-%s" % row_no)
+        return SalesLedgerLine.objects.create(
+            period=self.period,
+            batch=batch,
+            row_no=row_no,
+            out_month=out_month or self.period.month,
+            invoice_status=status,
+            invoice_month=invoice_month or self.period.month,
+            channel="国内销售",
+            order_no="SO-VC-%s" % row_no,
+            customer_code="C1",
+            customer_name="客户甲",
+            sales_category=category,
+            material_code="11.01",
+            material_name="产品",
+            uom="kg",
+            quantity=Decimal(quantity),
+            terminal_amount=Decimal("200.00"),
+            cost_amount=Decimal(cost),
+            carry_type=carry_type,
+        )
+
     def _receipt(self, quantity=Decimal("100"), unit_price=Decimal("10")):
         txn = self.create_txn(
             self.period,
@@ -5419,8 +5522,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         cards = {card["key"]: card for card in data["cards"]}
         self.assertEqual(
             cards["sales"]["entry_headers"],
-            ["会计科目", "结转类型", "销售大类", "出库期间", "开票状态",
-             "开票期间", "数量", "金额"],
+            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
         )
         self.assertEqual(
             cards["purchase"]["entry_headers"],
@@ -5434,6 +5536,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
     def test_center_sales_table_headers_match_detail_page(self):
         """页面渲染层面：中心里那张销售凭证表，表头与明细页逐列一致。"""
         self._receipt()
+        self._sales_line()
         self.client.force_login(self.user)
         center = self.client.get(
             reverse("voucher_center", args=[self.period.id])
@@ -5449,7 +5552,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             for h in re.findall(r"<th[^>]*>(.*?)</th>", center_body, re.S)
         ]
 
-        detail_idx = detail.index("<h2>销售结转成本凭证</h2>")
+        detail_idx = detail.index("<h2>凭证分录（不含税）</h2>")
         detail_body = detail[detail_idx:detail.index("</table>", detail_idx)]
         detail_heads = [
             re.sub(r"<[^>]+>", "", h).strip()
@@ -5458,8 +5561,7 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
 
         self.assertEqual(
             detail_heads,
-            ["会计科目", "结转类型", "销售大类", "出库期间", "开票状态",
-             "开票期间", "数量", "金额"],
+            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
         )
         self.assertEqual(center_heads, detail_heads)
 
@@ -5470,21 +5572,28 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             re.sub(r"<[^>]+>", "", c).strip()
             for c in re.findall(r"<td[^>]*>(.*?)</td>", first_tr, re.S)
         ]
-        self.assertEqual(cells[0], "主营业务成本")
-        self.assertEqual(cells[1], "当月发货当月开票结转成本")
+        # 中心用科目汇总口径：首行摘要＝第一个结转类型，其次为借方科目
+        self.assertEqual(cells[0], "当月发货当月开票结转成本")
+        self.assertEqual(cells[1], "主营业务成本")
 
-    def test_detail_page_keeps_original_voucher_format(self):
-        """销售结转成本凭证明细页：不再有后来加的汇总卡与「恢复默认筛选」。"""
+    def test_sales_voucher_uses_entry_format_like_purchase(self):
+        """销售凭证与采购凭证同格式：汇总卡 + 生成前检查 + 凭证分录（借/贷）+ 附件。"""
         self._receipt()
         self.client.force_login(self.user)
         html = self.client.get(
             reverse("sales_cost_voucher", args=[self.period.id])
         ).content.decode("utf-8")
-        self.assertNotIn("summary-strip", html)
-        self.assertNotIn("恢复默认筛选", html)
-        for text in ("数据来源：销售台账", "<h2>销售结转成本凭证</h2>",
-                     "记账月份", "voucher-filter-form"):
+        for text in ("<h1>销售结转成本凭证</h1>", "summary-strip",
+                     "生成前检查", "<h2>凭证分录（不含税）</h2>",
+                     "<h2>附件：结转类型 × 销售大类（含表内筛选）</h2>",
+                     "取数口径与说明", "voucher-filter-form", "凭证期间"):
             self.assertIn(text, html, text)
+        # 采购凭证页也是同一套结构，保证两页格式一致
+        purchase = self.client.get(
+            reverse("purchase_accrual_voucher", args=[self.period.id])
+        ).content.decode("utf-8")
+        for text in ("summary-strip", "生成前检查", "<h2>凭证分录（不含税）</h2>"):
+            self.assertIn(text, purchase, text)
 
     def test_nav_has_single_voucher_center_entry(self):
         """导航合并成一个「凭证中心」入口，明细页保留返回入口。"""

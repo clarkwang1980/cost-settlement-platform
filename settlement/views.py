@@ -100,6 +100,7 @@ from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
     block_param_names,
     build_sales_cost_statistics,
+    build_sales_voucher_entries,
     build_sales_voucher_summary,
 )
 from settlement.services.sales_uninvoiced import (
@@ -802,14 +803,19 @@ def _sales_voucher_param_names():
 
 @login_required
 def sales_cost_voucher(request, period_id):
-    """销售结转成本凭证：独立页面（原先嵌在「月末未开票」页面里）。
+    """销售结转成本凭证：凭证分录口径（与采购暂估凭证同格式）。
 
-    数据来源销售台账；按「结转类型 × 销售大类」汇总，三个结转类型块各自独立筛选。
+    - 数据来源：销售台账（结转类型由台账带来；金额由平台结算后按销售数量 × 月末加权平均价回填）；
+    - 凭证期间：voucher_month（记账月份）；平台把「前期发货本期开票」记在开票月，其余记在出库月；
+    - 三个结转类型块各自独立筛选（出库期间 / 开票状态 / 开票期间）；
+    - 借方：主营业务成本（同月开票、前期发货本期开票）/ 发出商品（未开票）；
+      贷方：库存商品（同月开票、未开票）/ 发出商品（前期发货本期开票）。
     """
     period = get_object_or_404(AccountingPeriod, id=period_id)
     voucher_month, block_filters = _sales_voucher_filters(request)
-    voucher = build_sales_voucher_summary(
-        period, month=voucher_month, block_filters=block_filters
+    group = str(request.GET.get("group", "")).strip() or "category"
+    voucher = build_sales_voucher_entries(
+        period, month=voucher_month, block_filters=block_filters, group=group
     )
     voucher_clear_query = urlencode(
         [
@@ -3731,18 +3737,44 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "sales_voucher":
-        # 销售结转成本凭证：与页面口径一致（按结转类型 × 销售大类汇总，含小计/合计）
+        # 销售结转成本凭证：与页面口径一致（凭证分录 + 结转类型×销售大类附件）
         _vm, _vf = _sales_voucher_filters(request)
-        _voucher = build_sales_voucher_summary(
-            period, month=_vm, block_filters=_vf
+        _voucher = build_sales_voucher_entries(
+            period,
+            month=_vm,
+            block_filters=_vf,
+            group=request.GET.get("group", "") or "category",
+        )
+        _rows = []
+        for _block in _voucher["blocks"]:
+            for _row in _block["entries"]:
+                _rows.append(
+                    (
+                        _row["summary"], _row["account"], _row["aux"],
+                        _row["debit"], _row["credit"], _row["quantity"],
+                        _row["source_rows"],
+                    )
+                )
+        _rows.append(
+            (
+                "合计", "", "", _voucher["totals"]["debit"],
+                _voucher["totals"]["credit"], _voucher["totals"]["quantity"], "",
+            )
         )
         _status_labels = {
             item["value"]: item["label"] for item in _voucher["status_options"]
         }
         sheets.append(
             (
-                "销售结转成本凭证",
-                ["记账月份", "会计科目", "结转类型", "销售大类", "出库期间",
+                "凭证分录",
+                ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+                _rows,
+            )
+        )
+        sheets.append(
+            (
+                "附件-结转类型与销售大类",
+                ["凭证期间", "会计科目", "结转类型", "销售大类", "出库期间",
                  "开票状态", "开票期间", "数量", "金额"],
                 (
                     (
@@ -3762,7 +3794,7 @@ def _listing_rows(request, period, kind):
                         row["quantity"],
                         row["amount"],
                     )
-                    for row in _voucher["rows"]
+                    for row in _voucher["summary_rows"]
                 ),
             )
         )

@@ -464,3 +464,251 @@ def build_sales_cost_statistics(period, month_count: int = 6) -> dict:
         "month_headers": [month["label"] for month in months],
         "period": period,
     }
+# ── 凭证分录口径（与采购暂估凭证同格式）────────────────────────────────
+#: 借方科目（按结转类型）
+DEBIT_ACCOUNT_BY_CARRY = dict(ACCOUNT_BY_CARRY)
+
+#: 贷方科目（按结转类型）：
+#: - 当月发货当月开票：货当月出、当月开票，贷库存商品；
+#: - 前期发货本期开票：上月发货时已「借发出商品/贷库存商品」，本月开票结转主营业务成本，故贷发出商品；
+#: - 当月发货未开票：挂账，借发出商品/贷库存商品。
+CREDIT_ACCOUNT_BY_CARRY = {
+    CARRY_CURRENT_INVOICED: "库存商品",
+    CARRY_PRIOR_INVOICED: "发出商品",
+    CARRY_UNINVOICED: "库存商品",
+}
+
+#: 建议的凭证生成序（页面提示用）
+VOUCHER_NOTE = (
+    "借：主营业务成本（当月发货当月开票、前期发货本期开票）/ 发出商品（当月发货未开票）；"
+    "贷：库存商品（当月发货的）或 发出商品（以前月份已挂发出商品、本期开票结转的）。"
+)
+
+
+def build_sales_voucher_entries(period, month=None, block_filters=None, group="category"):
+    """销售结转成本凭证（会计分录口径）。
+
+    - 凭证期间（记账月份）：由 month 指定；只统计该期间的结转数据（平台把「前期发货本期开票」
+      记在开票月，其余记在出库月，与页面口径一致）；
+    - 三个结转类型块各自独立筛选（出库期间 / 开票状态 / 开票期间），与原来一致；
+    - group="category"：借方按销售大类展开（辅助核算），贷方汇总一行；
+      group="single"：每块借方、贷方各一行；
+    - 金额取台账「销售成本」列（结算后由平台按销售数量 × 月末加权平均价回填）。
+    """
+    # 未显式提交的块筛选，默认跟随所选「凭证期间」：
+    # 前两块默认「已开发票 + 该凭证期间开票」，第三块默认「该凭证期间出库」，
+    # 这样选哪个期间就出哪个期间的凭证（显式提交过的筛选一律保留）。
+    target_month = month_first(month) if month else month_first(period.month)
+    target_label = month_label(target_month)
+    month_defaults = {
+        CARRY_CURRENT_INVOICED: {"out": "", "status": "invoiced", "invoice": target_label},
+        CARRY_PRIOR_INVOICED: {"out": "", "status": "invoiced", "invoice": target_label},
+        CARRY_UNINVOICED: {"out": target_label, "status": "", "invoice": ""},
+    }
+    merged_filters = {}
+    for _carry in CARRY_COST_TYPES:
+        _supplied = (block_filters or {}).get(_carry) or {}
+        merged_filters[_carry] = {
+            _key: (
+                _supplied.get(_key)
+                if _supplied.get(_key) is not None
+                else month_defaults[_carry][_key]
+            )
+            for _key in ("out", "status", "invoice")
+        }
+    summary = build_sales_voucher_summary(
+        period, month=month, block_filters=merged_filters
+    )
+    group = "single" if str(group).strip() == "single" else "category"
+    status_labels = {
+        item["value"]: item["label"] for item in summary["status_options"]
+    }
+
+    rows_by_block = {}
+    for row in summary["rows"]:
+        if row["level"] == "category":
+            rows_by_block.setdefault(row["block_index"], []).append(row)
+
+    blocks = []
+    debit_total = ZERO
+    credit_total = ZERO
+    quantity_total = ZERO
+    missing_rows = 0
+    zero_amount_rows = 0
+
+    for index, block in enumerate(summary["blocks"]):
+        carry = block["carry_type"]
+        debit_account = DEBIT_ACCOUNT_BY_CARRY.get(carry, "主营业务成本")
+        credit_account = CREDIT_ACCOUNT_BY_CARRY.get(carry, "库存商品")
+        condition = "出库期间 %s ｜ 开票状态 %s ｜ 开票期间 %s" % (
+            block["out_value"] or "（空白）",
+            status_labels.get(block["status_value"], block["status_value"] or "（空白）"),
+            block["invoice_value"] or "（空白）",
+        )
+
+        entries = []
+        block_quantity = ZERO
+        block_amount = ZERO
+        block_rows = 0
+        for row in rows_by_block.get(index, []):
+            amount = row["amount"] or ZERO
+            quantity = row["quantity"] or ZERO
+            if quantity == ZERO and amount == ZERO:
+                continue
+            block_quantity += quantity
+            block_amount += amount
+            block_rows += row.get("source_rows", 0)
+            missing_rows += row.get("missing_cost_rows", 0)
+            if amount == ZERO and quantity != ZERO:
+                zero_amount_rows += 1
+            label = "%s %s" % (carry, row["category"])
+            if group == "category":
+                entries.append(
+                    {
+                        "level": "line",
+                        "summary": label,
+                        "account": "%s—%s" % (debit_account, row["category"]),
+                        "aux": "销售大类：%s" % row["category"],
+                        "debit": amount,
+                        "credit": ZERO,
+                        "quantity": quantity,
+                        "source_rows": row.get("source_rows", 0),
+                    }
+                )
+        if group == "single":
+            if block_amount == ZERO and block_quantity == ZERO:
+                continue
+            entries.append(
+                {
+                    "level": "line",
+                    "summary": carry,
+                    "account": debit_account,
+                    "aux": condition,
+                    "debit": block_amount,
+                    "credit": ZERO,
+                    "quantity": block_quantity,
+                    "source_rows": block_rows,
+                }
+            )
+        # 贷方一行（金额＝该块合计）
+        entries.append(
+            {
+                "level": "line",
+                "summary": carry,
+                "account": credit_account,
+                "aux": condition if group == "single" else "",
+                "debit": ZERO,
+                "credit": block_amount,
+                "quantity": block_quantity,
+                "source_rows": 0,
+            }
+        )
+        block_debit = sum((item["debit"] for item in entries), ZERO)
+        block_credit = sum((item["credit"] for item in entries), ZERO)
+        entries.append(
+            {
+                "level": "subtotal",
+                "summary": "%s 小计" % carry,
+                "account": "",
+                "aux": "",
+                "debit": block_debit,
+                "credit": block_credit,
+                "quantity": block_quantity,
+                "source_rows": block_rows,
+            }
+        )
+        debit_total += block_debit
+        credit_total += block_credit
+        quantity_total += block_quantity
+        blocks.append(
+            {
+                "index": index,
+                "carry_type": carry,
+                "debit_account": debit_account,
+                "credit_account": credit_account,
+                "condition": condition,
+                "out_value": block["out_value"],
+                "status_value": block["status_value"],
+                "invoice_value": block["invoice_value"],
+                "params": block["params"],
+                "entries": entries,
+                "debit_total": money(block_debit),
+                "credit_total": money(block_credit),
+                "amount": money(block_amount),
+                "quantity": block_quantity,
+                "source_rows": block_rows,
+                "balanced": money(block_debit - block_credit) == ZERO,
+            }
+        )
+
+    checks = []
+    if missing_rows:
+        checks.append(
+            {
+                "level": "warning",
+                "text": "有 %d 行销售台账没有销售成本（该产品当月没有库存计价），"
+                        "这些行的金额按 0 计，会少记成本。" % missing_rows,
+            }
+        )
+    if zero_amount_rows:
+        checks.append(
+            {
+                "level": "warning",
+                "text": "有 %d 个「结转类型 × 销售大类」格子有数量、金额为 0。" % zero_amount_rows,
+            }
+        )
+    checks.append(
+        {
+            "level": "info",
+            "text": "本凭证只包含三个结转类型；台账里的「%s」不在此范围，"
+                    "由总账按销售费用处理。" % CARRY_SAMPLE,
+        }
+    )
+    if money(debit_total - credit_total) != ZERO:
+        checks.append(
+            {
+                "level": "blocking",
+                "text": "借贷不平：借方 %s / 贷方 %s，差 %s。"
+                        % (
+                            f"{debit_total:,.2f}",
+                            f"{credit_total:,.2f}",
+                            f"{debit_total - credit_total:,.2f}",
+                        ),
+            }
+        )
+    if not summary["totals"]["source_rows"]:
+        checks.append(
+            {
+                "level": "warning",
+                "text": "凭证期间 %s 没有参与结转的销售台账行。" % summary["month"],
+            }
+        )
+
+    return {
+        "month": summary["month"],
+        "months": summary["months"],
+        "group": group,
+        "blocks": blocks,
+        "totals": {
+            "debit": money(debit_total),
+            "credit": money(credit_total),
+            "difference": money(debit_total - credit_total),
+            "balanced": money(debit_total - credit_total) == ZERO,
+            "quantity": quantity_total,
+            "line_count": sum(len(block["entries"]) - 1 for block in blocks),
+            "source_rows": summary["totals"]["source_rows"],
+            "missing_cost_rows": missing_rows,
+        },
+        "checks": checks,
+        "headers": ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+        "status_options": summary["status_options"],
+        "out_options": summary["out_options"],
+        "invoice_options": summary["invoice_options"],
+        "blank_label": summary["blank_label"],
+        "voucher_note": VOUCHER_NOTE,
+        "summary_rows": summary["rows"],
+        "summary_headers": summary["headers"],
+        "summary_totals": summary["totals"],
+        "sample_credit_account": "销售费用",
+        "sample_carry_type": CARRY_SAMPLE,
+    }

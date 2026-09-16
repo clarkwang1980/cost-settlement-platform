@@ -12,7 +12,7 @@ from decimal import Decimal
 from settlement.services.purchase_voucher import build_purchase_voucher
 from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
-    build_sales_voucher_summary,
+    build_sales_voucher_entries,
 )
 
 ZERO = Decimal("0")
@@ -27,37 +27,28 @@ def _cell(text, num=False):
 
 
 def _sales_card(period):
-    voucher = build_sales_voucher_summary(period)
+    voucher = build_sales_voucher_entries(period, group="single")
     totals = voucher["totals"]
-    status_labels = {
-        item["value"]: item["label"] for item in voucher["status_options"]
-    }
     entries = []
-    for row in voucher["rows"]:
-        # 与凭证页保持完全一致的 8 列（含三个筛选列，这里以当前取值文本展示）
-        if row["block_index"] >= 0:
-            out_text = row["block_out"] or "（空白）"
-            status_text = status_labels.get(
-                row["block_status"], row["block_status"] or "（空白）"
+    for block in voucher["blocks"]:
+        for row in block["entries"]:
+            entries.append(
+                {
+                    "level": row["level"],
+                    "cells": [
+                        _cell(row["summary"]),
+                        _cell(row["account"]),
+                        _cell(row["aux"]),
+                        _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
+                        _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
+                        _cell(
+                            "{:,.3f}".format(row["quantity"]) if row["quantity"] else "",
+                            True,
+                        ),
+                        _cell("{:,}".format(row["source_rows"]) if row["source_rows"] else "", True),
+                    ],
+                }
             )
-            invoice_text = row["block_invoice"] or "（空白）"
-        else:
-            out_text = status_text = invoice_text = ""
-        entries.append(
-            {
-                "level": row["level"],
-                "cells": [
-                    _cell(row["account"]),
-                    _cell(row["carry_type"]),
-                    _cell(row["category"]),
-                    _cell(out_text),
-                    _cell(status_text),
-                    _cell(invoice_text),
-                    _cell("{:,.3f}".format(row["quantity"]), True),
-                    _cell("{:,.2f}".format(row["amount"]), True),
-                ],
-            }
-        )
     checks = []
     if totals["missing_cost_rows"]:
         checks.append(
@@ -80,24 +71,27 @@ def _sales_card(period):
         "eyebrow": "SALES COST CARRY-FORWARD VOUCHER",
         "status": "ready",
         "status_label": "已实现",
-        "note": "数据来源：销售台账（结转类型 × 销售大类）。会计科目由平台按结转类型映射，"
-                "金额取台账「销售成本」列（结算后按销售数量 × 月末加权平均价回填）。",
+        "note": "数据来源：销售台账。结转类型由台账带来；金额取台账「销售成本」列"
+                "（结算后按销售数量 × 月末加权平均价回填）。借方 主营业务成本／发出商品，"
+                "贷方 库存商品／发出商品，按结转类型映射。",
         "url_name": "sales_cost_voucher",
         "export_kind": "sales_voucher",
         "metrics": [
-            _metric("记账月份", voucher["month"]),
-            _metric("合计数量", "{:,.3f}".format(totals["quantity"])),
-            _metric("合计金额", "{:,.2f}".format(totals["amount"])),
-            _metric("参与汇总台账行数", "{:,}".format(totals["source_rows"])),
+            _metric("凭证期间", voucher["month"]),
+            _metric("借方合计", "{:,.2f}".format(totals["debit"])),
+            _metric("贷方合计", "{:,.2f}".format(totals["credit"])),
+            _metric("结转金额合计", "{:,.2f}".format(
+                voucher["summary_totals"]["amount"])),
+            _metric("参与结转台账行数", "{:,}".format(totals["source_rows"])),
             _metric("结转类型", "%d 类" % len(CARRY_COST_TYPES)),
         ],
         "entry_headers": list(voucher["headers"]),
         "entries": entries,
         "balance": {
-            "debit": totals["amount"],
-            "credit": totals["amount"],
-            "balanced": True,
-            "label": "金额",
+            "debit": totals["debit"],
+            "credit": totals["credit"],
+            "balanced": totals["balanced"],
+            "label": "借贷",
         },
         "checks": checks,
     }
