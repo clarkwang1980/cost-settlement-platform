@@ -4850,6 +4850,50 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
             {"库存商品"},
         )
 
+
+    def test_voucher_keeps_raw_sales_category(self):
+        """销售大类保留台账原值：带括号的写法不能被归一成「其他成品」。"""
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="100.00",
+                   category="其他成品（手套、服装、床垫等）")
+        self._line(2, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="50.00",
+                   category="其他成品（毯子）")
+        data = build_sales_voucher_entries(self.period)
+        accounts = {
+            row["account"]
+            for block in data["blocks"]
+            for row in block["entries"]
+            if row["level"] == "line" and row["debit"] > 0
+        }
+        self.assertEqual(
+            accounts,
+            {
+                "主营业务成本—其他成品（手套、服装、床垫等）",
+                "主营业务成本—其他成品（毯子）",
+            },
+        )
+        # 两个原值各自成行（没有被并成一行）
+        categories = {
+            row["category"]
+            for row in data["summary_rows"]
+            if row["level"] == "category"
+        }
+        self.assertEqual(
+            categories, {"其他成品（手套、服装、床垫等）", "其他成品（毯子）"}
+        )
+        # 辅助核算用同一个原值
+        aux = {row["aux"] for block in data["blocks"] for row in block["entries"]
+               if row["level"] == "line" and row["debit"] > 0}
+        self.assertTrue(all("其他成品" in item for item in aux))
+        # 默认（fixed）口径仍按老规则归一，未受影响
+        fixed = build_sales_voucher_summary(self.period)
+        fixed_categories = {
+            row["category"] for row in fixed["rows"] if row["level"] == "category"
+        }
+        self.assertIn("其他成品", fixed_categories)
+        self.assertNotIn("其他成品（毯子）", fixed_categories)
+
     def test_voucher_period_filter_selects_month(self):
         """凭证期间筛选：选哪个期间就只出该期间的凭证。"""
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,

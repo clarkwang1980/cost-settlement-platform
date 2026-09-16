@@ -124,6 +124,12 @@ def _voucher_month(line) -> date | None:
     return month_first(line.out_month) if line.out_month else None
 
 
+def voucher_category(value) -> str:
+    """凭证用的销售大类：保留台账原值（不合并、不改写），仅空值归「未分类」。"""
+    text = (value or "").strip()
+    return text or category_label("")
+
+
 def _category_sort_key(name):
     if name in CATEGORY_ORDER:
         return (0, CATEGORY_ORDER.index(name), "")
@@ -171,12 +177,16 @@ def default_block_filters(period) -> dict:
     }
 
 
-def build_sales_voucher_summary(period, month=None, block_filters=None) -> dict:
+def build_sales_voucher_summary(period, month=None, block_filters=None,
+                                category_mode="fixed") -> dict:
     """销售结转成本凭证：按「结转类型 × 销售大类」汇总，三个结转类型块各自独立筛选。
 
     - 统计三类结转：当月发货当月开票 / 前期发货本期开票 / 当月发货未开票挂发出商品
       （前两者记主营业务成本，后者记发出商品）；记账月份共用，按各类型的记账规则归属；
-    - 每个结转类型都列全 5 个销售大类（纱线/面料/纤维/其他成品/原料），无数据时显示 0；
+    - category_mode="fixed"（默认）：每个结转类型列全 5 个销售大类，无数据时显示 0，
+      销售大类按 category_label 归一（如「其他成品（手套、服装、床垫等）」→「其他成品」）；
+    - category_mode="ledger"：保留台账「销售大类」原值，不归一、不合并，只列有数据的；
+      （凭证页面与导出用这个口径）
     - block_filters: {结转类型: {"out": 值, "status": 值, "invoice": 值}}；
       值为 None（未提交）→ 用该块默认值；值为 ""（选了「（空白）」）→ 该字段不限制；
       非法值按「不限制」处理。
@@ -286,7 +296,12 @@ def build_sales_voucher_summary(period, month=None, block_filters=None) -> dict:
                 continue
             if values["invoice"] and month_label(line.invoice_month) != values["invoice"]:
                 continue
-            item = buckets[category_label(line.sales_category)]
+            category_name = (
+                voucher_category(line.sales_category)
+                if category_mode == "ledger"
+                else category_label(line.sales_category)
+            )
+            item = buckets[category_name]
             item["quantity"] += line.quantity or ZERO
             item["rows"] += 1
             if line.cost_amount is None:
@@ -302,8 +317,15 @@ def build_sales_voucher_summary(period, month=None, block_filters=None) -> dict:
             "block_status": values["status"],
             "block_invoice": values["invoice"],
         }
+        if category_mode == "ledger":
+            category_names = [name for name in CATEGORY_ORDER if name in buckets]
+            category_names += sorted(
+                name for name in buckets if name not in CATEGORY_ORDER
+            )
+        else:
+            category_names = list(CATEGORY_ORDER)
         subtotal = _blank()
-        for category in CATEGORY_ORDER:
+        for category in category_names:
             item = buckets.get(category) or _blank()
             rows.append(
                 {
@@ -485,13 +507,14 @@ VOUCHER_NOTE = (
 )
 
 
-def build_sales_voucher_entries(period, month=None, block_filters=None, group="category"):
+def build_sales_voucher_entries(period, month=None, block_filters=None,
+                                group="category", category_mode="ledger"):
     """销售结转成本凭证（会计分录口径）。
 
     - 凭证期间（记账月份）：由 month 指定；只统计该期间的结转数据（平台把「前期发货本期开票」
       记在开票月，其余记在出库月，与页面口径一致）；
     - 三个结转类型块各自独立筛选（出库期间 / 开票状态 / 开票期间），与原来一致；
-    - group="category"：借方按销售大类展开（辅助核算），贷方汇总一行；
+    - 销售大类保留台账原值（category_mode="ledger"，不合并）；
       group="single"：每块借方、贷方各一行；
     - 金额取台账「销售成本」列（结算后由平台按销售数量 × 月末加权平均价回填）。
     """
@@ -517,7 +540,7 @@ def build_sales_voucher_entries(period, month=None, block_filters=None, group="c
             for _key in ("out", "status", "invoice")
         }
     summary = build_sales_voucher_summary(
-        period, month=month, block_filters=merged_filters
+        period, month=month, block_filters=merged_filters, category_mode=category_mode
     )
     group = "single" if str(group).strip() == "single" else "category"
     status_labels = {
@@ -575,9 +598,10 @@ def build_sales_voucher_entries(period, month=None, block_filters=None, group="c
                         "source_rows": row.get("source_rows", 0),
                     }
                 )
+        if block_amount == ZERO and block_quantity == ZERO:
+            # 该块在当前筛选下没有数据：整块跳过
+            continue
         if group == "single":
-            if block_amount == ZERO and block_quantity == ZERO:
-                continue
             entries.append(
                 {
                     "level": "line",
