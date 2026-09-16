@@ -5411,6 +5411,81 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
                       "production_receipt", "sales"]]
         self.assertEqual(positions, sorted(positions))
 
+
+    def test_center_tables_match_voucher_detail_format(self):
+        """凭证中心里的表格式必须与凭证页一致：列名、列序、列数都不能走样。"""
+        self._receipt()
+        data = build_voucher_center(self.period)
+        cards = {card["key"]: card for card in data["cards"]}
+        self.assertEqual(
+            cards["sales"]["entry_headers"],
+            ["会计科目", "结转类型", "销售大类", "出库期间", "开票状态",
+             "开票期间", "数量", "金额"],
+        )
+        self.assertEqual(
+            cards["purchase"]["entry_headers"],
+            ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
+        )
+        for key in ("sales", "purchase"):
+            width = len(cards[key]["entry_headers"])
+            for row in cards[key]["entries"]:
+                self.assertEqual(len(row["cells"]), width, key)
+
+    def test_center_sales_table_headers_match_detail_page(self):
+        """页面渲染层面：中心里那张销售凭证表，表头与明细页逐列一致。"""
+        self._receipt()
+        self.client.force_login(self.user)
+        center = self.client.get(
+            reverse("voucher_center", args=[self.period.id])
+        ).content.decode("utf-8")
+        detail = self.client.get(
+            reverse("sales_cost_voucher", args=[self.period.id])
+        ).content.decode("utf-8")
+
+        sales_idx = center.index('id="voucher-sales"')
+        center_body = center[sales_idx:center.index("</table>", sales_idx)]
+        center_heads = [
+            re.sub(r"<[^>]+>", "", h).strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", center_body, re.S)
+        ]
+
+        detail_idx = detail.index("<h2>销售结转成本凭证</h2>")
+        detail_body = detail[detail_idx:detail.index("</table>", detail_idx)]
+        detail_heads = [
+            re.sub(r"<[^>]+>", "", h).strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", detail_body, re.S)
+        ]
+
+        self.assertEqual(
+            detail_heads,
+            ["会计科目", "结转类型", "销售大类", "出库期间", "开票状态",
+             "开票期间", "数量", "金额"],
+        )
+        self.assertEqual(center_heads, detail_heads)
+
+        # 首行第一列是会计科目（不是结转类型）
+        tbody = center_body[center_body.index("<tbody>"):]
+        first_tr = tbody[:tbody.index("</tr>")]
+        cells = [
+            re.sub(r"<[^>]+>", "", c).strip()
+            for c in re.findall(r"<td[^>]*>(.*?)</td>", first_tr, re.S)
+        ]
+        self.assertEqual(cells[0], "主营业务成本")
+        self.assertEqual(cells[1], "当月发货当月开票结转成本")
+
+    def test_detail_page_keeps_original_voucher_format(self):
+        """销售结转成本凭证明细页：不再有后来加的汇总卡与「恢复默认筛选」。"""
+        self._receipt()
+        self.client.force_login(self.user)
+        html = self.client.get(
+            reverse("sales_cost_voucher", args=[self.period.id])
+        ).content.decode("utf-8")
+        self.assertNotIn("summary-strip", html)
+        self.assertNotIn("恢复默认筛选", html)
+        for text in ("数据来源：销售台账", "<h2>销售结转成本凭证</h2>",
+                     "记账月份", "voucher-filter-form"):
+            self.assertIn(text, html, text)
+
     def test_nav_has_single_voucher_center_entry(self):
         """导航合并成一个「凭证中心」入口，明细页保留返回入口。"""
         self.client.force_login(self.user)

@@ -29,15 +29,30 @@ def _cell(text, num=False):
 def _sales_card(period):
     voucher = build_sales_voucher_summary(period)
     totals = voucher["totals"]
+    status_labels = {
+        item["value"]: item["label"] for item in voucher["status_options"]
+    }
     entries = []
     for row in voucher["rows"]:
+        # 与凭证页保持完全一致的 8 列（含三个筛选列，这里以当前取值文本展示）
+        if row["block_index"] >= 0:
+            out_text = row["block_out"] or "（空白）"
+            status_text = status_labels.get(
+                row["block_status"], row["block_status"] or "（空白）"
+            )
+            invoice_text = row["block_invoice"] or "（空白）"
+        else:
+            out_text = status_text = invoice_text = ""
         entries.append(
             {
                 "level": row["level"],
                 "cells": [
-                    _cell(row["carry_type"]),
                     _cell(row["account"]),
+                    _cell(row["carry_type"]),
                     _cell(row["category"]),
+                    _cell(out_text),
+                    _cell(status_text),
+                    _cell(invoice_text),
                     _cell("{:,.3f}".format(row["quantity"]), True),
                     _cell("{:,.2f}".format(row["amount"]), True),
                 ],
@@ -76,7 +91,7 @@ def _sales_card(period):
             _metric("参与汇总台账行数", "{:,}".format(totals["source_rows"])),
             _metric("结转类型", "%d 类" % len(CARRY_COST_TYPES)),
         ],
-        "entry_headers": ["结转类型", "会计科目", "销售大类", "数量", "金额"],
+        "entry_headers": list(voucher["headers"]),
         "entries": entries,
         "balance": {
             "debit": totals["amount"],
@@ -94,18 +109,21 @@ def _purchase_card(period):
     entries = []
     for block in voucher["blocks"]:
         for row in block["rows"]:
+            # 与采购凭证明细页保持一致的 7 列
             entries.append(
                 {
                     "level": row["level"],
                     "cells": [
                         _cell(row["summary"]),
                         _cell(row["account"]),
+                        _cell(row["aux"]),
                         _cell("{:,.2f}".format(row["debit"]) if row["debit"] else "", True),
                         _cell("{:,.2f}".format(row["credit"]) if row["credit"] else "", True),
                         _cell(
                             "{:,.3f}".format(row["quantity"]) if row["quantity"] else "",
                             True,
                         ),
+                        _cell("{:,}".format(row["source_rows"]) if row["source_rows"] else "", True),
                     ],
                 }
             )
@@ -132,7 +150,7 @@ def _purchase_card(period):
             ),
             _metric("月末暂估余额", "{:,.2f}".format(summary["ending_balance"])),
         ],
-        "entry_headers": ["摘要", "科目", "借方", "贷方", "数量"],
+        "entry_headers": ["摘要", "科目", "辅助核算", "借方", "贷方", "数量", "来源行数"],
         "entries": entries,
         "balance": {
             "debit": voucher["totals"]["debit"],

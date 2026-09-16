@@ -17,14 +17,6 @@
   </div>
 </section>
 
-<section class="summary-strip compact">
-  <article><span>记账月份</span><strong>{{ voucher.month|default:"—" }}</strong></article>
-  <article><span>合计数量</span><strong>{{ voucher.totals.quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>合计金额</span><strong>{{ voucher.totals.amount|floatformat:2|thousands }}</strong></article>
-  <article><span>参与汇总的台账行数</span><strong>{{ voucher.totals.source_rows }}</strong></article>
-  <article><span>无成本行数</span><strong class="{% if voucher.totals.missing_cost_rows %}danger-text{% endif %}">{{ voucher.totals.missing_cost_rows }}</strong></article>
-</section>
-
 <section class="section-card">
   <div class="section-heading">
     <div>
@@ -53,7 +45,6 @@
           {% endfor %}
         </select>
       </label>
-      <a class="button secondary" href="?{{ voucher_clear_query }}">恢复默认筛选</a>
       <noscript><button class="button secondary" type="submit">切换</button></noscript>
     </form>
   </div>
