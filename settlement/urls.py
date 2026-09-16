@@ -90,6 +90,11 @@ urlpatterns = [
         name="sales_uninvoiced",
     ),
     path(
+        "periods/<int:period_id>/sales-cost-voucher/",
+        views.sales_cost_voucher,
+        name="sales_cost_voucher",
+    ),
+    path(
         "periods/<int:period_id>/work-order-matches/",
         views.work_order_matches,
         name="work_order_matches",

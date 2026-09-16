@@ -4589,7 +4589,7 @@ class PrintSupportTests(SettlementFixtureMixin, TestCase):
 
 
 class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
-    """销售凭证 + 发出商品及销售成本统计表（月末已出库未开票页的两张新表）。"""
+    """销售结转成本凭证（独立页面）+ 发出商品及销售成本统计表（仍在月末未开票页）。"""
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -4776,7 +4776,8 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         self._line(1, out_month=self.period.month, invoice_month=self.period.month,
                    carry_type="当月发货当月开票结转成本", cost="100.00", category="纱线")
         self.client.force_login(self.user)
-        url = reverse("sales_uninvoiced", args=[self.period.id])
+        # 凭证已拆成独立页面
+        url = reverse("sales_cost_voucher", args=[self.period.id])
         html = self.client.get(url).content.decode("utf-8")
         self.assertIn("<h2>销售结转成本凭证</h2>", html)
         # 三块的下拉参数名互不相同
@@ -4786,13 +4787,26 @@ class SalesVoucherAndStatisticsTests(SettlementFixtureMixin, TestCase):
         # 默认选中项：块0 已开发票 + 当月
         self.assertIn('value="invoiced" selected', html)
         # 后三列靠左（开票期间 / 数量 / 金额 不带 num 类）
-        section = html[html.index("销售结转成本凭证"):]
+        idx = html.index("<h2>销售结转成本凭证</h2>")
+        section = html[html.rindex("<section", 0, idx):]
         section = section[:section.index("</section>")]
         body = section[section.index("<tbody>"):section.index("</tbody>")]
         for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S):
             attrs = re.findall(r"<td([^>]*)>", tr)
             for attr in attrs[-3:]:
                 self.assertNotIn("num", attr)
+
+    def test_voucher_export_listing(self):
+        """销售结转成本凭证可单独导出 Excel。"""
+        self._line(1, out_month=self.period.month, invoice_month=self.period.month,
+                   carry_type="当月发货当月开票结转成本", cost="100.00",
+                   category="纱线")
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("export_listing", args=[self.period.id, "sales_voucher"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("spreadsheetml", response["Content-Type"])
 
     # ── 发出商品及销售成本统计表 ────────────────────────────────────────
 
@@ -4921,13 +4935,25 @@ class SalesUninvoicedDetailLayoutTests(SettlementFixtureMixin, TestCase):
 
     def test_other_sections_still_present(self):
         html = self.client.get(self.url).content.decode("utf-8")
-        for label in ("发出商品跨月滚动勾稽", "销售结转成本凭证",
+        for label in ("发出商品跨月滚动勾稽",
                       "发出商品及销售成本统计表", "截至月末仍未开票的销售出库明细"):
             self.assertIn(label, html)
 
+    def test_voucher_section_moved_to_own_page(self):
+        """销售结转成本凭证已拆成独立页：本页只留跳转，独立页有完整凭证表。"""
+        html = self.client.get(self.url).content.decode("utf-8")
+        self.assertNotIn("<h2>销售结转成本凭证</h2>", html)
+        self.assertNotIn("voucher-filter-form", html)
+        self.assertIn(reverse("sales_cost_voucher", args=[self.period.id]), html)
+
+        voucher_url = reverse("sales_cost_voucher", args=[self.period.id])
+        voucher_html = self.client.get(voucher_url).content.decode("utf-8")
+        self.assertIn("<h2>销售结转成本凭证</h2>", voucher_html)
+        self.assertIn("voucher-filter-form", voucher_html)
+
 
 class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
-    """销售结转成本凭证：说明改为「数据来源」，且不再显示旧的统计/筛选说明。"""
+    """销售结转成本凭证（独立页面）：说明为「数据来源」，且不再显示旧的统计/筛选说明。"""
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -4938,7 +4964,7 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
 
     def test_note_shows_data_sources(self):
         html = self.client.get(
-            reverse("sales_uninvoiced", args=[self.period.id])
+            reverse("sales_cost_voucher", args=[self.period.id])
         ).content.decode("utf-8")
         for text in (
             "数据来源",
@@ -4955,7 +4981,7 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
 
     def test_old_note_is_removed(self):
         html = self.client.get(
-            reverse("sales_uninvoiced", args=[self.period.id])
+            reverse("sales_cost_voucher", args=[self.period.id])
         ).content.decode("utf-8")
         for text in (
             "统计三类结转，按「结转类型 × 销售大类」汇总",
@@ -4966,7 +4992,7 @@ class SalesVoucherDataSourceNoteTests(SettlementFixtureMixin, TestCase):
 
     def test_keeps_filters_and_summary_note(self):
         html = self.client.get(
-            reverse("sales_uninvoiced", args=[self.period.id])
+            reverse("sales_cost_voucher", args=[self.period.id])
         ).content.decode("utf-8")
         # 表内筛选与合计说明仍在
         for text in ("记账月份", "（空白）", "小计", "合计", "默认筛选"):

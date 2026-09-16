@@ -765,13 +765,12 @@ def sales_matches(request, period_id):
     )
 
 
-@login_required
-def sales_uninvoiced(request, period_id):
-    period = get_object_or_404(AccountingPeriod, id=period_id)
-    rows = build_sales_uninvoiced_rows(period)
-    # 明细表上方原来那块筛选字段已按用户要求删除（该表只做展示）。
+def _sales_voucher_filters(request):
+    """销售结转成本凭证的筛选解析：记账月份 + 三个结转类型块各自的出库期间/开票状态/开票期间。
 
-    # 销售结转成本凭证：记账月份 + 出库期间 + 开票状态 + 开票期间 + 销售大类
+    参数名带块序号（vout0/vst0/vinv0、vout1/...），保证三块互不干扰；
+    没提交过的字段传 None → 用该块默认值；提交了空串 = 选了「（空白）」= 该字段不限制。
+    """
     voucher_month_raw = str(request.GET.get("voucher_month", "")).strip()
     voucher_month = None
     if voucher_month_raw:
@@ -780,8 +779,6 @@ def sales_uninvoiced(request, period_id):
             voucher_month = date(int(year), int(month_no), 1)
         except (TypeError, ValueError):
             voucher_month = None
-    # 三个结转类型块各自独立：参数名带块序号（vout0/vst0/vinv0、vout1/...）；
-    # 没提交过的字段传 None → 用该块默认值；提交了空串 = 选了「（空白）」= 不限制。
     block_filters = {}
     for index, carry in enumerate(CARRY_COST_TYPES):
         names = block_param_names(index)
@@ -790,31 +787,55 @@ def sales_uninvoiced(request, period_id):
             "status": request.GET.get(names["status"]),
             "invoice": request.GET.get(names["invoice"]),
         }
+    return voucher_month, block_filters
+
+
+def _sales_voucher_param_names():
+    """凭证自己的筛选参数名（「清空筛选」时只清这些，保留页面上其它参数）。"""
+    names = {"voucher_month", "vpage"}
+    for index in range(len(CARRY_COST_TYPES)):
+        names |= set(block_param_names(index).values())
+    return names
+
+
+@login_required
+def sales_cost_voucher(request, period_id):
+    """销售结转成本凭证：独立页面（原先嵌在「月末未开票」页面里）。
+
+    数据来源销售台账；按「结转类型 × 销售大类」汇总，三个结转类型块各自独立筛选。
+    """
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    voucher_month, block_filters = _sales_voucher_filters(request)
     voucher = build_sales_voucher_summary(
         period, month=voucher_month, block_filters=block_filters
     )
-    voucher_page = Paginator(voucher["rows"], 200).get_page(
-        request.GET.get("vpage")
-    )
-    query = request.GET.copy()
-    query.pop("vpage", None)
-    voucher_page.querystring = query.urlencode()
-    # 「清空筛选」：只清凭证这几项，保留上面的明细筛选
-    voucher_param_names = {
-        name
-        for index in range(len(CARRY_COST_TYPES))
-        for name in block_param_names(index).values()
-    } | {"vout", "vinv", "vst", "vcat"}
     voucher_clear_query = urlencode(
-        [(key, value) for key, value in request.GET.items()
-         if key not in voucher_param_names and key != "vpage"]
+        [
+            (key, value)
+            for key, value in request.GET.items()
+            if key not in _sales_voucher_param_names()
+        ]
     )
-    voucher_context = {
-        "voucher": voucher,
-        "voucher_page": voucher_page,
-        "voucher_clear_query": voucher_clear_query,
-    }
+    return render(
+        request,
+        "settlement/sales_cost_voucher.html",
+        {
+            "period": period,
+            "voucher": voucher,
+            "voucher_clear_query": voucher_clear_query,
+        },
+    )
 
+
+@login_required
+def sales_uninvoiced(request, period_id):
+    """月末已出库未开票：发出商品滚动勾稽 + 发出商品及销售成本统计表 + 未开票明细。
+
+    「销售结转成本凭证」已拆成独立页面（sales_cost_voucher），本页不再展示。
+    """
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    rows = build_sales_uninvoiced_rows(period)
+    # 明细表上方原来那块筛选字段已按用户要求删除（该表只做展示）。
     return render(
         request,
         "settlement/sales_uninvoiced.html",
@@ -823,7 +844,6 @@ def sales_uninvoiced(request, period_id):
             "page": _page(request, rows),
             "summary": summarize_sales_uninvoiced(rows, period),
             "rollforward": build_goods_issued_rollforward(period),
-            **voucher_context,
             "statistics": build_sales_cost_statistics(period),
         },
     )
@@ -2774,6 +2794,7 @@ LISTING_EXPORTS = {
     "purchase_reversal": {"title": "发票暂估回冲明细"},
     "sales_invoice": {"title": "销售发票匹配"},
     "sales_uninvoiced": {"title": "月末已出库未开票"},
+    "sales_voucher": {"title": "销售结转成本凭证"},
     "sales_ledger": {"title": "销售台账（成本·毛利）"},
     "profit_statement": {"title": "损益表"},
     "work_order_match": {"title": "工单匹配"},
@@ -3565,6 +3586,43 @@ def _listing_rows(request, period, kind):
                         r.status,
                     )
                     for r in rows
+                ),
+            )
+        )
+
+    elif kind == "sales_voucher":
+        # 销售结转成本凭证：与页面口径一致（按结转类型 × 销售大类汇总，含小计/合计）
+        _vm, _vf = _sales_voucher_filters(request)
+        _voucher = build_sales_voucher_summary(
+            period, month=_vm, block_filters=_vf
+        )
+        _status_labels = {
+            item["value"]: item["label"] for item in _voucher["status_options"]
+        }
+        sheets.append(
+            (
+                "销售结转成本凭证",
+                ["记账月份", "会计科目", "结转类型", "销售大类", "出库期间",
+                 "开票状态", "开票期间", "数量", "金额"],
+                (
+                    (
+                        _voucher["month"] if row["block_index"] >= 0 else "",
+                        row["account"],
+                        row["carry_type"],
+                        row["category"],
+                        row["block_out"] if row["block_index"] >= 0 else "",
+                        (
+                            _status_labels.get(
+                                row["block_status"], row["block_status"] or ""
+                            )
+                            if row["block_index"] >= 0
+                            else ""
+                        ),
+                        row["block_invoice"] if row["block_index"] >= 0 else "",
+                        row["quantity"],
+                        row["amount"],
+                    )
+                    for row in _voucher["rows"]
                 ),
             )
         )
@@ -5178,6 +5236,9 @@ def export_center(request, period_id):
                  "desc": "销售发票及核销的出库/期初发出商品明细"},
                 {"kind": "sales_uninvoiced", "name": "月末已出库未开票",
                  "desc": "截止月末仍未开票的销售出库及发出商品成本"},
+                {"kind": "sales_voucher", "name": "销售结转成本凭证",
+                 "desc": "按「结转类型 × 销售大类」汇总的结转成本凭证（会计科目、数量、金额），"
+                         "含各结转类型小计与合计；会计条件与凭证页面当前的筛选一致"},
                 {"kind": "sales_ledger", "name": "销售台账（成本·毛利）",
                  "desc": "你上传的销售台账 + 平台算出的成本单价（产品月末加权平均价）、销售成本、销售毛利与毛利率"},
                 {"kind": "profit_statement", "name": "损益表",
