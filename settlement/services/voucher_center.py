@@ -164,7 +164,8 @@ def _planned(key, title, eyebrow, note):
 
 def build_voucher_center(period):
     """本期凭证中心数据：已实现 2 类 + 规划中 3 类。"""
-    cards = [_sales_card(period), _purchase_card(period)]
+    # 按建议的生成顺序排列：暂估回冲 → 投料 → 制造费用 → 完工入库 → 销售结转
+    cards = [_purchase_card(period)]
     cards.append(
         _planned(
             "material_issue",
@@ -193,6 +194,11 @@ def build_voucher_center(period):
             "工单完工成本）与浆粕单独归集需先确认；本地 7 月两条口径相差 362.57 万。",
         )
     )
+    cards.append(_sales_card(period))
+
+    # 顺序号：页面按这个顺序展示，末尾的「建议的凭证生成顺序」也用它
+    for index, card in enumerate(cards, start=1):
+        card["step"] = index
 
     ready = [card for card in cards if card["status"] == "ready"]
     blocking = [
@@ -212,6 +218,16 @@ def build_voucher_center(period):
         "period_status": period.get_status_display(),
         "locked": bool(period.locked_at),
         "cards": cards,
+        "steps": [
+            {
+                "step": card["step"],
+                "title": card["title"],
+                "key": card["key"],
+                "status": card["status"],
+                "status_label": card["status_label"],
+            }
+            for card in cards
+        ],
         "ready_count": len(ready),
         "planned_count": len(cards) - len(ready),
         "entry_count": sum(len(card["entries"]) for card in cards),

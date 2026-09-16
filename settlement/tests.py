@@ -5337,11 +5337,18 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         data = build_voucher_center(self.period)
         self.assertEqual(data["ready_count"], 2)
         self.assertEqual(data["planned_count"], 3)
+        # 卡片顺序＝建议的生成顺序：暂估回冲 → 投料 → 制造费用 → 完工入库 → 销售结转
         keys = [card["key"] for card in data["cards"]]
         self.assertEqual(
             keys,
-            ["sales", "purchase", "material_issue", "manufacturing_overhead",
-             "production_receipt"],
+            ["purchase", "material_issue", "manufacturing_overhead",
+             "production_receipt", "sales"],
+        )
+        self.assertEqual([card["step"] for card in data["cards"]], [1, 2, 3, 4, 5])
+        # 末尾「生成顺序」列表与卡片顺序一致
+        self.assertEqual([step["step"] for step in data["steps"]], [1, 2, 3, 4, 5])
+        self.assertEqual(
+            [step["key"] for step in data["steps"]], keys
         )
         purchase = {card["key"]: card for card in data["cards"]}["purchase"]
         self.assertEqual(purchase["balance"]["debit"], purchase["balance"]["credit"])
@@ -5390,6 +5397,19 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
         self.assertIn(
             reverse("export_listing", args=[self.period.id, "purchase_voucher"]), html
         )
+        # 卡片按生成顺序编号 + 锚点，末尾顺序表可跳转
+        for step, key in enumerate(
+            ["purchase", "material_issue", "manufacturing_overhead",
+             "production_receipt", "sales"], start=1
+        ):
+            self.assertIn('id="voucher-%s"' % key, html, key)
+            self.assertIn(">第 %d 步<" % step, html, key)
+            self.assertIn('href="#voucher-%s"' % key, html, key)
+        # 卡片出现顺序＝编号顺序
+        positions = [html.index('id="voucher-%s"' % key) for key in
+                     ["purchase", "material_issue", "manufacturing_overhead",
+                      "production_receipt", "sales"]]
+        self.assertEqual(positions, sorted(positions))
 
     def test_nav_has_single_voucher_center_entry(self):
         """导航合并成一个「凭证中心」入口，明细页保留返回入口。"""

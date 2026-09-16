@@ -41,11 +41,11 @@
 {% endif %}
 
 {% for card in voucher_center.cards %}
-<section class="section-card">
+<section class="section-card" id="voucher-{{ card.key }}">
   <div class="section-heading">
     <div>
       <p class="eyebrow">{{ card.eyebrow }}</p>
-      <h2>{{ card.title }}</h2>
+      <h2><span class="pill">第 {{ card.step }} 步</span> {{ card.title }}</h2>
       <p class="muted-text" style="margin:6px 0 0;">{{ card.note }}</p>
     </div>
     <div class="heading-actions">
@@ -110,18 +110,21 @@
     </div>
   </div>
   <p class="muted-text" style="margin:0 0 8px;">
-    先保证前置条件（各车间结转收敛、勾稽通过或差异已确认、无阻断异常），再按下面顺序出凭证：
+    先保证前置条件（各车间结转收敛、勾稽通过或差异已确认、无阻断异常），再按下面顺序出凭证
+    （点击可跳到对应凭证）：
   </p>
   <ol class="muted-text" style="margin:0;padding-left:22px;">
-    <li>采购暂估 / 回冲凭证（本月到货与到票）</li>
-    <li>生产领料（投料）凭证</li>
-    <li>制造费用 / 人工结转凭证</li>
-    <li>完工入库结转凭证</li>
-    <li>销售结转成本凭证（月末）</li>
+    {% for step in voucher_center.steps %}
+    <li>
+      <a href="#voucher-{{ step.key }}">{{ step.title }}</a>
+      {% if step.status == 'ready' %}<span class="pill success">已实现</span>{% else %}<span class="pill warning">规划中</span>{% endif %}
+    </li>
+    {% endfor %}
   </ol>
   <p class="muted-text" style="margin:8px 0 0;">
-    说明：暂估与回冲是同一批数据的两个方向，建议在同一次操作里一起生成；
-    销售结转凭证依赖完工入库后的库存计价，所以排在最后。
+    为什么是这个顺序：① 采购暂估与回冲是同一批数据的两个方向，建议在同一次操作里一起生成，
+    先把原材料入库成本坐实；② 投料、③ 制造费用结转、④ 完工入库结转依次把成本往产品推进，
+    存货计价要用到 ④ 的结果；⑤ 销售结转依赖完工入库后的库存加权价，所以排在最后。
   </p>
 </section>
 {% endblock %}
