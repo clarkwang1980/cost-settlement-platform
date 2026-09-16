@@ -5653,9 +5653,9 @@ class VoucherCenterTests(SettlementFixtureMixin, TestCase):
             re.sub(r"<[^>]+>", "", c).strip()
             for c in re.findall(r"<td[^>]*>(.*?)</td>", first_tr, re.S)
         ]
-        # 中心用科目汇总口径：首行摘要＝第一个结转类型，其次为借方科目
-        self.assertEqual(cells[0], "当月发货当月开票结转成本")
-        self.assertEqual(cells[1], "主营业务成本")
+        # 中心与明细页同口径（按销售大类展开）：摘要＝结转类型 + 大类，科目带大类
+        self.assertTrue(cells[0].startswith("当月发货当月开票结转成本"), cells[0])
+        self.assertTrue(cells[1].startswith("主营业务成本—"), cells[1])
 
     def test_sales_voucher_uses_entry_format_like_purchase(self):
         """销售凭证与采购凭证同格式：汇总卡 + 生成前检查 + 凭证分录（借/贷）+ 附件。"""

@@ -27,7 +27,8 @@ def _cell(text, num=False):
 
 
 def _sales_card(period):
-    voucher = build_sales_voucher_entries(period, group="single")
+    # 按销售大类展开（与明细页默认一致）：贷方「库存商品—纱线」「发出商品—面料」都看得见
+    voucher = build_sales_voucher_entries(period, group="category")
     totals = voucher["totals"]
     entries = []
     for block in voucher["blocks"]:
@@ -71,9 +72,9 @@ def _sales_card(period):
         "eyebrow": "SALES COST CARRY-FORWARD VOUCHER",
         "status": "ready",
         "status_label": "已实现",
-        "note": "数据来源：销售台账。结转类型由台账带来；金额取台账「销售成本」列"
-                "（结算后按销售数量 × 月末加权平均价回填）。借方 主营业务成本／发出商品，"
-                "贷方 库存商品／发出商品，按结转类型映射。",
+        "note": "数据来源：销售台账。结转类型与销售大类都取台账原值；金额取台账「销售成本」列"
+                "（结算后按销售数量 × 月末加权平均价回填）。借方 主营业务成本／发出商品、"
+                "贷方 库存商品／发出商品，借贷两侧都按销售大类展开。",
         "url_name": "sales_cost_voucher",
         "export_kind": "sales_voucher",
         "metrics": [
