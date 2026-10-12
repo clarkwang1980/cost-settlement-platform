@@ -316,6 +316,17 @@ def period_detail(request, period_id):
         "settled_workshops": sum(
             1 for item in settlements if item.status == "settled"
         ),
+        # 数据自检（用户 2026-09-30）：标准成本/损益表算不出来的常见原因都在这里
+        "bom_lines": period.bom_lines.count(),
+        "bom_priced": period.bom_lines.exclude(standard_price=None).count(),
+        "historical_prices": period.historical_prices.count(),
+        "standard_rates": period.standard_cost_rates.count(),
+        "workshop_cost_pools": period.workshop_cost_pools.count(),
+        "sales_ledger": period.sales_ledger_lines.count(),
+        "material_issues": period.material_issues.count(),
+        "work_reports": period.work_reports.count(),
+        "work_order_costs": period.work_order_cost_results.count(),
+        "batch_kinds": period.import_batches.values("kind").distinct().count(),
     }
     lockable, lock_reason = can_lock(period)
     return render(
