@@ -35,6 +35,9 @@
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'period_detail' period.id %}">返回期间</a>
+      {% if period.import_batches.count %}
+      <a class="button secondary" href="{% url 'download_all_import_files' period.id %}">下载我上传的原始文件（ZIP）</a>
+      {% endif %}
   </div>
 </section>
 
