@@ -1,67 +1,181 @@
 {% extends "base.html" %}
 {% load workshop_tags %}
-{% block title %}工单报工报表 · {{ period }}{% endblock %}
+{% block title %}工单报工 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  /* 明细表列多（期间 + 上传的报工记录原样 + 6 个计算列）：按内容定宽、不压扁也不省略号截断，
+     超出就在容器里横向滚动（表头固定）。列名来自上传文件（动态），所以样式挂表格自己的类 */
+  .oc-detail-table { table-layout: auto; }
+  .oc-detail-table th, .oc-detail-table td { white-space: nowrap; }
+  /* 两个模块各自的筛选行：标签在上、控件在下，整行靠左；按钮组与控件底对齐 */
+  .oc-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;
+                 gap:8px 14px;margin:0 0 12px;}
+  .oc-filter-row label{display:grid;gap:4px;white-space:nowrap;color:#56636e;
+                       font-size:12px;font-weight:700;}
+  .oc-filter-row select,.oc-filter-row input{height:34px;min-height:34px;padding:4px 8px;}
+  .oc-filter-row input[type="text"]{min-width:170px;}
+  /* 「筛选 / 清空 / 导出Excel / 打印本表」都在这一排，与左侧筛选项底对齐 */
+  .oc-filter-row .filter-actions{align-self:flex-end;flex-wrap:wrap;align-items:center;}
+  .oc-filter-row .filter-actions .button,
+  .oc-filter-row .print-here .section-print{min-height:34px;padding:6px 12px;font-size:14px;
+                                            white-space:nowrap;}
+  .oc-filter-row .print-here{display:flex;align-items:center;}
+</style>
 <section class="page-heading">
   <div>
     <p class="eyebrow">COMPLETION REPORT</p>
     <h1>工单报工</h1>
-    <p>工单完工汇报：报工数量、完工成本与报工入库，与工单成本计算结果一致。完工数量＝报工数量合计。</p>
   </div>
-  <a class="button secondary" href="{% url 'export_listing' period.id 'order_completion' %}?{{ request.GET.urlencode }}">导出Excel</a>
-</section>
-
-<section class="summary-strip">
-  <article><span>报工数量</span><strong>{{ totals.report_quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2|thousands }}</strong></article>
-  <article><span>在产品成本</span><strong>¥{{ totals.wip_cost|floatformat:2|thousands }}</strong></article>
-  <article><span>总成本</span><strong>¥{{ totals.total_cost|floatformat:2|thousands }}</strong></article>
-  <article><span>报工入库数量</span><strong>{{ totals.receipt_quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>报工入库金额</span><strong>¥{{ totals.receipt_amount|floatformat:2|thousands }}</strong></article>
-</section>
-
-<section class="section-card filter-card">
-  <form class="filter-grid" method="get">
-    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
-    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 染色车间 / 纺纱车间"></label>
-    <label>产品编码<input name="product" value="{{ request.GET.product }}"></label>
-    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'order_completion_report' period.id %}">清空</a></div>
-  </form>
 </section>
 
 <section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">SUMMARY</p>
+      <h2>报工汇总（按期间 × 车间）</h2>
+    </div>
+  </div>
+  <form class="oc-filter-row" method="get">
+    {# 明细表的筛选条件原样带过去（两个模块的筛选互不影响），只带非空的 #}
+    {% if detail_filters.period %}<input type="hidden" name="d_period" value="{{ detail_filters.period }}">{% endif %}
+    {% if detail_filters.department %}<input type="hidden" name="d_department" value="{{ detail_filters.department }}">{% endif %}
+    {% if detail_filters.order_no %}<input type="hidden" name="d_order_no" value="{{ detail_filters.order_no }}">{% endif %}
+    {# 下拉一改就即时生效（与「工单投料」「销售台账」等页面同一做法），也可以点「筛选」 #}
+    <label>期间
+      <select name="s_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item }}"{% if item == summary_filters.period %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+        <option value="all"{% if summary_filters.period == 'all' %} selected{% endif %}>全部期间（累计）</option>
+      </select>
+    </label>
+    <label>车间
+      <select name="s_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == summary_filters.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{{ detail_hidden_qs }}">清空</a>
+      {% comment %}打印本表也放在这一排，跟筛选项/按钮底对齐（由 base.html 注入到 .print-here）{% endcomment %}
+      <div class="print-here"></div>
+    </div>
+  </form>
+  {% if summary_active %}
+  <div class="message message-info">本表已按上方条件过滤：{{ summary_active_labels|join:"、" }}；合计＝筛选后的结果。</div>
+  {% endif %}
   <div class="table-wrap">
-    <table>
+    <table class="oc-summary-table">
       <thead>
         <tr>
-          <th>工单编号</th><th>车间/部门</th><th>产品编码</th><th>产品名称</th><th class="num">计划数量</th>
-          <th class="num">报工数量</th><th class="num">报工条数</th>
-          <th class="num">完工成本</th><th class="num">单位完工成本</th>
+          <th>期间</th><th>车间</th>
+          <th class="num">报工数量</th><th class="num">完工成本</th>
           <th class="num">在产品成本</th><th class="num">总成本</th>
-          <th class="num">报工入库数量</th><th class="num">报工入库金额</th><th>状态</th>
+          <th class="num">报工入库数量</th><th class="num">报工入库金额</th>
         </tr>
       </thead>
       <tbody>
-      {% for item in page %}
+      {% for row in summary_rows %}
         <tr>
-          <td><strong>{{ item.order_no }}</strong></td>
-          <td>{{ item.workshop|workshop_label|default:"—" }}</td>
-          <td><strong>{{ item.product_code|default:"—" }}</strong></td><td>{{ item.product_name }}</td>
-          <td class="num">{{ item.plan_quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ item.report_qty|floatformat:3|thousands }}</td>
-          <td class="num">{{ item.report_count }}</td>
-          <td class="num">{% if item.result %}{{ item.result.finished_cost|floatformat:2|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}{{ item.result.finished_unit_cost|floatformat:4|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}{{ item.result.wip_cost|floatformat:2|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.result %}<strong>{{ item.result.total_cost|floatformat:2|thousands }}</strong>{% else %}—{% endif %}</td>
-          <td class="num">{{ item.receipt_qty|floatformat:3|thousands }}</td>
-          <td class="num">{{ item.receipt_amount|floatformat:2|thousands }}</td>
-          <td>{{ item.status|default:"—" }}</td>
+          <td>{{ row.month_label }}</td>
+          <td>{{ row.workshop_label }}</td>
+          <td class="num">{{ row.report_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.finished_cost|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.wip_cost|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ row.total_cost|floatformat:2|thousands }}</strong></td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.receipt_amount|floatformat:2|thousands }}</td>
         </tr>
-      {% empty %}<tr><td colspan="14" class="empty-cell">没有符合条件的报工记录。</td></tr>{% endfor %}
+      {% empty %}
+        <tr><td colspan="8" class="empty-cell">所选期间/车间没有报工数据（点「清空」恢复全部）。</td></tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2"><strong>{{ total_label }}</strong></td>
+          <td class="num"><strong>{{ totals.report_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.finished_cost|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.wip_cost|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.total_cost|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.receipt_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.receipt_amount|floatformat:2|thousands }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="muted-text" style="margin:8px 0 0;">
+    默认本期，选「全部期间（累计）」看累计；合计＝当前筛选下的加总。
+    浆粕车间没有工单，按它自己的成品入库流水与浆粕成本归集出数（在产品为 0）。
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>工单报工明细表</h2>
+    </div>
+  </div>
+  <form class="oc-filter-row" method="get">
+    {# 汇总表的筛选条件原样带过去（两个模块的筛选互不影响），只带非空的 #}
+    {% if summary_filters.period %}<input type="hidden" name="s_period" value="{{ summary_filters.period }}">{% endif %}
+    {% if summary_filters.workshop %}<input type="hidden" name="s_workshop" value="{{ summary_filters.workshop }}">{% endif %}
+    {# 下拉一改就即时生效；「工单编号」是文本框，输入后点「筛选」或按回车 #}
+    <label>期间
+      <select name="d_period" onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for item in detail_months %}
+        <option value="{{ item }}"{% if item == detail_filters.period %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单部门
+      <select name="d_department" onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for item in detail_departments %}
+        <option value="{{ item }}"{% if item == detail_filters.department %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单编号
+      <input type="text" name="d_order_no" value="{{ detail_filters.order_no }}" placeholder="包含即可，如 HF20260728">
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{{ summary_hidden_qs }}">清空</a>
+      {% comment %}
+        导出Excel 与「打印本表」也放在这一排，跟筛选项/按钮底对齐；
+        「打印本表」由 base.html 注入到 .print-here；筛选参数仍然带过去。
+      {% endcomment %}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'order_completion' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+  {% if detail_active %}
+  <div class="message message-info">明细表已按上方条件过滤：{{ detail_active_labels|join:"、" }}；共 {{ row_total }} 行 / {{ order_total }} 张工单（「报工汇总」不受影响）。</div>
+  {% endif %}
+  <div class="table-wrap">
+    <table class="oc-detail-table">
+      <thead>
+        <tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+      {% for row in page %}
+        <tr>{% for cell in row %}<td class="{{ cell|num_class }}">{{ cell|cell_text }}</td>{% endfor %}</tr>
+      {% empty %}
+        <tr><td colspan="{{ columns|length }}" class="empty-cell">没有符合条件的报工记录（点「清空」恢复全部）。</td></tr>
+      {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="muted-text" style="margin:8px 0 0;">
+    第一列「期间」＝报工时间的年月；末尾 6 列为平台按工单关联结算结果计算。
+    当前共 {{ row_total }} 行 / {{ order_total }} 张工单，可左右拖动查看（表头固定）。
+  </p>
   {% include "settlement/_pagination.html" %}
 </section>
 {% endblock %}

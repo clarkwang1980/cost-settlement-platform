@@ -21,16 +21,18 @@ ZERO = Decimal("0.00")
 CENT = Decimal("0.01")
 
 SUBJECTS = ["直接材料", "水电费", "蒸汽费", "燃气费", "染料助剂费",
-            "机物料费", "折旧费", "人工费"]
+            "机物料费", "折旧费", "人工费", "加工费"]
 RESULT_COLS = ["direct_material", "water_power", "steam", "natural_gas",
-               "dye_auxiliary", "consumables", "depreciation", "wages"]
+               "dye_auxiliary", "consumables", "depreciation", "wages",
+               "processing_fee"]
 OPENING_COLS = ["material", "water_power", "steam", "natural_gas",
-                "dye_auxiliary", "consumables", "depreciation", "wages"]
+                "dye_auxiliary", "consumables", "depreciation", "wages",
+                "processing_fee"]
 MFG_FIELDS = ["water_power", "steam", "natural_gas", "dye_auxiliary",
-              "consumables", "depreciation"]
+              "consumables", "depreciation", "processing_fee"]
 MFG_SUBJECT = {"water_power": "水电费", "steam": "蒸汽费", "natural_gas": "燃气费",
                "dye_auxiliary": "染料助剂费", "consumables": "机物料费",
-               "depreciation": "折旧费"}
+               "depreciation": "折旧费", "processing_fee": "加工费"}
 BLOCKS = ["期初成本", "本期投入", "产成品成本", "在产品成本"]
 
 DEFAULT_WORKSHOPS = ["RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi", "浆粕车间"]
@@ -59,9 +61,15 @@ def _workshop_order(period):
     return order
 
 
-def build_total_cost_data(period):
-    """返回页面/导出共用的结构化数据。"""
+def build_total_cost_data(period, only_workshop=""):
+    """返回页面/导出共用的结构化数据。
+
+    only_workshop：只保留该车间（合并页的「查看范围」用它，矩阵整块跟着缩到该车间，
+    每块的「合计」列自然只合计被保留的车间）。
+    """
     workshops = _workshop_order(period)
+    if only_workshop:
+        workshops = [w for w in workshops if w == only_workshop] or workshops
     ws_label = {code: WORKSHOP_LABELS.get(code, code) for code in workshops}
 
     # 浆粕车间：走专门成本归集（pulp_costing），无 WorkOrderCostResult。
@@ -116,7 +124,8 @@ def build_total_cost_data(period):
         pool = period.workshop_cost_pools.filter(workshop=PULP_WS).first()
         if pool:
             for f in ("water_power", "steam", "natural_gas",
-                      "dye_auxiliary", "consumables", "depreciation"):
+                      "dye_auxiliary", "consumables", "depreciation",
+                      "processing_fee"):
                 mfg_by_field[SUBJECTS[RESULT_COLS.index(f)]] = Decimal(getattr(pool, f) or ZERO)
         mat_total = Decimal(pulp_data["material_fanglun"] + pulp_data["material_jinglun"])
         wages_total = Decimal(pulp_data["wages_total"])
@@ -220,7 +229,8 @@ def build_total_cost_data(period):
     # 勾稽校验（已结算车间逐科目）
     balanced = True
     imbalance = []
-    for code in settled_codes:
+    # 只校验本表列出的车间（only_workshop 时列被缩小，settled_codes 里其它车间不在矩阵里）
+    for code in [c for c in workshops if c in settled_codes]:
         for s in SUBJECTS:
             lhs = matrix["期初成本"][code][s] + matrix["本期投入"][code][s]
             rhs = matrix["产成品成本"][code][s] + matrix["在产品成本"][code][s]
@@ -229,6 +239,7 @@ def build_total_cost_data(period):
                 imbalance.append((code, s, lhs, rhs))
 
     pending = [code for code in workshops if code not in settled_codes]
+    settled_codes = set(c for c in settled_codes if c in workshops)
     return {
         "period": period,
         "workshops": [{"code": c, "label": ws_label[c]} for c in workshops],

@@ -6,6 +6,27 @@ from django.db import models
 ZERO = Decimal("0")
 
 
+def contract_line_amount(quantity, unit_price_excl_tax, amount_excl_tax) -> Decimal:
+    """合同行「合同金额」：优先上传文件的「原币未税总价（报表用）」；老数据退回 数量 × 不含税单价。"""
+    if amount_excl_tax is not None:
+        return Decimal(amount_excl_tax)
+    return (
+        Decimal(quantity or ZERO) * Decimal(unit_price_excl_tax or ZERO)
+    ).quantize(Decimal("0.01"))
+
+
+def contract_line_received_amount(received_quantity, unit_price_excl_tax) -> Decimal:
+    """合同行「签收金额」（不含税）＝ 已签收数量 × 不含税单价。
+
+    说明：上传文件里的「签收总价」是**含税**口径（= 已签收数量 × 含税单价），而且各行口径不统一
+    （1% 税率的行里「未税单价」填的其实是含税值），所以统一按 已签收数量 × 不含税单价 计算，
+    与页面上的「不含税单价」列可直接验算（用户 2026-09-19）。
+    """
+    return (
+        Decimal(received_quantity or ZERO) * Decimal(unit_price_excl_tax or ZERO)
+    ).quantize(Decimal("0.01"))
+
+
 class MatchingMode(models.TextChoices):
     AUTO = "auto", "自动匹配"
     MANUAL = "manual", "手工匹配"
@@ -282,6 +303,53 @@ class PurchaseContractLine(models.Model):
     quantity = models.DecimalField(max_digits=20, decimal_places=6)
     unit_price_excl_tax = models.DecimalField(max_digits=20, decimal_places=8)
     remaining_quantity = models.DecimalField(max_digits=20, decimal_places=6)
+    # 用户 2026-09-19：上传模板新增「收货期间」列（月份首日）。
+    # **合同里有到货签收的，暂估按合同的「收货期间」归属，不按入库流水月份**
+    # （见 services/purchase_accruals.contract_receipt_month / receipt_attribution_month）。
+    receipt_period = models.DateField(null=True, blank=True)
+    # 「收票日期」（用户 2026-09-19 新增，模板里排在「收货期间」之后、「已签收数量」之前）：
+    # 这份合同/这批签收的**发票收到日期**。留着它就是让「到票」这件事也能从合同表取数：
+    #   · 收票日期为空        → 还没收到票（＝仍在暂估）
+    #   · 收票日期＝收货期间   → 当月到货当月到票
+    #   · 收票日期＞收货期间   → 跨期到票（要冲回以前月份挂的暂估）
+    invoice_date = models.DateField(null=True, blank=True)
+    # 「已签收数量」（来自上传模板）：判断这份合同是否真的**到货签收**。
+    # 用户 2026-09-19：合同里有到货签收的，暂估按合同的「收货期间」归属，不按入库流水月份。
+    # 文件里没有这一列时存 NULL，含义是"未提供"（不等于 0）。
+    received_quantity = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True
+    )
+    # 「原币未税总价（报表用）」列（用户 2026-09-19）：合同表的**不含税总价**。
+    # 「合同金额」这一列以它为准（与用户上传文件口径一致）；文件没给这列时退回 数量×单价。
+    # 6 位小数：EXCEL 里这一列本身是长小数（如 15596890.2155728），保留足够位数避免逐行取整误差。
+    amount_excl_tax = models.DecimalField(
+        max_digits=26, decimal_places=6, null=True, blank=True
+    )
+    # 用户 2026-09-19：合同也支持「处理方式」（与采购发票页一致）。
+    # IGNORED＝不参与自动匹配、不计入合同金额、也不作为暂估价格兜底；MANUAL＝只保留人工匹配的关系。
+    match_mode = models.CharField(
+        max_length=20,
+        choices=MatchingMode.choices,
+        default=MatchingMode.AUTO,
+    )
+    ignore_reason = models.CharField(max_length=500, blank=True)
+
+    @property
+    def contract_amount(self):
+        """合同金额：优先用上传文件的「原币未税总价（报表用）」列，老数据退回 数量 × 不含税单价。
+
+        页面「合同明细」、汇总表与导出都用它，保证口径一致。
+        """
+        return contract_line_amount(
+            self.quantity, self.unit_price_excl_tax, self.amount_excl_tax
+        )
+
+    @property
+    def received_amount(self):
+        """签收金额（不含税）＝ 已签收数量 × 不含税单价。"""
+        return contract_line_received_amount(
+            self.received_quantity, self.unit_price_excl_tax
+        )
 
     class Meta:
         ordering = ["contract_date", "contract_no", "id"]
@@ -305,7 +373,9 @@ class PurchaseInvoiceLine(models.Model):
     uom = models.CharField(max_length=50, blank=True)
     quantity = models.DecimalField(max_digits=20, decimal_places=6)
     unit_price_excl_tax = models.DecimalField(max_digits=20, decimal_places=8)
-    amount_excl_tax = models.DecimalField(max_digits=20, decimal_places=2)
+    amount_excl_tax = models.DecimalField(
+        max_digits=26, decimal_places=6, null=True, blank=True
+    )
     remaining_quantity = models.DecimalField(max_digits=20, decimal_places=6)
     match_mode = models.CharField(
         max_length=20,
@@ -313,6 +383,10 @@ class PurchaseInvoiceLine(models.Model):
         default=MatchingMode.AUTO,
     )
     ignore_reason = models.CharField(max_length=500, blank=True)
+    # 用户 2026-09-19：上传模板新增「收货期间」列（月份首日）。
+    # 填了就以它决定这笔到票算「当月到货到票」还是「本月回冲」（见 attribution_month）；
+    # 留空则沿用原判断（核销到的入库流水所属月份 / 期初台账的原入库月份）。
+    receipt_period = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["invoice_date", "invoice_no", "id"]
@@ -767,6 +841,10 @@ class WorkshopCostPool(models.Model):
         max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
     )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    processing_fee = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="加工费"
+    )
+    remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
 
     class Meta:
         constraints = [
@@ -854,6 +932,9 @@ class OpeningWip(models.Model):
         max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
     )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    processing_fee = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="加工费"
+    )
 
     class Meta:
         constraints = [
@@ -872,6 +953,7 @@ class OpeningWip(models.Model):
             + self.depreciation
             + self.consumables
             + self.dye_auxiliary
+            + self.processing_fee
             + self.wages
         )
 
@@ -1316,6 +1398,9 @@ class WorkOrderCostResult(models.Model):
         max_digits=20, decimal_places=2, default=ZERO, verbose_name="染料助剂费"
     )
     wages = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
+    processing_fee = models.DecimalField(
+        max_digits=20, decimal_places=2, default=ZERO, verbose_name="加工费"
+    )
     total_cost = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     finished_material = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
     finished_overhead = models.DecimalField(max_digits=20, decimal_places=2, default=ZERO)
@@ -1510,3 +1595,187 @@ class ProfitStatementExpense(models.Model):
 
     def __str__(self):
         return f"{self.period} {self.month:%Y-%m} 损益表费用"
+
+
+class StandardCostRate(models.Model):
+    """标准成本参数：按车间维护「人工费用占比」「制造费用占比」（标准成本页录入）。
+
+    口径（用户 2026-09-22 定）：占比基数＝**材料成本**，与系统现有
+    「制造费用分配率＝车间费用总额÷车间材料成本总额」同一分母。
+    标准成本 ＝ 标准材料成本 ×（1 + 人工费用占比 + 制造费用占比）。
+
+    期间内没录入时，页面沿用上一个录入过的期间的占比，避免每月重录。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="standard_cost_rates"
+    )
+    workshop = models.CharField(max_length=100, verbose_name="车间")
+    labor_rate_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=ZERO,
+        verbose_name="人工费用占比(%)",
+        help_text="基数＝材料成本：标准人工 = 标准材料成本 × 本占比",
+    )
+    overhead_rate_pct = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=ZERO,
+        verbose_name="制造费用占比(%)",
+        help_text="基数＝材料成本：标准制造费用 = 标准材料成本 × 本占比",
+    )
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="standard_cost_rates",
+        verbose_name="更新人",
+    )
+
+    class Meta:
+        ordering = ["workshop"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "workshop"],
+                name="unique_standard_cost_rate_period_workshop",
+            )
+        ]
+        verbose_name = "标准成本参数"
+        verbose_name_plural = "标准成本参数"
+
+    def __str__(self):
+        return f"{self.period} {self.workshop} 标准成本参数"
+
+
+class StandardCostCompositionEntry(models.Model):
+    """标准成本构成表的人工录入（用户 2026-09-23）。
+
+    用途：构成表要按**期间×车间**逐月列出「产量 / 直接材料 / 人工 / 制造费用」，
+    其中系统里已经有上传结算数据的月份自动取实际数；系统里根本没有的月份
+    （2026 年 1-6 月：没有期间、没有工单成本结果）由用户在本页手工录入。
+
+    期间用 `period_month`（该月 1 日）而不是 AccountingPeriod 外键：
+    1-6 月系统里不存在 AccountingPeriod，不该为了录数去造一个假期间。
+
+    占比口径：三个占比默认由金额算出（各自÷三者合计）；如果用户直接给了占比
+    （override 字段非空），以用户给的为准（材料占比没给就按 100−人工−制造 推）。
+    """
+
+    period_month = models.DateField(verbose_name="期间（该月 1 日）")
+    workshop = models.CharField(max_length=100, verbose_name="车间")
+    output_qty = models.DecimalField(
+        max_digits=18, decimal_places=6, default=ZERO, verbose_name="产量"
+    )
+    direct_material = models.DecimalField(
+        max_digits=18, decimal_places=6, default=ZERO, verbose_name="直接材料"
+    )
+    wages = models.DecimalField(
+        max_digits=18, decimal_places=6, default=ZERO, verbose_name="人工"
+    )
+    manufacturing_overhead = models.DecimalField(
+        max_digits=18, decimal_places=6, default=ZERO, verbose_name="制造费用"
+    )
+    material_pct = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        verbose_name="材料成本占比(%)",
+    )
+    labor_pct = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        verbose_name="人工成本占比(%)",
+    )
+    overhead_pct = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        verbose_name="制造费用占比(%)",
+    )
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="standard_cost_compositions",
+        verbose_name="更新人",
+    )
+
+    class Meta:
+        ordering = ["period_month", "workshop"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period_month", "workshop"],
+                name="unique_standard_cost_composition_month_workshop",
+            )
+        ]
+        verbose_name = "标准成本构成录入"
+        verbose_name_plural = "标准成本构成录入"
+
+    def __str__(self):
+        return f"{self.period_month:%Y-%m} {self.workshop} 构成录入"
+class WorkOrderManualAdjustment(models.Model):
+    """工单投料 / 报工的人工调整（用户 2026-09-24）。
+
+    在「生产成本」页的「投料报工情形速查」里直接修正某张工单的投料与报工：
+      * 填了就以**人工值为准**（覆盖 ERP 上传台账算出来的值），留空＝用系统算出的值；
+      * **不改动原始上传台账**（投料/报工台账保持干净），人工值单独存这里，
+        可留痕（谁改的、什么时候改）、可清除（清空即恢复系统值）；
+      * 核算时由 `workorder_costing.load_manual_adjustments` 读出来叠加，
+        所以「工单成本」「生产成本」等页面的数字会跟着变。
+
+    issue_quantity / issue_amount 都为空时不动金额；只填数量时，金额按该工单原投料单价折算
+    （原金额÷原数量），原来没有投料（单价无从取）时需同时填金额。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, related_name="work_order_adjustments"
+    )
+    order_no = models.CharField(max_length=100, db_index=True, verbose_name="工单编号")
+    issue_quantity = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="人工投料数量",
+        help_text="留空＝用投料台账算出的数量；填了以本值为准",
+    )
+    issue_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="人工投料金额",
+        help_text="留空＝按投料台账算金额（只填数量时按该单原单价折算）",
+    )
+    report_quantity = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="人工报工数量",
+        help_text="留空＝用报工台账算出的数量；填了以本值为准（填 0 ＝视为没有报工）",
+    )
+    remark = models.CharField(max_length=200, blank=True, verbose_name="调整原因")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="work_order_adjustments",
+        verbose_name="调整人",
+    )
+
+    class Meta:
+        ordering = ["period", "order_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "order_no"],
+                name="unique_work_order_adjustment_per_period",
+            )
+        ]
+        verbose_name = "工单投料报工人工调整"
+        verbose_name_plural = "工单投料报工人工调整"
+
+    def __str__(self):
+        return f"{self.period} {self.order_no} 人工调整"

@@ -6,11 +6,13 @@
   <div>
     <p class="eyebrow">INVENTORY MATCHING LEDGER</p>
     <h1>库存流水匹配</h1>
-    <p>从库存流水方向检查合同、发票的匹配情况；点击流水可手工修改。</p>
+    <p>采购侧匹配：从库存流水方向检查<b>采购合同、采购发票</b>的匹配情况；点击流水可手工修改。
+      <b>销售出库不参与匹配</b>——销售的开票状态与成本以你上传的「销售台账」为准。</p>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水台账</a>
     <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
+    <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_matches' %}?{{ request.GET.urlencode }}">导出Excel</a>
   {% if period.status != "locked" %}
   <form method="post" action="{% url 'rematch_period' period.id %}">
     {% csrf_token %}<button class="button primary" type="submit">重新自动匹配</button>
@@ -19,34 +21,12 @@
   </div>
 </section>
 
-<section class="section-card filter-card">
-  <form class="filter-grid wide" method="get">
-    <label>业务日期<input name="txn_date" type="date" value="{{ request.GET.txn_date }}"></label>
-    <label>库存单据号<input name="document_no" value="{{ request.GET.document_no }}"></label>
-    <label>业务类型<input name="business_type" value="{{ request.GET.business_type }}"></label>
-    <label>方向
-      <select name="direction"><option value="">全部</option>{% for value,label in directions %}<option value="{{ value }}" {% if request.GET.direction == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-    </label>
-    <label>仓库<input name="warehouse" value="{{ request.GET.warehouse }}"></label>
-    <label>物料编码<input name="material" value="{{ request.GET.material }}"></label>
-    <label>供应商/客户<input name="party" value="{{ request.GET.party }}"></label>
-    <label>订单号<input name="order_no" value="{{ request.GET.order_no }}"></label>
-    <label>处理方式
-      <select name="match_mode"><option value="">全部</option>{% for value,label in match_modes %}<option value="{{ value }}" {% if request.GET.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-    </label>
-    <label>匹配状态
-      <select name="match_status"><option value="">全部</option>{% for value,label in match_statuses %}<option value="{{ value }}" {% if request.GET.match_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-    </label>
-    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'inventory_matches' period.id %}">清空</a></div>
-  </form>
-</section>
-
 <section class="section-card">
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>库存单据</th><th>业务日期</th><th>匹配类别</th><th>业务类型</th><th>方向</th>
+          <th>期间</th><th>库存单据</th><th>业务日期</th><th>匹配类别</th><th>业务类型</th><th>方向</th>
           <th>仓库</th><th>物料编码</th><th>物料名称</th><th class="num">数量</th><th>供应商/客户</th><th>订单号</th>
           <th>匹配到的单据</th><th>处理方式</th><th>匹配状态</th><th>操作</th>
         </tr>
@@ -54,7 +34,8 @@
       <tbody>
       {% for txn in page %}
         <tr>
-          <td><a class="document-link" href="{% url 'inventory_match_detail' period.id txn.id %}"><strong>{{ txn.document_no|default:"—" }}</strong><small>流水ID {{ txn.id }}</small></a></td>
+          <td>{{ txn.period_label|default:"—" }}</td>
+          <td><a class="document-link" href="{% url 'inventory_match_detail' period.id txn.id %}"><strong>{{ txn.document_no|default:"—" }}</strong></a></td>
           <td>{{ txn.txn_date }}</td>
           <td><span class="pill">{{ txn.match_category }}</span></td>
           <td>{{ txn.business_type }}</td>
@@ -75,10 +56,16 @@
             {% empty %}—{% endfor %}
           </td>
           <td><span class="pill {% if txn.match_mode == 'ignored' %}warning{% elif txn.match_mode == 'manual' %}success{% endif %}">{{ txn.get_match_mode_display }}</span></td>
-          <td><span class="pill {% if txn.match_status == 'matched' %}success{% elif txn.match_status == 'partial' %}warning{% endif %}">{{ txn.get_match_status_display }}</span></td>
+          <td>
+            {% if txn.match_category == "无需匹配" %}
+            <span class="pill">无需匹配</span>
+            {% else %}
+            <span class="pill {% if txn.match_status == 'matched' %}success{% elif txn.match_status == 'partial' %}warning{% endif %}">{{ txn.get_match_status_display }}</span>
+            {% endif %}
+          </td>
           <td><a class="mini-button" href="{% url 'inventory_match_detail' period.id txn.id %}">打开修改</a></td>
         </tr>
-      {% empty %}<tr><td colspan="15" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="16" class="empty-cell">本期间没有符合条件的库存流水。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

@@ -67,7 +67,7 @@
         {{ card.balance.label }} {{ card.balance.debit|floatformat:2|thousands }} / {{ card.balance.credit|floatformat:2|thousands }}
       </span>
       {% endif %}
-      <a class="button secondary" href="{% url card.url_name period.id %}{% if card.month %}?voucher_month={{ card.month }}{% endif %}">打开明细</a>
+      {% if card.url_name %}<a class="button secondary" href="{% url card.url_name period.id %}{% if card.month %}?voucher_month={{ card.month }}{% endif %}">打开明细</a>{% endif %}
       <a class="button secondary" href="{% url 'export_listing' period.id card.export_kind %}">导出Excel</a>
       {% else %}
       <span class="pill warning">规划中</span>
@@ -113,6 +113,23 @@
     </table>
   </div>
   {% endif %}
+
+  {# 卡片自带的附件小表（可选；如完工入库凭证的「按车间」「按物料分类」） #}
+  {% for table in card.extra_tables %}
+  <p class="muted-text" style="margin:12px 0 6px;"><strong>{{ table.title }}</strong>{% if table.note %} —— {{ table.note }}{% endif %}</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>{% for header in table.headers %}<th{% if header.num %} class="num"{% endif %}>{{ header.text }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr{% if row.total %} style="font-weight:700;background:#E6F0FB;"{% endif %}>
+          {% for cell in row.cells %}<td{% if cell.num %} class="num"{% endif %}>{{ cell.text }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
 </section>
 {% endfor %}
 

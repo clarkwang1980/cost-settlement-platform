@@ -14,7 +14,11 @@ from settlement.models import (
     OpeningPurchaseAccrual,
     PurchaseContractLine,
 )
-from settlement.services.matching import _same_party, is_purchase_receipt
+from settlement.services.matching import (
+    _same_party,
+    invoice_unit_amount,
+    is_purchase_receipt,
+)
 
 
 ZERO = Decimal("0")
@@ -97,7 +101,7 @@ def _contract_price_fallback(txn):
             period__month__lte=txn.period.month,
             material_code=txn.material_code,
             unit_price_excl_tax__gt=0,
-        )
+        ).exclude(match_mode=MatchingMode.IGNORED)
     )
     if not contracts:
         return None
@@ -167,7 +171,12 @@ class PurchaseAccrualRow:
     transaction: InventoryTransaction | None
     opening_item: OpeningPurchaseAccrual | None
     receipt_period: object | None
+    # 暂估归属月份：合同收货期间优先，否则入库流水月份
     receipt_month: object
+    # 入库流水的实际月份（用来看"归属"和"流水"是否不同，页面上会标注）
+    flow_month: object | None
+    # 若归属来自合同收货期间，这里是那个月份；否则 None
+    contract_month: object | None
     document_date: object
     document_no: str
     supplier_code: str
@@ -193,6 +202,8 @@ class PurchaseDifferenceRow:
     invoice: object
     receipt_period: object | None
     receipt_month: object
+    # 这笔到票的**归属月份**（用户 2026-09-19）：发票收货期间 → 该入库的暂估归属 → 台账原月份
+    attribution_month: object | None
     document_date: object
     document_no: str
     material_code: str
@@ -205,6 +216,69 @@ class PurchaseDifferenceRow:
     difference_amount: Decimal | None
     cross_period: bool
     status: str
+
+
+def contract_receipt_month(transaction):
+    """入库流水匹配到的采购合同里「收货期间」对应的月份（要求该合同有到货签收）。
+
+    用户 2026-09-19 规则：**合同里有到货签收的，暂估按合同的收货期间归属，不按流水月份。**
+
+    「有到货签收」判定：合同行填了「收货期间」，且
+      · 模板没提供「已签收数量」列（字段为 NULL）→ 视为有（按收货期间走），或
+      · 已签收数量 > 0。
+    一份流水匹配到多份合同时，取「已匹配数量」最大的那一条的收货期间。
+
+    返回 (归属月份 或 None, 合同号 或 None)。
+    """
+    if transaction is None:
+        return None, None
+    allocations = [
+        item
+        for item in transaction.allocations.all()
+        if item.kind == MatchAllocation.Kind.PURCHASE_CONTRACT
+        and item.contract_line_id
+    ]
+    best = None
+    for item in allocations:
+        line = item.contract_line
+        if line is None or line.receipt_period is None:
+            continue
+        signed = getattr(line, "received_quantity", None)
+        if signed is not None and signed <= ZERO:
+            # 合同行没有到货签收 → 不用它的收货期间，回落到入库流水月份
+            continue
+        quantity = Decimal(item.matched_quantity or ZERO)
+        if best is None or quantity > best[0]:
+            best = (quantity, line.receipt_period, line.contract_no)
+    if best is None:
+        return None, None
+    return best[1], best[2]
+
+
+def receipt_attribution_month(transaction):
+    """这笔入库的**暂估归属月份**：合同收货期间优先，否则入库流水所属月份。"""
+    if transaction is None:
+        return None
+    month, _ = contract_receipt_month(transaction)
+    return month or transaction.period.month
+
+
+def invoice_attribution_month(invoice_line, transaction):
+    """这笔到票的**归属月份**（决定算「当月到货到票」还是「本月回冲」）。
+
+    顺序（用户 2026-09-19）：
+      ① 发票行自己填的「收货期间」——**优先，且不论核销对象是入库流水还是期初台账**
+         （发票上的收货期间就是"这批货哪个月收的"，与用户报表口径一致；
+          2026-09-19 修正：以前核销期初台账时会忽略它，导致 6,720.00 被错分成回冲）；
+      ② 没填时：核销入库流水的 → 该入库的暂估归属（合同收货期间优先，否则流水月份）；
+      ③ 没填且核销的是期初暂估台账 → 返回 None，调用方沿用原规则（按台账原入库月份）。
+    """
+    own = getattr(invoice_line, "receipt_period", None)
+    if own is not None:
+        return own
+    if transaction is None:
+        return None
+    return receipt_attribution_month(transaction)
 
 
 def _purchase_receipts_as_of(period):
@@ -223,9 +297,99 @@ def _purchase_receipts_as_of(period):
     return [txn for txn in queryset if is_purchase_receipt(txn)]
 
 
+#: 采购侧的入库业务类型（用户 2026-09-21）：
+#: 「退货入库」是客户退货回仓（备注里写着"客户退货"），库存结转也把它计进入库数量/金额，
+#: 所以在「采购入库」页提供一个可选的「含退货入库」口径，方便与库存结转按物料分类对账。
+PURCHASE_INBOUND_TYPES = ("采购入库", "退货入库")
+
+
+def purchase_inbound_rows_of_period(period, include_returns=False):
+    """本期间录入的采购侧入库流水。
+
+    · 默认只取业务类型「采购入库」（真正的采购到货）；
+    · include_returns=True 时再带上「退货入库」（客户退货回仓）——
+      这样与「库存结转」同一物料分类的入库数量/金额可以对上。
+    """
+    types = PURCHASE_INBOUND_TYPES if include_returns else ("采购入库",)
+    return list(
+        InventoryTransaction.objects.filter(
+            period=period,
+            direction=InventoryTransaction.Direction.IN,
+            business_type__in=types,
+        )
+        .exclude(match_mode=MatchingMode.IGNORED)
+        .select_related("period")
+        .prefetch_related(
+            "allocations__contract_line",
+            "allocations__purchase_invoice_line",
+        )
+        .order_by("txn_date", "document_no", "id")
+    )
+
+
+def purchase_receipts_of_period(period):
+    """**本期间录入的**采购入库流水（流水所属期间＝本期），按日期/单号排序。
+
+    用于「采购入库」页面：看本期到了哪些货、每单的暂估与到票情况。
+    （与「采购暂估」不同 —— 那里按暂估**归属月份**取数，这里按流水**上传期间**取数。）
+    """
+    return [txn for txn in _purchase_receipts_as_of(period) if txn.period_id == period.id]
+
+
+def purchase_receipts_attributed_to(period):
+    """暂估归属月份＝本期的采购入库流水（合同收货期间优先，否则流水月份）。"""
+    return [
+        txn
+        for txn in _purchase_receipts_as_of(period)
+        if receipt_attribution_month(txn) == period.month
+    ]
+
+
+def contract_amount_by_month():
+    """每个期间的「合同金额」：归属到该期间的采购合同不含税金额（合同数量 × 不含税单价）。
+
+    归属月份与暂估是**同一套概念**（用户 2026-09-19）：
+      · 合同行填了「收货期间」→ 用它；
+      · 否则用该合同行**所属期间**的月份。
+
+    去重（重要）：合同会按月「自动承接」到后续期间（`is_system_generated` +
+    `carried_from`），这些副本**不重复计入** —— 只认每份合同的**源头行**
+    （副本的 carried_from 还在数据里就跳过副本），否则同一份合同会在多个期间被算多次。
+    """
+    amounts = defaultdict(lambda: Decimal("0.00"))
+    # 忽略匹配的合同不计入（与自动匹配口径一致）
+    lines = list(
+        PurchaseContractLine.objects.exclude(match_mode=MatchingMode.IGNORED)
+        .select_related("period")
+    )
+    present = {line.id for line in lines}
+    for line in lines:
+        if line.carried_from_id and line.carried_from_id in present:
+            continue
+        month = line.receipt_period or line.period.month
+        # 金额口径（用户 2026-09-19）：优先用文件里的「原币未税总价（报表用）」列，
+        # 没有这一列的老数据再退回 数量 × 不含税单价。
+        if line.amount_excl_tax is not None:
+            # 不逐行取整：文件里这一列是长小数，逐行四舍五入会累积出错（用户 2026-09-19）
+            amount = Decimal(line.amount_excl_tax)
+        else:
+            amount = money(
+                Decimal(line.quantity or ZERO)
+                * Decimal(line.unit_price_excl_tax or ZERO)
+            )
+        amounts[month] += amount
+    return amounts
+
+
 def build_purchase_accrual_rows(period, include_closed=False):
     rows = []
     for txn in _purchase_receipts_as_of(period):
+        # 归属月份：合同「收货期间」优先（用户 2026-09-19），否则入库流水月份
+        contract_month, _contract_no = contract_receipt_month(txn)
+        attribution_month = contract_month or txn.period.month
+        if attribution_month > period.month:
+            # 归属到以后的期间 → 本期不挂这笔暂估（等归属期间再挂）
+            continue
         invoice_allocations = txn.allocations.filter(
             kind=MatchAllocation.Kind.PURCHASE_INVOICE,
             period__month__lte=period.month,
@@ -268,7 +432,9 @@ def build_purchase_accrual_rows(period, include_closed=False):
                 transaction=txn,
                 opening_item=None,
                 receipt_period=txn.period,
-                receipt_month=txn.period.month,
+                receipt_month=attribution_month,
+                flow_month=txn.period.month,
+                contract_month=contract_month,
                 document_date=txn.txn_date,
                 document_no=txn.document_no,
                 supplier_code=supplier_code,
@@ -341,6 +507,8 @@ def build_purchase_accrual_rows(period, include_closed=False):
                 opening_item=opening,
                 receipt_period=None,
                 receipt_month=opening.original_period,
+                flow_month=None,
+                contract_month=None,
                 document_date=opening.document_date,
                 document_no=opening.document_no,
                 supplier_code=opening.supplier_code,
@@ -418,6 +586,7 @@ def build_purchase_difference_rows(period):
         txn = allocation.inventory_transaction
         opening = allocation.opening_purchase_accrual
         invoice = allocation.purchase_invoice_line
+        override = invoice_attribution_month(invoice, txn)
         if txn is not None:
             basis = provisional_basis(txn)
             receipt_period = txn.period
@@ -441,7 +610,9 @@ def build_purchase_difference_rows(period):
             material_name = opening.material_name
         matched_quantity = Decimal(allocation.matched_quantity or ZERO)
         invoice_unit_price = price(
-            allocation.unit_price or invoice.unit_price_excl_tax
+            allocation.unit_price
+            if allocation.unit_price is not None
+            else invoice_unit_amount(invoice)
         )
         invoice_amount = money(
             allocation.amount
@@ -466,6 +637,7 @@ def build_purchase_difference_rows(period):
                 invoice=invoice,
                 receipt_period=receipt_period,
                 receipt_month=receipt_month,
+                attribution_month=override,
                 document_date=document_date,
                 document_no=document_no,
                 material_code=material_code,
@@ -476,7 +648,8 @@ def build_purchase_difference_rows(period):
                 provisional_amount=provisional_amount,
                 invoice_amount=invoice_amount,
                 difference_amount=difference_amount,
-                cross_period=receipt_month < period.month,
+                # 收货期间优先：填了就按它判断跨不跨期（用户 2026-09-19）
+                cross_period=(override or receipt_month) < period.month,
                 status=(
                     "待确认暂估价格"
                     if difference_amount is None
@@ -611,6 +784,7 @@ def build_purchase_reversal_rows(period, invoice_no="", supplier="", material=""
                 "target_type": target_type,
                 "document_no": row.document_no,
                 "receipt_month": row.receipt_month,
+                "attribution_month": row.attribution_month,
                 "document_date": row.document_date,
                 "material_code": row.material_code,
                 "material_name": row.material_name,

@@ -91,6 +91,19 @@ ALIASES = {
         "material_name": ["物料名称", "存货名称", "品名"],
         "quantity": ["合同数量", "数量"],
         "received_quantity": ["已签收数量", "签收数量"],
+        # 用户 2026-09-19：模板最左新增「收货期间」列（合同侧只记录与展示）
+        "receipt_period": ["收货期间", "收货月份", "入库期间", "入库月份"],
+        # 用户 2026-09-19：紧挨「收货期间」再加一列「收票日期」（发票收到日期）
+        "invoice_date": ["收票日期", "发票日期", "开票日期", "收票月份"],
+        # 用户 2026-09-19：合同表的「不含税总价」，用于「合同金额」列（与上传文件口径一致）
+        "amount_excl_tax": [
+            "原币未税总价（报表用）",
+            "原币未税总价",
+            "不含税总价",
+            "未税总价",
+            "合同金额",
+            "原币未税总金额（报表用）",
+        ],
         "unit_price_excl_tax": [
             "不含税单价",
             "合同不含税价",
@@ -110,6 +123,8 @@ ALIASES = {
         "material_name": ["物料名称", "存货名称", "品名"],
         "uom": ["单位", "计量单位"],
         "quantity": ["发票数量", "签收数量", "数量"],
+        # 用户 2026-09-19：模板最左新增「收货期间」列（决定这笔到票的月份归属）
+        "receipt_period": ["收货期间", "收货月份", "入库期间", "入库月份"],
         "unit_price_excl_tax": ["不含税单价", "发票不含税单价", "单价"],
         "amount_excl_tax": ["不含税金额", "金额"],
     },
@@ -251,6 +266,7 @@ ALIASES = {
         "depreciation": ["折旧", "折旧费"],
         "consumables": ["机物料", "机物料消耗", "辅料", "机物料费"],
         "dye_auxiliary": ["染料助剂", "染料助剂费", "助剂费"],
+        "processing_fee": ["加工费", "加工费用"],
         "wages": ["工资", "人工", "直接人工", "人工费"],
     },
     "opening_wip": {
@@ -263,6 +279,7 @@ ALIASES = {
         "depreciation": ["折旧", "折旧费"],
         "consumables": ["机物料", "机物料消耗"],
         "dye_auxiliary": ["染料助剂", "染料助剂费"],
+        "processing_fee": ["加工费", "加工费用"],
         "wages": ["工资", "人工"],
     },
     "opening_purchase_accrual": {
@@ -1224,12 +1241,15 @@ def _import_inventory(batch, row):
 def _import_purchase_contract(batch, row):
     quantity = abs(to_decimal(row.get("quantity"), Decimal("0")))
     unit_price = to_decimal(row.get("unit_price_excl_tax"), Decimal("0"))
+    # 「已签收数量」：有这一列就存下来（用户 2026-09-19：合同里有到货签收 → 暂估按合同收货期间归属）；
+    # 文件里没有该列时存 None，含义是"未提供"，与"签收 0"区分开。
+    received_raw = row.get("received_quantity")
+    received = abs(to_decimal(received_raw, Decimal("0")))
     if unit_price > 0:
         # 合同数量取 max(合同数量, 已签收数量)：
         #  - 合同数量为空/0（如 R11.504）：用已签收数量兜底
         #  - 已签收超合同数量（超签，如 R82.203 5000/14650）：提升到已签收
         # 单价=0 的合同保持 0 数量，不参与匹配，流水继续用原始金额
-        received = abs(to_decimal(row.get("received_quantity"), Decimal("0")))
         if received > quantity:
             quantity = received
     PurchaseContractLine.objects.create(
@@ -1244,6 +1264,12 @@ def _import_purchase_contract(batch, row):
         quantity=quantity,
         remaining_quantity=quantity,
         unit_price_excl_tax=unit_price,
+        received_quantity=received if received_raw not in (None, "") else None,
+        receipt_period=month_start(row.get("receipt_period"), None),
+        # 收票日期（用户 2026-09-19）：留空＝尚未收票（仍挂暂估）；填了＝该批签收已到票
+        invoice_date=to_date(row.get("invoice_date"), None),
+        # 不含税总价（用户 2026-09-19）：文件给了就存下来，「合同金额」列以它为准
+        amount_excl_tax=to_decimal(row.get("amount_excl_tax")),
     )
 
 
@@ -1276,6 +1302,7 @@ def _import_purchase_invoice(batch, row):
         unit_price_excl_tax=unit_price,
         amount_excl_tax=amount,
         remaining_quantity=quantity,
+        receipt_period=month_start(row.get("receipt_period"), None),
     )
 
 
@@ -1736,6 +1763,7 @@ def _import_opening_wip(batch, row):
             "dye_auxiliary": to_decimal(
                 row.get("dye_auxiliary"), Decimal("0")
             ),
+            "processing_fee": to_decimal(row.get("processing_fee"), Decimal("0")),
             "wages": to_decimal(row.get("wages"), Decimal("0")),
         },
     )

@@ -2,13 +2,30 @@
 {% load workshop_tags %}
 {% block title %}车间结转 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  /* 结转顺序的序号方框：app.css 里有一条 td input{height:17px} 会把表格里的输入框压成 17px，
+     这里显式放大（用户 2026-09-21：太小了不协调） */
+  .sequence-input {
+    width: 92px; height: 36px; min-height: 36px;
+    padding: 0 8px; font-size: 16px; font-weight: 700;
+    text-align: center; color: var(--navy);
+  }
+  .sequence-input:disabled { color: var(--muted); }
+  /* 表格下方：左侧＝「完整结算按钮的行为」说明 + 当前状态提示；右侧＝保存结转顺序 */
+  .settle-footer {
+    margin-top: 16px; display: flex; flex-wrap: wrap;
+    align-items: flex-end; justify-content: space-between; gap: 10px 24px;
+  }
+  .settle-footer-notes { flex: 1 1 420px; min-width: 0; display: grid; gap: 6px; }
+  .settle-footer-notes p { margin: 0; }
+  .settle-footer-action { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+</style>
 <section class="page-heading">
   <div>
     <p class="eyebrow">WORKSHOP SETTLEMENT</p>
     <h1>车间独立结转</h1>
     <p>先确定上游到下游的顺序；上游生产入库成本完成后，下游领用才能取得正确成本。</p>
   </div>
-  <a class="button secondary" href="{% url 'export_listing' period.id 'workshop_settlement' %}?{{ request.GET.urlencode }}">导出Excel</a>
   {% if period.status != "locked" and has_settled %}
     <form method="post" action="{% url 'reset_workshops' period.id %}">
       {% csrf_token %}
@@ -28,13 +45,23 @@
   <div class="message message-info">这是系统中的首个核算期间，期初数据由本期上传资料提供。</div>
 {% endif %}
 
-<section class="section-card">
+<section class="section-card" data-no-print>
   <div class="section-heading">
     <div>
       <p class="eyebrow">USER CONTROLLED ORDER</p>
       <h2>结转顺序</h2>
     </div>
     {% if all_settled %}<span class="pill success">全部完成</span>{% endif %}
+  </div>
+
+  {% if running_settle %}
+    <div class="message {% if running_settle.stale %}message-error{% else %}message-info{% endif %}">
+      当前有结转任务正在计算中{% if running_settle.workshop %}（{{ running_settle.workshop }}）{% endif %}，已运行 {{ running_settle.elapsed }} 秒{% if running_settle.is_full %}，这是「完整结算」{% endif %}。通常需要 1～2 分钟，请等它完成后再操作。
+    </div>
+  {% endif %}
+
+  <div id="settle-progress-tip" class="message message-info" style="display:none">
+    正在提交结转请求，请勿重复点击或刷新页面（计算约需 1～2 分钟，完成后会自动回到本页）。
   </div>
 
   {% if settlements %}
@@ -84,21 +111,65 @@
           </tbody>
         </table>
       </div>
-      {% if not has_settled and period.status != "locked" %}
-        <div class="form-actions">
-          <button class="button secondary" type="submit">保存结转顺序</button>
+      {# 左：说明与状态；右：保存结转顺序（用户 2026-09-21：说明放表格左下角、按钮放右下角） #}
+      <div class="settle-footer">
+        <div class="settle-footer-notes">
+          <p class="muted-text">
+            <strong>完整结算按钮的行为：</strong>按照上表顺序，自动继续处理所有“待结转”车间；已经独立结转的车间不会重复计算。
+          </p>
+          {% if period.status == "locked" %}
+            <p class="muted-text">本期已锁账，结转顺序不可再调整。</p>
+          {% elif has_settled %}
+            <p class="muted-text">已有车间完成结转，顺序已锁定；如需调整顺序，请先点右上角「重置车间结转」。</p>
+          {% else %}
+            <p class="muted-text">在上表填写顺序后点此保存；顺序决定上游→下游的结转先后。</p>
+          {% endif %}
         </div>
-      {% endif %}
+        <div class="settle-footer-action">
+          {# 保存结转顺序：始终显示，避免用户以为功能没了；不能用时置灰并说明原因 #}
+          {% if period.status == "locked" or has_settled %}
+            <button class="button secondary" type="button" disabled>保存结转顺序</button>
+          {% else %}
+            <button class="button secondary" type="submit">保存结转顺序</button>
+          {% endif %}
+        </div>
+      </div>
     </form>
   {% else %}
     <div class="empty-state">
       <strong>尚未识别到车间</strong>
       <p>请先上传生产工单和车间费用资料。</p>
     </div>
+    <div class="settle-footer">
+      <div class="settle-footer-notes">
+        <p class="muted-text">
+          <strong>完整结算按钮的行为：</strong>按照上表顺序，自动继续处理所有“待结转”车间；已经独立结转的车间不会重复计算。
+        </p>
+        <p class="muted-text">尚未识别到车间，暂无可保存的顺序。</p>
+      </div>
+      <div class="settle-footer-action">
+        <button class="button secondary" type="button" disabled>保存结转顺序</button>
+      </div>
+    </div>
   {% endif %}
 </section>
 
-<section class="section-card">
-  <p><strong>完整结算按钮的行为：</strong>按照上表顺序，自动继续处理所有“待结转”车间；已经独立结转的车间不会重复计算。</p>
-</section>
+<script>
+  // 结转是 1～2 分钟的慢操作：提交后立刻给反馈并禁用按钮，
+  // 免得用户以为没反应而重复点击，然后看到“上一次结转还在进行中”。
+  document.addEventListener('submit', function (event) {
+    var btn = event.submitter || document.activeElement;
+    if (!btn || !btn.getAttribute) { return; }
+    var action = btn.getAttribute('formaction') || '';
+    if (action.indexOf('/settle/') === -1) { return; }
+    var tip = document.getElementById('settle-progress-tip');
+    if (tip) { tip.style.display = 'block'; }
+    // 结转要跑 1～2 分钟：提交后按钮就保持禁用，直到页面跳转/重载。
+    // （以前 3 秒后又放开，用户会重复点击 → 白等两分钟再弹一句“已经完成结转”。用户 2026-09-19）
+    setTimeout(function () {
+      btn.disabled = true;
+      btn.textContent = '结转中，请稍候…';
+    }, 0);
+  });
+</script>
 {% endblock %}

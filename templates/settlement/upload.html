@@ -65,8 +65,8 @@
       <p>替换不是只替换当前文件或当前车间。例如替换“生产工单”，会删除本月已经上传的全部生产工单文件。只有上传完整汇总替代文件时才使用。</p>
     </article>
     <article>
-      <strong>同车间费用必须先汇总</strong>
-      <p>一个月份、一个车间只能有一条费用记录。不同车间可分文件；同一车间的多份费用不会自动相加，请先在一个文件中汇总成一行。</p>
+      <strong>车间费用不在这里上传</strong>
+      <p>车间费用（人工费、折旧费、水电费、蒸汽费、燃气费、染料助剂费、机物料费、加工费）请在左侧「车间费用」页面按车间、按月份直接录入，不再需要上传文件。</p>
     </article>
     <article>
       <strong>上传后要重新匹配和结转</strong>
@@ -146,20 +146,11 @@
         <p><span class="field-chip required">生产工单号</span><span class="field-chip required">车间</span><span class="field-chip required">产品编码</span><span class="field-chip required">完工数量</span></p>
         <h3>成本计算建议</h3>
         <p><span class="field-chip recommended">计划数量</span><span class="field-chip recommended">在产品数量</span><span class="field-chip recommended">订单状态</span><span class="field-chip recommended">标准工时</span><span class="field-chip recommended">生产入库单号</span></p>
-        <p class="guide-note">不同车间可以分别上传且不要勾选替换。同一订单号再次上传会覆盖原订单；订单中的车间必须与费用和库存流水使用完全一致的名称。</p>
+        <p class="guide-note">不同车间可以分别上传且不要勾选替换。同一订单号再次上传会覆盖原订单；订单中的车间必须与库存流水使用完全一致的名称。</p>
       </div>
     </details>
 
-    <details>
-      <summary><span>车间费用</span><small>每月每车间一条</small></summary>
-      <div class="guide-body">
-        <h3>最低必填</h3>
-        <p><span class="field-chip required">车间</span></p>
-        <h3>按实际发生填写</h3>
-        <p><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">染料助剂</span><span class="field-chip recommended">工资</span></p>
-        <p class="guide-note">未填写的费用项目按0处理。同一车间的多份费用必须先汇总为一行；不同车间可以分别上传，追加时不要勾选替换。</p>
-      </div>
-    </details>
+    
 
     <details>
       <summary><span>期初存货</span><small>首个期间录入库存余额</small></summary>

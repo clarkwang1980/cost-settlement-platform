@@ -34,6 +34,7 @@ FEE_FIELDS = (
     "depreciation",
     "consumables",
     "dye_auxiliary",
+    "processing_fee",
     "wages",
 )
 

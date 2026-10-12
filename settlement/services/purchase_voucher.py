@@ -2,9 +2,10 @@
 """采购暂估 / 暂估回冲 凭证生成。
 
 业务原理（用户 2026-09-16 确认）：
-- 本月到货 + 本月到票  → 借 原材料 / 贷 应付账款—XX供应商（有价差时进材料成本差异）
-- 本月到货 + 月末未到票 → 借 原材料 / 贷 应付账款—暂估应付
-- 前期暂估 + 本月到票  → 借 应付账款—暂估应付（冲原暂估）/ 贷 应付账款—XX供应商，
+- 本月到货到票  → 借 原材料 / 贷 应付账款—XX供应商（有价差时进材料成本差异）
+- 本月货到票未到-暂估入账 → 借 原材料 / 贷 应付账款—暂估应付
+- 前期暂估本月到票-冲回暂估：借 应付账款—暂估应付 / 贷 原材料；
+- 前期暂估本月到票-按票入账：借 原材料 / 贷 应付账款—XX供应商；
                         差额进材料成本差异（平台库存不因发票改写，价差只能在凭证层体现）
 
 口径与平台其它页面保持一致（不要改）：
@@ -21,10 +22,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.db.models import Q
 
 from settlement.models import MatchAllocation, MatchingMode
-from settlement.services.matching import is_purchase_receipt
+from settlement.services.matching import invoice_unit_amount, is_purchase_receipt
 from settlement.services.purchase_accruals import (
     build_purchase_accrual_rows,
     provisional_basis,
+    purchase_receipts_attributed_to,
+    receipt_attribution_month,
 )
 
 ZERO = Decimal("0")
@@ -46,14 +49,15 @@ REVERSAL = "reversal"
 VOUCHER_NOTE = (
     "借：原材料（本月到货，按合同暂估价计入存货，不区分物料大类）；"
     "贷：应付账款—XX供应商（本月到票的部分）／应付账款—暂估应付（月末仍未到票的部分）。"
-    "以前月份暂估本月到票的：借 应付账款—暂估应付（冲原暂估）／贷 应付账款—XX供应商，"
+    "以前月份暂估本月到票的：① 冲回暂估 借 应付账款—暂估应付／贷 原材料；"
+    "② 按票入账 借 原材料／贷 应付账款—XX供应商；"
     "发票价与暂估价不同时差额进材料成本差异。"
 )
 
 BLOCK_TITLES = {
-    SAME_MONTH: "① 本月到货 + 本月到票",
-    ACCRUAL: "② 本月到货 + 月末未到票",
-    REVERSAL: "③ 前期暂估 + 本月到票",
+    SAME_MONTH: "本月到货到票",
+    ACCRUAL: "本月货到票未到-暂估入账",
+    REVERSAL: "前期暂估本月到票",
 }
 
 
@@ -98,7 +102,11 @@ def _receipts(period):
 
 
 def _current_allocations(period):
-    """本期发票核销：({入库流水id: [核销行]}, [跨期/期初台账核销行])。"""
+    """本期发票核销：({入库流水id: [核销行]}, [跨期/期初台账核销行])。
+
+    分块按「暂估归属月份」（用户 2026-09-19）：归属本期 → 当月到货+当月到票；
+    归属早于本期（或期初台账）→ 前期暂估+本月到票（冲以前暂估）。
+    """
     queryset = (
         MatchAllocation.objects.filter(
             period=period, kind=MatchAllocation.Kind.PURCHASE_INVOICE
@@ -119,7 +127,7 @@ def _current_allocations(period):
     prior = []
     for alloc in queryset:
         txn = alloc.inventory_transaction
-        if txn is not None and txn.period_id == period.id:
+        if txn is not None and receipt_attribution_month(txn) == period.month:
             by_receipt[txn.id].append(alloc)
         else:
             prior.append(alloc)
@@ -133,9 +141,154 @@ def _alloc_amount(alloc) -> Decimal:
     unit = (
         alloc.unit_price
         if alloc.unit_price is not None
-        else (line.unit_price_excl_tax if line else ZERO)
+        else (invoice_unit_amount(line) if line else ZERO)
     )
     return money(Decimal(alloc.matched_quantity or ZERO) * Decimal(unit or ZERO))
+
+
+def build_cost_difference_rows(period):
+    """材料成本差异明细：逐笔核销的「暂估金额 / 发票金额 / 价差」。
+
+    口径与「采购暂估 / 回冲凭证」里进「材料成本差异」的金额完全一致：
+      · 当月到货 + 当月到票：暂估额按该入库单金额×数量比例拆分（_split），
+        价差 = 发票金额 − 分摊到的暂估额；
+      · 前期暂估 + 本月到票：暂估额 = 核销数量 × 暂估单价（入库暂估价 / 期初台账单价），
+        价差 = 发票金额 − 暂估额。
+    返回 (rows, totals)。
+    """
+    by_receipt, prior = _current_allocations(period)
+    receipt_map = {txn.id: txn for txn in _receipts(period)}
+    rows = []
+
+    # ① 当月到货 + 当月到票（按入库单分组，金额按数量比例拆分到各核销行）
+    for txn_id, allocations in by_receipt.items():
+        txn = receipt_map.get(txn_id)
+        if txn is None:
+            continue
+        quantity = Decimal(txn.quantity or ZERO)
+        amount = money(txn.amount)
+        matched_quantity = min(
+            sum((Decimal(a.matched_quantity or ZERO) for a in allocations), ZERO),
+            max(quantity, ZERO),
+        )
+        matched_amount = _split(amount, matched_quantity, quantity)
+        basis = provisional_basis(txn)
+        supplier = _supplier_of(allocations[0].purchase_invoice_line, txn)
+        category = _category_of(txn)
+        allocated = ZERO
+        for index, alloc in enumerate(allocations):
+            qty = Decimal(alloc.matched_quantity or ZERO)
+            if index == len(allocations) - 1:
+                # 最后一行吸收尾差，保证本入库单合计与凭证一致
+                provisional_amount = money(matched_amount - allocated)
+            else:
+                provisional_amount = _split(matched_amount, qty, matched_quantity)
+                allocated += provisional_amount
+            invoice_amount = _alloc_amount(alloc)
+            line = alloc.purchase_invoice_line
+            rows.append({
+                "group": "当月到货+当月到票",
+                "invoice_no": line.invoice_no if line else "",
+                "invoice_date": line.invoice_date if line else None,
+                "invoice_period": line.invoice_period if line else None,
+                "supplier": supplier,
+                "category": category,
+                "material_code": txn.material_code,
+                "material_name": txn.material_name,
+                "document_no": txn.document_no,
+                "receipt_month": txn.period.month,
+                "matched_quantity": qty,
+                "provisional_unit_price": basis["unit_price"],
+                "provisional_amount": provisional_amount,
+                "invoice_unit_price": _alloc_unit_price(alloc, line),
+                "invoice_amount": invoice_amount,
+                "difference_amount": money(invoice_amount - provisional_amount),
+                "cross_period": False,
+                "price_source": basis["source"],
+            })
+
+    # ② 前期暂估 + 本月到票
+    for alloc in prior:
+        line = alloc.purchase_invoice_line
+        txn = alloc.inventory_transaction
+        opening = alloc.opening_purchase_accrual
+        if txn is not None:
+            basis = provisional_basis(txn)
+            provisional_unit = basis["unit_price"]
+            price_source = basis["source"]
+            receipt_month = txn.period.month
+            document_no = txn.document_no
+            material_code = txn.material_code
+            material_name = txn.material_name
+            category = _category_of(txn)
+            supplier = _supplier_of(line, txn)
+            cross = txn.period_id != period.id
+        elif opening is not None:
+            provisional_unit = Decimal(opening.provisional_unit_price or ZERO)
+            price_source = "期初暂估台账"
+            receipt_month = opening.original_period
+            document_no = opening.document_no or "（期初台账）"
+            material_code = opening.material_code
+            material_name = opening.material_name
+            category = UNCLASSIFIED
+            supplier = _supplier_of(line, opening)
+            cross = True
+        else:
+            continue
+        qty = Decimal(alloc.matched_quantity or ZERO)
+        provisional_amount = money(qty * Decimal(provisional_unit or ZERO))
+        invoice_amount = _alloc_amount(alloc)
+        rows.append({
+            "group": "前期暂估+本月到票",
+            "invoice_no": line.invoice_no if line else "",
+            "invoice_date": line.invoice_date if line else None,
+            "invoice_period": line.invoice_period if line else None,
+            "supplier": supplier,
+            "category": category,
+            "material_code": material_code,
+            "material_name": material_name,
+            "document_no": document_no,
+            "receipt_month": receipt_month,
+            "matched_quantity": qty,
+            "provisional_unit_price": provisional_unit,
+            "provisional_amount": provisional_amount,
+            "invoice_unit_price": _alloc_unit_price(alloc, line),
+            "invoice_amount": invoice_amount,
+            "difference_amount": money(invoice_amount - provisional_amount),
+            "cross_period": cross,
+            "price_source": price_source,
+        })
+
+    rows.sort(key=lambda r: (r["group"], str(r["invoice_no"] or ""), str(r["material_code"] or "")))
+
+    totals = {"count": len(rows), "matched_quantity": ZERO, "provisional_amount": ZERO,
+              "invoice_amount": ZERO, "difference_amount": ZERO,
+              "same_month_count": 0, "same_month_difference": ZERO,
+              "prior_count": 0, "prior_difference": ZERO}
+    for r in rows:
+        totals["matched_quantity"] += r["matched_quantity"]
+        totals["provisional_amount"] += r["provisional_amount"]
+        totals["invoice_amount"] += r["invoice_amount"]
+        totals["difference_amount"] += r["difference_amount"]
+        if r["group"] == "当月到货+当月到票":
+            totals["same_month_count"] += 1
+            totals["same_month_difference"] += r["difference_amount"]
+        else:
+            totals["prior_count"] += 1
+            totals["prior_difference"] += r["difference_amount"]
+    for key in ("matched_quantity", "provisional_amount", "invoice_amount",
+                "difference_amount", "same_month_difference", "prior_difference"):
+        totals[key] = money(totals[key])
+    return rows, totals
+
+
+def _alloc_unit_price(alloc, line):
+    """核销行的发票单价（优先分配行上记录的单价；否则按发票金额÷数量）。"""
+    if alloc.unit_price is not None:
+        return alloc.unit_price
+    if line is not None:
+        return invoice_unit_amount(line)
+    return None
 
 
 def _category_of(txn) -> str:
@@ -210,26 +363,44 @@ def _is_consolidated(account):
     return any(account.startswith(name) for name in CONSOLIDATED_ACCOUNTS)
 
 
-def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff, group):
+def _leg(mapping, account, side, summary=None, aux=None):
+    """一条分录腿（借方或贷方）：科目 + 该方向的金额/数量/来源行。"""
+    return {
+        "map": mapping,
+        "account": account,
+        "side": side,
+        "summary": summary,   # None → 用块标题
+        "aux": aux,           # None → 按是否汇总科目自动决定
+    }
+
+
+def _simple_legs(debit_map, debit_account, credit_map, credit_account):
+    """常规两块（①②）的分录：借一条腿、贷一条腿（原材料/应付账款都汇总一行）。"""
+    return (
+        _leg(debit_map, debit_account, "debit"),
+        _leg(credit_map, credit_account, "credit", aux=""),
+    )
+
+
+def _make_block(key, legs, diff, group):
     rows = []
-    # 借方：原材料汇总一行（不分物料大类）；应付账款类（如冲回暂估）同样汇总一行
-    rows += _expand(
-        debit_map, debit_account, "debit",
-        "single" if _is_consolidated(debit_account) else group,
-        "物料大类", BLOCK_TITLES[key],
-        "" if _is_consolidated(debit_account) else "（明细见附件）",
-    )
-    # 贷方：应付账款 / 应付账款—暂估应付 不按供应商展开，汇总一行
-    rows += _expand(
-        credit_map, credit_account, "credit", "single", "供应商",
-        BLOCK_TITLES[key], "",
-    )
+    for leg in legs:
+        account = leg["account"]
+        consolidated = _is_consolidated(account)
+        aux = leg["aux"]
+        if aux is None:
+            aux = "" if consolidated else "（明细见附件）"
+        rows += _expand(
+            leg["map"], account, leg["side"],
+            "single" if consolidated else group,
+            "物料大类", leg["summary"] or BLOCK_TITLES[key], aux,
+        )
     diff_amount = money(diff["amount"]) if diff else ZERO
     if diff_amount != ZERO:
         rows.append(
             {
                 "level": "line",
-                "summary": BLOCK_TITLES[key] + "价差",
+                "summary": BLOCK_TITLES[key] + "-价差",
                 "account": ACCOUNT_DIFFERENCE,
                 "aux": "暂估价与发票价之差",
                 "debit": diff_amount if diff_amount > ZERO else ZERO,
@@ -240,8 +411,8 @@ def _make_block(key, debit_map, debit_account, credit_map, credit_account, diff,
         )
     debit_total = sum((row["debit"] for row in rows), ZERO)
     credit_total = sum((row["credit"] for row in rows), ZERO)
-    # 数量＝借方汇总（原材料不再按物料大类拆），含金额为 0 的行；两种科目粒度下保持一致
-    quantity = sum((item["quantity"] for item in debit_map.values()), ZERO)
+    # 数量＝第一条腿（借方）汇总，含金额为 0 的行；两种科目粒度下保持一致
+    quantity = sum((item["quantity"] for item in legs[0]["map"].values()), ZERO)
     # 来源行数只算一侧（借贷两侧是同一批单据，不能相加）
     debit_rows = sum(row["source_rows"] for row in rows if row["debit"] > ZERO)
     credit_rows = sum(row["source_rows"] for row in rows if row["credit"] > ZERO)
@@ -278,7 +449,10 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
     detail_supplier / detail_material 只筛选三张附件明细，不影响凭证金额。
     """
     group = "single" if str(group).strip() == "single" else "category"
-    receipts = _receipts(period)
+    # 本期凭证要处理的到货 = **暂估归属月份为本期**的采购入库（用户 2026-09-19）：
+    # 合同收货期间优先，否则入库流水月份。所以"6 月流水、合同收货期间 7 月"的入库
+    # 出现在 7 月凭证里（6 月不再挂这笔暂估）。
+    receipts = purchase_receipts_attributed_to(period)
     by_receipt, prior_allocs = _current_allocations(period)
 
     same_debit = defaultdict(_bucket)      # 借 原材料（按大类）
@@ -361,8 +535,10 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
         )
 
     # ── ③ 前期暂估 + 本月到票（回冲 + 按票入账）────────────────────────
-    reversal_debit = defaultdict(_bucket)    # 借 应付账款—暂估应付（按供应商）
-    reversal_credit = defaultdict(_bucket)   # 贷 应付账款—供应商
+    rev_accrued_debit = defaultdict(_bucket)     # 借 应付账款—暂估应付（冲回暂估）
+    rev_raw_credit = defaultdict(_bucket)        # 贷 原材料（冲回暂估）
+    rev_raw_debit = defaultdict(_bucket)         # 借 原材料（按票入账）
+    rev_supplier_credit = defaultdict(_bucket)   # 贷 应付账款—XX供应商（按票入账）
     reversal_diff = _bucket()
     reversal_rows = []
     reversal_amount = ZERO
@@ -403,8 +579,13 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
 
         reversal_amount += provisional_amount
         reversal_invoice_amount += invoice_amount
-        _add(reversal_debit[supplier], provisional_amount, matched_quantity)
-        _add(reversal_credit[supplier], invoice_amount, matched_quantity)
+        # ① 冲回暂估：借 应付账款—暂估应付 / 贷 原材料（上期暂估原路冲回）
+        _add(rev_accrued_debit[supplier], provisional_amount, matched_quantity)
+        _add(rev_raw_credit[supplier], provisional_amount, matched_quantity)
+        # ② 按票入账：借 原材料 / 贷 应付账款—XX供应商
+        #    （存货仍按暂估价挂账，发票与暂估的价差进「材料成本差异」）
+        _add(rev_raw_debit[supplier], provisional_amount, matched_quantity)
+        _add(rev_supplier_credit[supplier], invoice_amount, matched_quantity)
         if delta != ZERO:
             _add(reversal_diff, delta, matched_quantity)
 
@@ -426,7 +607,7 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
                 "invoice_unit_price": (
                     alloc.unit_price
                     if alloc.unit_price is not None
-                    else (line.unit_price_excl_tax if line else None)
+                    else (invoice_unit_amount(line) if line else None)
                 ),
                 "invoice_amount": invoice_amount,
                 "difference_amount": delta,
@@ -435,13 +616,23 @@ def build_purchase_voucher(period, *, group="category", detail_supplier="",
             }
         )
 
+    # ③ 回冲块写成四条腿：冲回暂估（借暂估应付/贷原材料）+ 按票入账（借原材料/贷应付账款）
+    reversal_legs = (
+        _leg(rev_accrued_debit, ACCOUNT_ACCRUED, "debit",
+             summary=BLOCK_TITLES[REVERSAL] + "-冲回暂估", aux=""),
+        _leg(rev_raw_credit, ACCOUNT_RAW, "credit",
+             summary=BLOCK_TITLES[REVERSAL] + "-冲回暂估", aux=""),
+        _leg(rev_raw_debit, ACCOUNT_RAW, "debit",
+             summary=BLOCK_TITLES[REVERSAL] + "-按票入账", aux=""),
+        _leg(rev_supplier_credit, ACCOUNT_SUPPLIER, "credit",
+             summary=BLOCK_TITLES[REVERSAL] + "-按票入账", aux=""),
+    )
     blocks = [
-        _make_block(SAME_MONTH, same_debit, ACCOUNT_RAW, same_credit,
-                    ACCOUNT_SUPPLIER, same_diff, group),
-        _make_block(ACCRUAL, accrual_debit, ACCOUNT_RAW, accrual_credit,
-                    ACCOUNT_ACCRUED, _bucket(), group),
-        _make_block(REVERSAL, reversal_debit, ACCOUNT_ACCRUED, reversal_credit,
-                    ACCOUNT_SUPPLIER, reversal_diff, group),
+        _make_block(SAME_MONTH, _simple_legs(same_debit, ACCOUNT_RAW, same_credit,
+                                             ACCOUNT_SUPPLIER), same_diff, group),
+        _make_block(ACCRUAL, _simple_legs(accrual_debit, ACCOUNT_RAW, accrual_credit,
+                                          ACCOUNT_ACCRUED), _bucket(), group),
+        _make_block(REVERSAL, reversal_legs, reversal_diff, group),
     ]
 
     debit_total = sum((block["debit_total"] for block in blocks), ZERO)

@@ -18,6 +18,13 @@
     <article><span>物料</span><strong class="small-value">{{ source.material_code }}</strong></article>
     <article><span>数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
     <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
+  {% elif source_type == "purchase_contract" %}
+    <article><span>合同号</span><strong class="small-value">{{ source.contract_no }}</strong></article>
+    <article><span>供应商</span><strong class="small-value">{{ source.supplier_name|default:source.supplier_code|default:"—" }}</strong></article>
+    <article><span>物料</span><strong class="small-value">{{ source.material_code }}</strong></article>
+    <article><span>收货期间</span><strong>{{ source.receipt_period|date:"Y-m"|default:"—" }}</strong></article>
+    <article><span>合同数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>剩余数量</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
   {% elif source_type == "sales_invoice" %}
     <article><span>销售发票</span><strong class="small-value">{{ source.invoice_no }}</strong></article>
     <article><span>客户</span><strong class="small-value">{{ source.customer_name|default:source.customer_code|default:"—" }}</strong></article>

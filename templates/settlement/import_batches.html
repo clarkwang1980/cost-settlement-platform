@@ -19,13 +19,13 @@
 <section class="section-card filter-card">
   <form class="filter-grid" method="get">
     <label>资料类型
-      <select name="kind">
+      <select name="kind" onchange="this.form.submit()">
         <option value="">全部</option>
         {% for value, label in batch_kinds %}<option value="{{ value }}" {% if request.GET.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>
     </label>
     <label>处理状态
-      <select name="status">
+      <select name="status" onchange="this.form.submit()">
         <option value="">全部</option>
         {% for value, label in batch_statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>

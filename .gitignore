@@ -28,3 +28,10 @@ server_watchdog*.py
 _*.txt
 _*.html
 *.tmp
+
+# 本地临时产物（2026-09-30）
+_*.cmd
+_shots/
+_ui_shots/
+devpy.txt
+git_push_steps.txt

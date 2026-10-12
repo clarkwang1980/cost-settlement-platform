@@ -4,45 +4,88 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">RECONCILIATION</p><h1>勾稽与异常</h1><p>所有差额和未匹配记录明确列示，不使用空值或零值静默通过。</p></div>
-  <a class="button secondary" href="{% url 'export_listing' period.id 'reconciliation' %}?{{ request.GET.urlencode }}">导出Excel</a>
 </section>
-<section class="check-grid">
-  {% for item in checks %}
-    <article class="check-card check-{{ item.status }}">
-      <div><span>{{ item.check_code }}</span><strong>{{ item.get_status_display }}</strong></div>
-      <h2>{{ item.check_name }}</h2>
-      <dl><dt>左侧</dt><dd>{{ item.left_amount|floatformat:2|thousands }}</dd><dt>右侧</dt><dd>{{ item.right_amount|floatformat:2|thousands }}</dd><dt>差额</dt><dd>{{ item.difference|floatformat:2|thousands }}</dd></dl>
-      {% if item.check_code == "sales_cost" %}
-        <dl class="check-details">
-          <dt>已开票成本</dt><dd>{{ item.details.invoiced_cost|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>未开票成本</dt><dd>{{ item.details.goods_issued|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>样品费用</dt><dd>{{ item.details.sample_cost|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>批准忽略</dt><dd>{{ item.details.ignored_cost|default:"0"|floatformat:2|thousands }}</dd>
-        </dl>
-      {% elif item.check_code == "goods_issued_rollforward" %}
-        <dl class="check-details">
-          <dt>期初发出商品</dt><dd>{{ item.details.opening_amount|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>本月销售出库</dt><dd>{{ item.details.current_issue_amount|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>本月开票结转</dt><dd>{{ item.details.invoice_cleared_amount|default:"0"|floatformat:2|thousands }}</dd>
-          <dt>期末发出商品</dt><dd>{{ item.details.ending_amount|default:"0"|floatformat:2|thousands }}</dd>
-        </dl>
-      {% endif %}
-      {% if item.status == 'fail' and period.status != 'locked' %}
-        <form method="post" action="{% url 'confirm_reconciliation' period.id item.id %}" class="action-pair" style="margin-top:0.6rem">
-          {% csrf_token %}
-          {% if item.confirmed %}
-            <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
-            <button class="mini-button muted" name="action" value="unconfirm">取消确认</button>
-          {% else %}
-            <input type="text" name="note" placeholder="确认说明（可选）" style="max-width:12rem">
-            <button class="mini-button" name="action" value="confirm">确认差异（允许锁账）</button>
-          {% endif %}
-        </form>
-      {% elif item.status == 'fail' and item.confirmed %}
-        <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
-      {% endif %}
-    </article>
-  {% empty %}<div class="empty-state"><strong>尚未生成勾稽结果</strong><p>执行完整结算后自动生成。</p></div>{% endfor %}
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">RECONCILIATION</p><h2>勾稽结果</h2></div>
+    {# 用户 2026-09-30：「导出Excel」挪到「打印本表」旁边（打印由 base.html 注入到 .print-here） #}
+    <div class="heading-actions">
+      <a class="button secondary" href="{% url 'export_listing' period.id 'reconciliation' %}?{{ request.GET.urlencode }}">导出Excel</a>
+      <span class="print-here"></span>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>代号</th><th>勾稽项目</th><th class="num">左侧（账面）</th><th class="num">右侧（对照）</th>
+        <th class="num">差额</th><th>状态</th><th>确认差异</th>
+      </tr></thead>
+      <tbody>
+      {% for item in checks %}
+        <tr>
+          <td>{% if item.check_code == "work_order_cost" %}工单成本
+              {% elif item.check_code == "work_order_material" %}投料金额
+              {% elif item.check_code == "work_order_receipt" %}完工入库
+              {% elif item.check_code == "sales_cost" %}销售成本
+              {% elif item.check_code == "goods_issued_rollforward" %}发出商品滚动
+              {% elif item.check_code == "inventory_amount" %}库存金额
+              {% else %}{{ item.check_code }}{% endif %}</td>
+          <td>{{ item.check_name }}</td>
+          <td class="num">{{ item.left_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.right_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.difference|floatformat:2|thousands }}</td>
+          <td>
+            <span class="pill {% if item.status == 'fail' %}danger{% elif item.status == 'pass' %}success{% endif %}">
+              {{ item.get_status_display }}
+            </span>
+          </td>
+          <td>
+            {% if item.status == 'fail' and period.status != 'locked' %}
+              <form method="post" action="{% url 'confirm_reconciliation' period.id item.id %}" class="action-pair" style="margin:0">
+                {% csrf_token %}
+                {% if item.confirmed %}
+                  <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
+                  <button class="mini-button muted" name="action" value="unconfirm">取消确认</button>
+                {% else %}
+                  {% if item.check_code == "work_order_material" %}
+                    <select name="note" style="max-width:17rem">
+                      <option value="计算层补投（粗纱链／情形③④ BOM 反推）没有库存出库单">计算层补投无出库单（粗纱链/BOM 反推）</option>
+                      <option value="期初在产品材料与本期出库口径不同">期初在产品材料与本期出库口径不同</option>
+                      <option value="存在人工调整的投料数量">存在人工调整的投料数量</option>
+                      <option value="已核对，差异可接受">已核对，差异可接受</option>
+                    </select>
+                  {% elif item.check_code == "work_order_cost" %}
+                    <select name="note" style="max-width:17rem">
+                      <option value="本期投入按材料出库金额计，未含计算层补投">本期投入未含计算层补投</option>
+                      <option value="费用/工资分摊与在产品口径差异">费用/工资分摊与在产品口径差异</option>
+                      <option value="存在人工调整的投料/报工">存在人工调整的投料/报工</option>
+                      <option value="已核对，差异可接受">已核对，差异可接受</option>
+                    </select>
+                  {% elif item.check_code == "work_order_receipt" %}
+                    <select name="note" style="max-width:17rem">
+                      <option value="入库流水含不挂工单成本的对象（浆粕等单独成本表）">入库含不挂工单成本的对象（浆粕等）</option>
+                      <option value="入库金额按入库数量×完工单位成本，与工单完工成本存在计价差">入库数量×单位成本与完工成本存在计价差</option>
+                      <option value="已核对，差异可接受">已核对，差异可接受</option>
+                    </select>
+                  {% else %}
+                    <input type="text" name="note" placeholder="确认说明（可选）" style="max-width:10rem">
+                  {% endif %}
+                  <button class="mini-button" name="action" value="confirm">确认差异（允许锁账）</button>
+                {% endif %}
+              </form>
+            {% elif item.status == 'fail' and item.confirmed %}
+              <span class="pill success">差异已确认{{ item.confirmed_at|date:"m-d H:i" }}</span>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty-cell">尚未生成勾稽结果（执行完整结算后自动生成）。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 <section class="section-card">
   <div class="section-heading"><div><p class="eyebrow">EXCEPTIONS</p><h2>异常清单</h2></div></div>

@@ -2,131 +2,227 @@
 {% load workshop_tags %}
 {% block title %}{{ period }} · 月度成本结算平台{% endblock %}
 {% block content %}
-<section class="page-heading">
-  <div>
-    <p class="eyebrow">MONTH-END WORKSPACE</p>
-    <h1>{{ period }}成本结算</h1>
-    <p>按顺序完成导入、匹配、结算、勾稽和锁账。</p>
-  </div>
-  <div class="heading-actions">
-    {% if period.status != "locked" %}
-      <form method="post" action="{% url 'rematch_period' period.id %}">
-        {% csrf_token %}<button class="button secondary" type="submit">重新自动匹配</button>
-      </form>
-      <form method="post" action="{% url 'run_period' period.id %}">
-        {% csrf_token %}<button class="button primary" type="submit">按车间顺序完整结算</button>
-      </form>
-    {% endif %}
-    {% if counts.valuations %}
-      <a class="button secondary" href="{% url 'export_period' period.id %}">导出Excel</a>
-    {% endif %}
-    <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">库存流水</a>
-    <a class="button secondary" href="{% url 'purchase_contracts' period.id %}">采购合同</a>
-    <a class="button secondary" href="{% url 'purchase_summary' period.id %}">采购暂估汇总</a>
-  </div>
-</section>
+<style>
+  /* 期间工作台（用户 2026-09-30）：整页表格化；办理进度与本月信息**合并成一张表**；
+     说明列不再堆长句，单元格宽度受控 */
+  .pd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .pd-head h1 { margin: 0 0 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pd-head .pd-sub { margin: 0; color: #5b6b76; font-size: 13px; }
+  .pd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pd-msg { margin: 12px 0 0; }
+  .pd-block { margin-top: 14px; }
+  .pd-block > .section-heading { margin-bottom: 8px; }
+  .pd-table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+  .pd-table th {
+    text-align: left; font-weight: 700; color: #45535d; background: #f2f6f8;
+    border-bottom: 1px solid #dfe7ec; padding: 8px 10px; white-space: nowrap;
+  }
+  .pd-table td {
+    padding: 8px 10px; border-bottom: 1px solid #eef3f6; vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pd-table tr:last-child td { border-bottom: none; }
+  .pd-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pd-table .muted { color: #7b8a94; }
+  .pd-table a { color: #1c5d99; text-decoration: none; }
+  .pd-table a:hover { text-decoration: underline; }
+  /* 分区行（把「办理进度」和「本月信息」两段合在一张表里） */
+  .pd-table tr.group th { background: #e9eff3; color: #21303a; font-size: 13px; letter-spacing: .04em; }
+  .pd-table tr.info th { width: 34%; font-weight: 500; color: #45535d; background: #fff; border-bottom: 1px solid #eef3f6; }
+  /* 操作说明（可折叠，默认展开） */
+  .pd-guide { margin: 12px 0 0; border: 1px solid #e4ebf0; border-radius: 10px; background: #f8fbfc; padding: 10px 14px; }
+  .pd-guide > summary { cursor: pointer; font-weight: 700; color: #21303a; font-size: 14px; }
+  .pd-guide > ol { margin: 8px 0 0; padding-left: 20px; color: #45535d; font-size: 13px; line-height: 1.85; }
+  .pd-guide code { background: #eef3f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
 
-{% if carry.previous %}
-  <div class="message {% if carry.ready %}message-success{% else %}message-error{% endif %}">
-    跨期来源：{{ carry.previous }}；
-    {% if carry.ready %}
-      上期已锁账，本期结算时自动承接期末库存、在产品、未完工订单及合同余额。
-    {% else %}
-      上期尚未锁账，本期不能正式结算。
-    {% endif %}
-  </div>
-{% elif carry.error %}
-  <div class="message message-error">{{ carry.error }}</div>
-{% else %}
-  <div class="message message-info">首个核算期间：期初库存和期初在产品由本期上传；如存在启用日前未到票或未开票业务，再上传期初采购暂估明细和期初发出商品明细。</div>
-{% endif %}
-
-<section class="workflow">
-  <a class="workflow-step {% if counts.imports %}done{% endif %}" href="{% url 'upload_file' period.id %}">
-    <span>01</span><strong>资料导入</strong><small>{{ counts.imports }}类已导入</small>
-  </a>
-  <a class="workflow-step {% if counts.contracts %}done{% endif %}" href="{% url 'purchase_matches' period.id %}">
-    <span>02</span><strong>采购匹配</strong><small>{{ counts.contracts }}条合同</small>
-  </a>
-  <a class="workflow-step {% if not counts.sales_pending %}done{% endif %}" href="{% url 'sales_matches' period.id %}">
-    <span>03</span><strong>销售核销核对</strong><small>待处理 {{ counts.sales_pending }} 条</small>
-  </a>
-  <a class="workflow-step {% if counts.orders %}done{% endif %}" href="{% url 'work_order_matches' period.id %}">
-    <span>04</span><strong>订单匹配</strong><small>{{ counts.orders }}张工单</small>
-  </a>
-  <a class="workflow-step {% if counts.workshops and counts.workshops == counts.settled_workshops %}done{% endif %}" href="{% url 'workshop_settlements' period.id %}">
-    <span>05</span><strong>车间结转</strong><small>{{ counts.settled_workshops }}/{{ counts.workshops }}已完成</small>
-  </a>
-  <a class="workflow-step {% if counts.valuations %}done{% endif %}" href="{% url 'inventory_results' period.id %}">
-    <span>06</span><strong>库存结转</strong><small>{{ counts.valuations }}种物料</small>
-  </a>
-  <a class="workflow-step {% if not counts.failed_checks and counts.valuations %}done{% endif %}" href="{% url 'reconciliation' period.id %}">
-    <span>07</span><strong>勾稽锁账</strong><small>{{ counts.failed_checks }}项未通过</small>
-  </a>
-</section>
-
-<section class="summary-strip">
-  <article><span>库存流水</span><strong>{{ counts.inventory }}</strong></article>
-  <article><span>生产工单</span><strong>{{ counts.orders }}</strong></article>
-  <article><span>期末存货</span><strong>{{ counts.ending_inventory }}</strong></article>
-  <article><span>车间结转</span><strong>{{ counts.settled_workshops }}/{{ counts.workshops }}</strong></article>
-  <article><span>阻断异常</span><strong class="{% if counts.blocking %}danger-text{% endif %}">{{ counts.blocking }}</strong></article>
-  <article><span>勾稽未通过</span><strong class="{% if counts.failed_checks %}danger-text{% endif %}">{{ counts.failed_checks }}</strong></article>
-</section>
-
-<div class="two-column">
-  <section class="section-card">
-    <div class="section-heading">
-      <div><p class="eyebrow">IMPORT STATUS</p><h2>最近导入</h2></div>
-      <div class="heading-actions">
-        <a class="button small secondary" href="{% url 'import_batches' period.id %}">全部批次</a>
-        {% if period.status != "locked" %}<a class="button small secondary" href="{% url 'upload_file' period.id %}">上传资料</a>{% endif %}
-      </div>
+<section class="section-card">
+  <div class="pd-head">
+    <div>
+      <p class="eyebrow">MONTH-END WORKSPACE</p>
+      <h1>
+        {{ period }}成本结算
+        {% if period.status == "locked" %}<span class="pill success">已锁账</span>
+        {% elif lockable %}<span class="pill success">可锁账</span>
+        {% else %}<span class="pill warning">进行中</span>{% endif %}
+      </h1>
+      <p class="pd-sub">资料导入 → 采购发票 → 月末未开票 → 工单报工 → 车间结转 → 库存结转 → 勾稽锁账</p>
     </div>
-    <div class="compact-list">
-      {% for batch in batches %}
-        <div class="compact-row">
-          <div><strong>{{ batch.get_kind_display }}</strong><small>{{ batch.original_name }}</small></div>
-          <div class="right">
-            <span>{{ batch.row_count }}行</span>
-            <small>{{ batch.created_at|date:"m-d H:i" }}</small>
-            <a class="mini-button" href="{% url 'download_import_file' period.id batch.id %}">下载</a>
-          </div>
-        </div>
-      {% empty %}
-        <div class="empty-state compact"><strong>尚未导入资料</strong><p>先上传本月库存流水。</p></div>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section class="section-card">
-    <div class="section-heading"><div><p class="eyebrow">CLOSE CONTROL</p><h2>结算控制</h2></div></div>
-    {% if latest_run %}
-      <dl class="detail-list">
-        <dt>最近结算</dt><dd>{{ latest_run.finished_at|date:"Y-m-d H:i:s" }}</dd>
-        <dt>循环次数</dt><dd>{{ latest_run.iterations }}</dd>
-        <dt>循环收敛</dt><dd>{% if latest_run.converged %}<span class="pill success">是</span>{% else %}<span class="pill danger">否</span>{% endif %}</dd>
-        <dt>阻断异常</dt><dd>{{ latest_run.summary.blocking_exceptions|default:0 }}</dd>
-      </dl>
-    {% else %}
-      <div class="empty-state compact"><strong>尚未执行结算</strong><p>资料导入和匹配完成后，执行完整结算。</p></div>
-    {% endif %}
-    <div class="close-actions">
-      {% if period.status == "locked" %}
+    <div class="pd-actions">
+      {% if period.status != "locked" %}
+        <form method="post" action="{% url 'rematch_period' period.id %}">
+          {% csrf_token %}<button class="button secondary" type="submit">重新自动匹配</button>
+        </form>
+        <form method="post" action="{% url 'run_period' period.id %}">
+          {% csrf_token %}<button class="button primary" type="submit">按车间顺序完整结算</button>
+        </form>
+        {% if lockable %}
+          <form method="post" action="{% url 'lock_period' period.id %}">
+            {% csrf_token %}<button class="button primary" type="submit"
+              onclick="return confirm('锁账后不能导入和重新计算，确定继续吗？')">勾稽通过，锁定本月</button>
+          </form>
+        {% endif %}
+      {% else %}
         <div class="lock-banner">已由{{ period.locked_by }}于{{ period.locked_at|date:"Y-m-d H:i" }}锁账</div>
         {% if user.is_superuser %}
           <form method="post" action="{% url 'reopen_period' period.id %}">
             {% csrf_token %}<button class="button danger" type="submit">管理员重开期间</button>
           </form>
         {% endif %}
-      {% elif lockable %}
-        <form method="post" action="{% url 'lock_period' period.id %}">
-          {% csrf_token %}<button class="button primary wide" type="submit" onclick="return confirm('锁账后不能导入和重新计算，确定继续吗？')">勾稽通过，锁定本月</button>
-        </form>
-      {% else %}
-        <div class="lock-banner muted">暂不能锁账：{{ lock_reason }}</div>
       {% endif %}
     </div>
-  </section>
-</div>
+  </div>
+
+  {% if carry.previous %}
+    <div class="message pd-msg {% if carry.ready %}message-success{% else %}message-error{% endif %}">
+      跨期来源：{{ carry.previous }}；
+      {% if carry.ready %}上期已锁账，本期结算时自动承接期末库存、在产品、未完工订单及合同余额。{% else %}上期尚未锁账，本期不能正式结算。{% endif %}
+    </div>
+  {% elif carry.error %}
+    <div class="message message-error pd-msg">{{ carry.error }}</div>
+  {% else %}
+    <div class="message message-info pd-msg">首个核算期间：期初库存和期初在产品由本期上传；如存在启用日前未到票或未开票业务，再上传期初采购暂估明细和期初发出商品明细。</div>
+  {% endif %}
+
+  {# 用户 2026-09-30：把操作步骤写在期间页上，一看就知道怎么操作 #}
+  <details class="pd-guide" open>
+    <summary>操作说明（怎么结账、锁账后怎么进、怎么解锁）</summary>
+    <ol>
+      <li><b>每月顺序</b>：① 资料导入 → ② 采购发票匹配 → ③ 月末未开票 → ④ 工单报工 →
+        ⑤ <b>车间费用</b>（左侧「车间费用」页按车间、按月份<b>直接录入</b>，不用上传）→ ⑥ 车间结转 →
+        ⑦ <b>按车间顺序完整结算</b>（右上角按钮）→ ⑧ 库存结转 → ⑨ 勾稽异常 → ⑩ 锁账。</li>
+      <li><b>锁账</b>：点右上角「勾稽通过，锁定本月」。只有同时满足——各车间结转完成、
+        结算成功且<b>已收敛</b>、无未处理<b>阻断异常</b>、无未确认<b>勾稽差异</b>——按钮才会出现；
+        不满足时表里会写「暂不能锁账：原因」。</li>
+      <li><b>锁账后</b>：本期变<b>只读</b>——工单成本、期末库存、单价表、勾稽、损益表都能看、能导出；
+        但<b>不能</b>上传资料、重新匹配、重新结算、修改车间费用、处理异常。
+        <b>怎么进本期</b>：首页（期间列表）点本期，或用顶部期间导航，或直接打开本期链接。</li>
+      <li><b>解锁（重开）</b>：期间详情页 → 锁账横幅旁的「<b>管理员重开期间</b>」（<b>仅系统管理员</b>可见）→
+        状态回到「待处理」；注意会同时<b>重置车间结转、删除结算记录</b>，并让<b>后续未锁账期间的自动承接和结算结果失效</b>
+        → 必须重新走「车间结转 → 完整结算 → 勾稽 → 再锁账」。</li>
+      <li><b>开始下一个月</b>：上期锁账后进入新期间（新期间不存在时先在后台新建：<code>/admin/settlement/accountingperiod/add/</code>）→
+        导入资料 → 匹配 → 车间费用录入 → 车间结转 → 完整结算
+        （<b>自动承接上期期末库存、在产品、未完工订单、合同余额</b>）→ 勾稽 → 锁账。</li>
+      <li><b>如何进入下一个期间</b>：回<b>首页（期间列表）</b>，点那一期的「<b>进入月结</b>」按钮即可；
+        也可以直接打开 <code>/periods/&lt;期间id&gt;/</code>。
+        页面顶部显示的期间名与状态是<b>当前所在期间</b>，不是切换器。</li>
+    </ol>
+  </details>
+</section>
+
+<section class="section-card pd-block">
+  <div class="section-heading"><div><p class="eyebrow">WORKFLOW &amp; KEY NUMBERS</p><h2>办理进度与本月信息</h2></div></div>
+  <table class="pd-table">
+    <thead>
+      <tr>
+        <th style="width:52px">步骤</th>
+        <th style="width:150px">事项</th>
+        <th style="width:110px">状态</th>
+        <th>说明</th>
+        <th style="width:70px">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="group"><th colspan="5">办理进度</th></tr>
+      <tr>
+        <td>01</td><td>资料导入</td>
+        <td>{% if counts.imports %}<span class="pill success">已完成</span>{% else %}<span class="pill warning">待导入</span>{% endif %}</td>
+        <td class="muted">{{ counts.imports }} 类</td>
+        <td><a href="{% url 'upload_file' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>02</td><td>采购发票匹配</td>
+        <td>{% if counts.purchase_invoice_count %}<span class="pill success">已完成</span>{% else %}<span class="pill warning">待处理</span>{% endif %}</td>
+        <td class="muted">{{ counts.purchase_invoice_count }} 张发票</td>
+        <td><a href="{% url 'purchase_matches' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>03</td><td>月末未开票</td>
+        <td>{% if counts.sales_uninvoiced %}<span class="pill warning">有未开票</span>{% else %}<span class="pill success">无</span>{% endif %}</td>
+        <td class="muted">{{ counts.sales_uninvoiced }} 条</td>
+        <td><a href="{% url 'sales_uninvoiced' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>04</td><td>工单报工</td>
+        <td>{% if counts.orders %}<span class="pill success">已导入</span>{% else %}<span class="pill warning">待导入</span>{% endif %}</td>
+        <td class="muted">{{ counts.orders }} 张工单</td>
+        <td><a href="{% url 'order_completion_report' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>05</td><td>车间结转</td>
+        <td>{% if counts.workshops and counts.workshops == counts.settled_workshops %}<span class="pill success">已完成</span>{% else %}<span class="pill warning">进行中</span>{% endif %}</td>
+        <td class="muted">{{ counts.settled_workshops }}/{{ counts.workshops }} 个车间</td>
+        <td><a href="{% url 'workshop_settlements' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>06</td><td>库存结转</td>
+        <td>{% if counts.valuations %}<span class="pill success">已完成</span>{% else %}<span class="pill warning">待结算</span>{% endif %}</td>
+        <td class="muted">{{ counts.valuations }} 种物料</td>
+        <td><a href="{% url 'inventory_results' period.id %}">进入</a></td>
+      </tr>
+      <tr>
+        <td>07</td><td>勾稽锁账</td>
+        <td>{% if not counts.failed_checks and counts.valuations %}<span class="pill success">已通过</span>{% else %}<span class="pill warning">待处理</span>{% endif %}</td>
+        <td class="muted">勾稽未通过 {{ counts.failed_checks }} · 阻断异常 {{ counts.blocking }}</td>
+        <td><a href="{% url 'reconciliation' period.id %}">进入</a></td>
+      </tr>
+
+      <tr class="group"><th colspan="5">本月信息</th></tr>
+      <tr class="info">
+        <th colspan="2">状态</th>
+        <td colspan="3">{{ period.get_status_display }}{% if period.status == "locked" %}（{{ period.locked_by }} 于 {{ period.locked_at|date:"Y-m-d H:i" }}）{% endif %}</td>
+      </tr>
+      <tr class="info">
+        <th colspan="2">库存流水 / 生产工单 / 期末存货</th>
+        <td colspan="3">{{ counts.inventory }} / {{ counts.orders }} / {{ counts.ending_inventory }}</td>
+      </tr>
+      <tr class="info">
+        <th colspan="2">车间结转</th>
+        <td colspan="3">{{ counts.settled_workshops }}/{{ counts.workshops }}</td>
+      </tr>
+      <tr class="info">
+        <th colspan="2">阻断异常 / 勾稽未通过</th>
+        <td colspan="3" class="{% if counts.blocking or counts.failed_checks %}danger-text{% endif %}">{{ counts.blocking }} / {{ counts.failed_checks }}</td>
+      </tr>
+      <tr class="info">
+        <th colspan="2">最近结算</th>
+        <td colspan="3">{% if latest_run %}{{ latest_run.finished_at|date:"Y-m-d H:i:s" }} · {{ latest_run.iterations }} 次循环 · {% if latest_run.converged %}<span class="pill success">已收敛</span>{% else %}<span class="pill danger">未收敛</span>{% endif %}{% else %}<span class="muted">尚未执行结算</span>{% endif %}</td>
+      </tr>
+      <tr class="info">
+        <th colspan="2">锁账</th>
+        <td colspan="3">
+          {% if period.status == "locked" %}<span class="pill success">已锁账</span>
+          {% elif lockable %}<span class="pill success">可锁账</span><span class="muted"> · 点右上角「勾稽通过，锁定本月」</span>
+          {% else %}<span class="pill warning">暂不能锁账</span><span class="muted"> · {{ lock_reason }}</span>{% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="section-card pd-block">
+  <div class="section-heading">
+    <div><p class="eyebrow">IMPORT STATUS</p><h2>最近导入</h2></div>
+    <div class="heading-actions">
+      <a class="button small secondary" href="{% url 'import_batches' period.id %}">全部批次</a>
+      {% if period.status != "locked" %}<a class="button small secondary" href="{% url 'upload_file' period.id %}">上传资料</a>{% endif %}
+    </div>
+  </div>
+  <table class="pd-table">
+    <thead><tr><th style="width:180px">类型</th><th>文件名</th><th style="width:90px">行数</th><th style="width:110px">导入时间</th><th style="width:70px">操作</th></tr></thead>
+    <tbody>
+      {% for batch in batches %}
+        <tr>
+          <td>{{ batch.get_kind_display }}</td>
+          <td class="muted">{{ batch.original_name }}</td>
+          <td class="num">{{ batch.row_count }}</td>
+          <td class="muted">{{ batch.created_at|date:"m-d H:i" }}</td>
+          <td><a href="{% url 'download_import_file' period.id batch.id %}">下载</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="muted">尚未导入资料 —— 先上传本月库存流水。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

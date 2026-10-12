@@ -24,7 +24,7 @@
     <label>单据号<input name="document_no" value="{{ request.GET.document_no }}"></label>
     <label>业务类型<input name="business_type" value="{{ request.GET.business_type }}"></label>
     <label>方向
-      <select name="direction"><option value="">全部</option>{% for value,label in directions %}<option value="{{ value }}" {% if request.GET.direction == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+      <select name="direction" onchange="this.form.submit()"><option value="">全部</option>{% for value,label in directions %}<option value="{{ value }}" {% if request.GET.direction == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
     </label>
     <label>物料编码<input name="material" value="{{ request.GET.material }}"></label>
     <label>供应商/客户<input name="party" value="{{ request.GET.party }}"></label>

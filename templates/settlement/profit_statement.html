@@ -6,24 +6,9 @@
   <div>
     <p class="eyebrow">PROFIT &amp; LOSS</p>
     <h1>损益表</h1>
-    <p>
-      销售台账逐行 + 按月录入的当月费用，按「本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计」分摊；
-      销售毛利 = 终端销售收入 − 销售成本；损益汇总表（一张表）：期间 → 销售渠道（国内/国外）→ 销售大类，
-      可按期间/渠道/大类筛选，打开页面默认只看当月。
-    </p>
-  </div>
-  <div class="heading-actions">
-    <a class="button primary" href="{% url 'profit_statement_export' period.id %}">导出Excel</a>
-    <a class="button secondary" href="{% url 'export_center' period.id %}">报表导出中心</a>
-    <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售核销核对</a>
   </div>
 </section>
 
-{% if data.backfilled %}
-<div class="message message-info">
-  已按月末加权平均价回填 {{ data.backfilled }} 行销售成本（台账只给数量与收入，成本由平台算）。
-</div>
-{% endif %}
 {% if not data.has_valuation %}
 <div class="message message-error">
   本期还没有库存计价结果，销售成本会为空。请先完成「车间结转」并按顺序结算，毛利/营业利润/净利润才算得出来。
@@ -55,7 +40,11 @@
       <p class="eyebrow">MONTHLY COSTS</p>
       <h2>按月费用录入</h2>
     </div>
-    <span class="pill">每个期间一行：逐月填 7 项费用后一次保存 → 按该月终端销售收入占比摊到该月每一行</span>
+    {# 「导出Excel」（整份损益表）放这里：与「打印本表」并排（用户 2026-09-28 从页头挪下来） #}
+    <div class="heading-actions">
+      <a class="button secondary" href="{% url 'profit_statement_export' period.id %}"
+         title="整份损益表：损益表 + 汇总-按出库期间 + 汇总-按开票期间 三张表">导出Excel</a>
+    </div>
   </div>
   {% if months %}
   <form method="post" class="stack-form">
@@ -67,6 +56,7 @@
           <tr>
             <th>期间</th>
             {% for field in months.0.fields %}<th>{{ field.label }}</th>{% endfor %}
+            <th class="num">合计</th>
           </tr>
         </thead>
         <tbody>
@@ -86,9 +76,23 @@
             {% for field in item.fields %}
             <td><input class="expense-input" name="{{ field.name }}" type="text" inputmode="decimal" autocomplete="off" value="{{ field.value|thousands }}"></td>
             {% endfor %}
+            {# 该月 7 项费用合计（用户 2026-09-28） #}
+            <td class="expense-total-cell"><strong>{{ item.total|thousands }}</strong></td>
           </tr>
           {% endfor %}
         </tbody>
+        {# 合计行：7 项费用按所有期间纵向合计（用户 2026-09-28） #}
+        <tfoot>
+          <tr class="expense-total-row">
+            <td class="expense-month-cell">
+              <div class="expense-month-title"><strong>合计</strong></div>
+            </td>
+            {% for field in months_total.fields %}
+            <td class="expense-total-cell"><strong>{{ field.value|thousands }}</strong></td>
+            {% endfor %}
+            <td class="expense-total-cell"><strong>{{ months_total.grand|thousands }}</strong></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
     <div class="filter-actions">
@@ -110,22 +114,10 @@
     <div>
       <p class="eyebrow">P&amp;L SUMMARY</p>
       <h2>损益汇总表</h2>
-      <p class="muted-text" style="margin:6px 0 0;">
-        结构：期间 × 销售渠道 × 销售大类；打开页面默认只看当月{% if default_period_applied %}（{{ selected_periods|join:"、" }}）{% endif %}，点「显示全部」看全部期间。
-      </p>
-    </div>
-    <div class="heading-actions">
-      {% for item in basis_links %}
-        {% if item.value == basis %}
-        <span class="button primary" style="pointer-events:none;">{{ item.label }}</span>
-        {% else %}
-        <a class="button secondary" href="?{{ item.query }}">{{ item.label }}</a>
-        {% endif %}
-      {% endfor %}
     </div>
   </div>
 
-  <form method="get" class="filter-grid" style="align-items:end;gap:8px;flex-wrap:wrap;">
+  <form method="get" class="filter-grid compact-filters">
     <input type="hidden" name="basis" value="{{ basis }}">
     <input type="hidden" name="f" value="1">
     {% for key, value in summary_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
@@ -162,15 +154,21 @@
         </div>
       </details>
     </div>
-    <button class="button primary" type="submit">确定</button>
-    {% if summary.has_filter %}
-    <a class="button secondary" href="?basis={{ basis }}&amp;f=1">显示全部</a>
-    {% endif %}
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">确定</button>
+      {% if summary.has_filter %}
+      <a class="button secondary" href="?basis={{ basis }}&amp;f=1">显示全部</a>
+      {% endif %}
+      <a class="button secondary" href="{% url 'profit_summary_export' period.id %}?{{ summary_export_query }}">导出Excel</a>
+      {# 「打印本表」由 base.html 脚本注入到这里：与「导出Excel」紧挨着（用户 2026-09-28） #}
+      <div class="print-here"></div>
+    </div>
   </form>
   <p class="muted-text" style="margin-top:8px;">
-    三个筛选都是勾选式：一个都不勾 = 全部；「期间」跟随当前口径（{{ summary.basis_label }}），未开票的行归入「(未开票)」。
+    三个筛选都是勾选式：一个都不勾 = 全部；「期间」= <strong>开票期间</strong>，未开票的行归入「(未开票)」。
     点「显示全部」= 三个筛选都清空（看全部期间）；打开页面时「期间」默认勾当月。
     下方的小计与合计按当前筛选条件重算。
+    「导出Excel」导出的就是这三个筛选当前条件下的这张损益汇总表（按开票期间归月）。
   </p>
 
   <div class="table-scroll summary-table-wrap">
@@ -220,28 +218,25 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">BY ORDER LINE</p>
-      <h2>损益明细表（共 {{ detail.row_count }} 行，本页 {{ page.object_list|length }} 行）</h2>
-      <p class="muted-text" style="margin:6px 0 0;">
-        台账合计 {{ data.row_count }} 行；当前筛选 {{ detail.row_count }} 行{% if detail.default_applied %}（打开页面默认只看当月 {{ detail.month }}）{% endif %}，下方筛选只看这张表，不影响上面的损益汇总表。
-      </p>
+      <h2>损益明细表</h2>
     </div>
-    <span class="pill">合计行按当前筛选计算</span>
   </div>
 
-  <form method="get" class="filter-grid" style="align-items:end;gap:8px;flex-wrap:wrap;">
+  {# 筛选行：六个字段 + 确定 / 导出Excel / 打印本表，同排一行、底部对齐（用户 2026-09-28） #}
+  <form method="get" class="filter-grid compact-filters detail-filters">
     {% for key, value in detail_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
     <div class="filter-field">
       <span>出库期间</span>
-      <select name="dm">
+      <select name="dm" onchange="this.form.submit()">
         <option value="">全部</option>
         {% for item in detail.month_options %}
-        <option value="{{ item.value }}"{% if item.value == detail.month %} selected{% endif %}>{{ item.label }}（{{ item.row_count }} 行）</option>
+        <option value="{{ item.value }}"{% if item.value == detail.month %} selected{% endif %}>{{ item.label }}</option>
         {% endfor %}
       </select>
     </div>
     <div class="filter-field">
       <span>开票期间（从）</span>
-      <select name="ifrom">
+      <select name="ifrom" onchange="this.form.submit()">
         <option value="">不限</option>
         {% for item in detail.invoice_options %}
         <option value="{{ item.value }}"{% if item.value == detail.invoice_from %} selected{% endif %}>{{ item.label }}</option>
@@ -250,14 +245,14 @@
     </div>
     <div class="filter-field">
       <span>开票期间（到）</span>
-      <select name="ito">
+      <select name="ito" onchange="this.form.submit()">
         <option value="">不限</option>
         {% for item in detail.invoice_options %}
         <option value="{{ item.value }}"{% if item.value == detail.invoice_to %} selected{% endif %}>{{ item.label }}</option>
         {% endfor %}
       </select>
     </div>
-    <div class="filter-field">
+    <div class="filter-field text-field">
       <span>客户名称</span>
       <input name="cust" value="{{ detail.customer }}" placeholder="包含关键字即可">
     </div>
@@ -272,18 +267,23 @@
         </div>
       </details>
     </div>
-    <div class="filter-field">
+    <div class="filter-field text-field">
       <span>产品编码</span>
       <input name="dcode" value="{{ detail.code }}" placeholder="包含关键字即可">
     </div>
-    <button class="button primary" type="submit">确定</button>
-    {% if detail.has_filter %}
-    <a class="button secondary" href="?{{ detail_clear_query }}">清空筛选（看全部月份）</a>
-    {% endif %}
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">确定</button>
+      {% if detail.has_filter %}
+      <a class="button secondary" href="?{{ detail_clear_query }}">清空筛选</a>
+      {% endif %}
+      <a class="button secondary" href="{% url 'profit_detail_export' period.id %}?{{ detail_export_query }}">导出Excel</a>
+      {# 「打印本表」由 base.html 脚本注入到这里（与筛选字段同一行、底部对齐） #}
+      <div class="print-here"></div>
+    </div>
   </form>
   <p class="muted-text" style="margin-top:8px;">
     不填 = 不限制；「开票期间」填了真实月份时不含未开票行，要看未开票请把「(未开票)」选进区间；起止填反了会自动对调；客户名称 / 产品编码按「包含」匹配（忽略大小写）。
-    点「清空筛选」= 出库期间也放开，看全部 {{ data.row_count }} 行。
+    点「清空筛选」= 出库期间也放开，看全部月份；「导出Excel」导出的就是当前筛选条件下的明细（含合计行）。
   </p>
 
   <div class="table-scroll profit-table-wrap">
@@ -364,22 +364,15 @@
 </section>
 
 <section class="section-card">
-  <div class="section-heading"><div><h2>口径说明</h2></div></div>
-  <ul class="muted-text">
-    <li>收入口径：只取「终端销售收入」；射阳兰邦销售收入只作列展示，不参与毛利与分摊。</li>
-    <li>销售成本 = 销售数量 × 该产品月末加权平均价（由平台在结算后回填，与库存账一致）。</li>
-    <li>销售毛利 = 终端销售收入 − 销售成本；销售毛利率 = 销售毛利 ÷ 终端销售收入（百分数，2位小数）。</li>
-    <li>费用按【出库月份】分别录入：台账里出现过的每个月份各一行，逐月填 7 项一次保存；每行按「本行收入 ÷ 该行所属出库月份收入合计」分摊到行。</li>
-    <li>营业利润 = 销售毛利 − 税金及附加 − 管理费用 − 销售费用 − 财务费用。</li>
-    <li>利润总额 = 营业利润 + 营业外收入 − 营业外支出；净利润 = 利润总额 − 所得税费用；净利润率 = 净利润 ÷ 终端销售收入。</li>
-    <li>汇总可切换【按出库期间】/【按开票期间】：只改分组口径，每行的金额不变；未开票的行在开票期间视图里归入「(未开票)」。</li>
-    <li>损益汇总表只有一张（期间 × 销售渠道 × 销售大类）：可按 期间 / 销售渠道 / 销售大类 勾选筛选，小计与合计按筛选条件重算；末行「合计」= 当前筛选条件合计。打开页面默认只看当月（当前期间所属月份），点「显示全部」看全部期间。</li>
-    <li>销售渠道直接取台账「销售渠道」列（国内销售 / 国外销售，由你的台账按终端客户口径给出）；该列留空的行归入「未分类」。</li>
-    <li>损益明细表默认只看当月（当前期间所属出库月份），可按 出库期间 / 开票期间（从…到…，含「未开票」）/ 客户名称 / 销售大类 / 产品编码 筛选；行数与合计行都按当前筛选计算，这张表的筛选不影响上面的损益汇总表。</li>
-    <li>销售大类取台账「销售大类」；带明细括注的（如 手套、袜子、服装、床垫 等）按主体归类显示——台账写「其他成品（手套、服装、床垫等）」，页面与导出统一显示「其他成品」。</li>
-    <li>汇总表列名「期间」随口径变化：按出库期间显示出库月份，按开票期间显示开票月份（未开票归「(未开票)」）。</li>
-    <li>成本单价/销售成本单价列由平台计算，导出 Excel 与页面数值一致；导出含「损益表」「汇总-按出库期间」「汇总-按开票期间」三张表。</li>
-  </ul>
+  {# 口径说明（用户 2026-09-28：改成简短要点，不再用四列表） #}
+  <div class="basis-block">
+    <p class="basis-title">口径说明</p>
+    <ul class="basis-notes">
+      <li><strong>收入</strong>：只取台账「终端销售收入」；射阳兰邦销售收入只作列展示，不参与毛利与费用分摊。</li>
+      <li><strong>成本 / 毛利</strong>：销售成本 ＝ 销售数量 × 成本单价（本期月末加权价；本期没有该物料加权价时用上传的「历史单价」兜底，出库价优先）；毛利 ＝ 终端销售收入 − 销售成本，毛利率 ＝ 毛利 ÷ 终端销售收入。</li>
+      <li><strong>费用 / 利润</strong>：7 项费用按【出库月份】录入、按各行收入占比摊到行；营业利润 ＝ 毛利 − 税金及附加 − 三项费用；净利润 ＝ 利润总额 − 所得税费用。</li>
+    </ul>
+  </div>
 </section>
 {% endblock %}
 

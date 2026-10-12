@@ -1,54 +1,89 @@
 {% extends "base.html" %}
 {% load workshop_tags %}
-{% block title %}单价表 · {{ period }}{% endblock %}
+{% block title %}物料单价表 · {{ period }}{% endblock %}
 {% block content %}
-<section class="page-heading">
-  <div>
-    <p class="eyebrow">PRICE TABLE</p>
-    <h1>物料单价与出入库成本表（跨月对比）</h1>
-    <p>每个物料一行，每月一组：入库单价、出库单价。入库单价＝入库金额÷入库数量；出库单价＝出库金额÷出库数量。已上传「历史单价」的物料优先显示上传价；期间内新增物料由系统自动按计算单价补全，无需重复上传。数据来自各期间结算后的库存计价结果。</p>
-  </div>
-  <div class="heading-actions">
-    <a class="button secondary" href="{% url 'price_table' period.id %}?{{ request.GET.urlencode }}&amp;export=1">导出Excel</a>
-  </div>
-</section>
-<section class="section-card filter-card">
-  <form method="get" class="production-cost-filter">
-    <label>期间数
-      <select name="periods">
-        {% for k in periods_options %}
-        <option value="{{ k }}" {% if n_periods == k %}selected{% endif %}>{{ k }} 期</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>类别
-      <select name="category">
-        <option value="all" {% if category_filter == "all" %}selected{% endif %}>全部</option>
-        <option value="raw" {% if category_filter == "raw" %}selected{% endif %}>原料</option>
-        <option value="fin" {% if category_filter == "fin" %}selected{% endif %}>成品</option>
-        <option value="other" {% if category_filter == "other" %}selected{% endif %}>其它</option>
-      </select>
-    </label>
-    <div class="filter-actions">
-      <button class="button primary" type="submit">查询</button>
-      <a class="button secondary" href="{% url 'price_table' period.id %}">重置</a>
-    </div>
-  </form>
-</section>
 <style>
-  /* 两行表头（期间分组 + 入库/出库）：第一行贴顶、第二行贴在其下方，滚动时不盖住彼此 */
-  .price-table thead th { position: sticky; top: 0; z-index: 3; background: #f2f5f6; }
-  .price-table thead tr:first-child th { top: 0; height: 28px; padding: 6px 10px; }
+  /* 筛选栏：所有字段方框统一尺寸（用户 2026-09-30：方框做成统一的） */
+  .pt-filter { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 0 0 12px; }
+  .pt-filter label { display: flex; flex-direction: column; gap: 4px; }
+  .pt-filter label > span { font-size: 12px; color: #5b6b76; }
+  .pt-filter input, .pt-filter select {
+    height: 40px; min-width: 9.5rem; padding: 0 10px; box-sizing: border-box;
+    border: 1px solid #bfcbd3; border-radius: 9px; background: #fff; color: #21303a; font-size: 14px;
+  }
+  .pt-filter input[type="text"] { min-width: 12rem; }
+  /* 用户 2026-09-30：筛选字段不要颜色（去掉蓝色高亮，聚焦也保持中性） */
+  .pt-filter input:focus, .pt-filter select:focus { outline: none; border-color: #98a9b4; }
+  .pt-basis { background: #f6f9fb; border: 1px solid #e2eaef; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; }
+  .pt-basis h2 { margin: 0 0 6px; font-size: 14px; color: #21303a; }
+  .pt-basis ul { margin: 0; padding-left: 18px; color: #45535d; font-size: 13px; line-height: 1.7; }
+  /* 表格：两行表头 + 期间分组 + 前四列固定 */
+  .price-table { border-collapse: separate; border-spacing: 0; width: 100%; }
+  .price-table thead th { position: sticky; top: 0; z-index: 3; background: #eef2f4; }
+  .price-table thead tr:first-child th { top: 0; height: 28px; padding: 6px 10px; text-align: center; }
   .price-table thead tr:nth-child(2) th { top: 30px; }
-  .price-table thead th[rowspan] { vertical-align: top; }
+  .price-table thead th[rowspan] { vertical-align: bottom; text-align: left; }
+  .price-table td, .price-table th { white-space: nowrap; }
+  .price-table tbody td:nth-child(2n+5),
+  .price-table thead tr:first-child th:nth-child(n+5) { border-left: 1px solid #cfd8dd; }
+  .price-table tbody td:nth-child(4n+7),
+  .price-table tbody td:nth-child(4n+8) { background: #f8fbfc; }
+  .price-table tbody tr:hover td { background: #eef6ff; }
+  .price-table td.num, .price-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .price-table th:nth-child(-n+4), .price-table td:nth-child(-n+4) { position: sticky; background: #fff; z-index: 2; }
+  .price-table thead th:nth-child(-n+4) { z-index: 4; background: #eef2f4; }
+  .price-table th:nth-child(1), .price-table td:nth-child(1) { left: 0; width: 6rem; }
+  .price-table th:nth-child(2), .price-table td:nth-child(2) { left: 6rem; width: 9.5rem; }
+  .price-table th:nth-child(3), .price-table td:nth-child(3) { left: 15.5rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+  .price-table th:nth-child(4), .price-table td:nth-child(4) { left: 31.5rem; width: 4rem; }
+  .price-table tbody tr:nth-child(even) td:nth-child(-n+4) { background: #fbfcfd; }
 </style>
+
 <section class="section-card">
-  <div class="section-heading">
+  <div class="section-heading" style="align-items:flex-start">
     <div>
-      <p class="eyebrow">{{ periods.0.month|date:"Y-m" }} ~ {{ periods.last.month|date:"Y-m" }}</p>
-      <h2>共 {{ rows|length }} 个物料 · {{ periods|length }} 个期间</h2>
+      <p class="eyebrow">PRICE TABLE · 跨月对比</p>
+      <h1 style="margin:0">物料单价表</h1>
     </div>
   </div>
+
+  <div class="pt-basis">
+    <h2>口径说明</h2>
+    <ul>
+      <li><b>入库单价 ＝ 入库金额 ÷ 入库数量</b>：包含<b>当月采购入库价</b>（采购价／暂估价）和<b>当月完工核算价</b>（生产／报工入库成本）。</li>
+      <li><b>出库单价 ＝ 出库金额 ÷ 出库数量</b>，即该月<b>月末加权平均价</b>（全月同一个价）。</li>
+      <li>该月有进出的物料，<b>上传过「历史单价」的以上传价为准</b>（与工单材料成本取价一致）。</li>
+      <li>只有当月确有入库／出库的月份才有值；没有进出的月份留空。</li>
+      <li>仓库间调拨／库存调整／库存转换／报工调整属<b>内部流转</b>：算期末数量，但<b>不计入单价</b>（它们没有成本金额）。</li>
+    </ul>
+  </div>
+
+  <form class="pt-filter" method="get">
+    <label><span>期间（从）</span>
+      <input type="month" name="p_from" value="{{ filters.p_from }}">
+    </label>
+    <label><span>期间（到）</span>
+      <input type="month" name="p_to" value="{{ filters.p_to }}">
+    </label>
+    <label><span>物料编码</span>
+      <input type="text" name="code" value="{{ filters.code }}" placeholder="包含即可">
+    </label>
+    <label><span>类别</span>
+      <select name="category">
+        <option value="all" {% if filters.category == "all" or not filters.category %}selected{% endif %}>全部</option>
+        <option value="raw" {% if filters.category == "raw" %}selected{% endif %}>原料</option>
+        <option value="fin" {% if filters.category == "fin" %}selected{% endif %}>成品</option>
+        <option value="other" {% if filters.category == "other" %}selected{% endif %}>其它</option>
+      </select>
+    </label>
+    <button class="button secondary" type="submit">筛选</button>
+    <a class="button secondary" href="{% url 'price_table' period.id %}">清空</a>
+    <a class="button secondary"
+       href="{% url 'price_table' period.id %}?export=1&amp;code={{ filters.code }}&amp;p_from={{ filters.p_from }}&amp;p_to={{ filters.p_to }}&amp;category={{ filters.category }}">导出Excel</a>
+    {# 「打印本表」的落点：必须是一个**空容器**，base.html 把按钮追加进来（挂在链接上会套进链接里、叠在一起） #}
+    <span class="print-here"></span>
+  </form>
+
   <div class="table-wrap"><table class="price-table">
     <thead>
       <tr>
@@ -69,17 +104,17 @@
     <tbody>
     {% for row in rows %}
     <tr>
-      <td>{{ row.category }}</td>
+      <td>{{ row.category_name }}</td>
       <td><strong>{{ row.code }}</strong></td>
-      <td>{{ row.name }}</td>
+      <td title="{{ row.name }}">{{ row.name }}</td>
       <td>{{ row.uom }}</td>
       {% for rq, ra, rp, iq, ia, ip in row.cells %}
-      <td class="num">{{ rp|floatformat:4|thousands }}</td>
-      <td class="num">{{ ip|floatformat:4|thousands }}</td>
+      <td class="num" title="入库：数量 {{ rq|floatformat:2|thousands }}　金额 {{ ra|floatformat:2|thousands }}">{{ rp|floatformat:4|thousands }}</td>
+      <td class="num" title="出库：数量 {{ iq|floatformat:2|thousands }}　金额 {{ ia|floatformat:2|thousands }}">{{ ip|floatformat:4|thousands }}</td>
       {% endfor %}
     </tr>
     {% empty %}
-    <tr><td colspan="4">暂无可比期间数据，请先执行车间结算生成库存计价。</td></tr>
+    <tr><td colspan="{{ periods|length|add:4 }}" class="empty-cell">没有符合条件的数据（可调整期间范围 / 物料编码 / 类别，或先执行结算生成库存计价）。</td></tr>
     {% endfor %}
     </tbody>
   </table></div>

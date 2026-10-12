@@ -3,154 +3,208 @@
 {% block title %}工单成本 · {{ period }}{% endblock %}
 {% block content %}
 <style>
-  .ws-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px;}
-  .ws-tab-radio{position:absolute;opacity:0;pointer-events:none;}
-  .ws-tab{display:inline-block;padding:7px 16px;border:1px solid #d5dbe3;border-radius:999px;
-          background:#fff;color:#5a6472;font-size:14px;cursor:pointer;user-select:none;}
-  .ws-tab:hover{border-color:#0f62fe;color:#0f62fe;}
-  .ws-tab-radio:checked + .ws-tab{background:#0f62fe;border-color:#0f62fe;color:#fff;font-weight:600;}
-  .ws-panel{display:none;width:100%;min-width:0;}
-  {% for section in sections %}
-  #ws-tab-{{ forloop.counter0 }}:checked ~ .ws-panel[data-panel="ws-tab-{{ forloop.counter0 }}"]{display:block;}
-  {% endfor %}
+  /* 筛选行：标签在上、控件在下、整行靠左；行内按钮与控件底对齐 */
+  .woc-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;
+                  gap:8px 14px;margin:0 0 12px;}
+  .woc-filter-row label{display:grid;gap:4px;white-space:nowrap;color:#56636e;
+                        font-size:12px;font-weight:700;}
+  .woc-filter-row select{height:34px;min-height:34px;padding:4px 8px;}
+  /* 工单编号（用户 2026-09-30）：文本框与下拉同高，宽度够放整串工单号 */
+  .woc-filter-row input[type="text"]{height:34px;min-height:34px;padding:4px 8px;min-width:210px;
+                                     border:1px solid #cbd5e1;border-radius:6px;font:inherit;
+                                     font-weight:400;color:#1f2933;background:#fff;}
+  .woc-filter-row input[type="text"]:focus{outline:2px solid #9ec5fe;outline-offset:0;}
+  .woc-filter-row .filter-actions{align-self:flex-end;flex-wrap:wrap;align-items:center;}
+  .woc-filter-row .filter-actions .button,
+  .woc-filter-row .print-here .section-print{min-height:34px;padding:6px 12px;font-size:14px;
+                                            white-space:nowrap;}
+  .woc-filter-row .print-here{display:flex;align-items:center;}
+  /* 口径说明：放在表格左下角（窄屏自然换行，不用裁切/右对齐） */
+  .woc-basis{margin:16px 0 2px;padding-top:12px;border-top:1px dashed #d8dee5;
+             text-align:left;color:#6b7883;font-size:12.5px;line-height:1.75;
+             max-width:100%;overflow-wrap:anywhere;}
+  .woc-basis strong{color:#3d4a55;}
+  .woc-basis span{display:block;}
+  /* 标准单位成本差异：正数（实际超支）红、负数（低于标准）绿 */
+  .woc-diff-bad{color:#b3261e;font-weight:700;}
+  .woc-diff-good{color:#1b7f3b;font-weight:700;}
 </style>
 <section class="page-heading">
   <div>
     <p class="eyebrow">WORK ORDER COSTING</p>
     <h1>工单完工与在制成本</h1>
-    <p>每个车间独立一张表：直接材料＝投料记录×月末加权价；制造费用按材料占比、工资按折合数量分配；完工数量＝报工数量。</p>
-  </div>
-  <div class="heading-actions">
-    <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_cost' %}?{% if request.GET.order_no %}order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.order_no and request.GET.product %}&amp;{% endif %}{% if request.GET.product %}product={{ request.GET.product|urlencode }}{% endif %}">导出Excel（全部车间）</a>
+    <p>直接材料＝投料记录×月末加权价；制造费用按材料占比、工资按折合数量分配；完工数量＝报工数量。标准单位成本＝BOM 标准成品单价×(1＋人工占比＋制造费用占比)（占比在「标准成本」页按车间半年滚动，见「标准成本构成表」）；单位成本差异＝（实际单位成本−标准单位成本）÷标准单位成本，按百分比保留两位小数，正数表示实际超支。</p>
   </div>
 </section>
-{% if sections %}
-<section class="ws-tabs" role="tablist">
-  {% for section in sections %}
-  <input type="radio" name="ws-tab" id="ws-tab-{{ forloop.counter0 }}" class="ws-tab-radio"
-         {% if section.workshop == active_ws %}checked{% endif %}>
-  <label class="ws-tab" for="ws-tab-{{ forloop.counter0 }}">{{ section.label }} <small>{{ section.rows|length }} 张工单</small></label>
-  {% endfor %}
-  {% for section in sections %}
-  <div class="ws-panel" data-panel="ws-tab-{{ forloop.counter0 }}">
-    <section class="summary-strip">
-      <article><span>工单总成本</span><strong>¥{{ section.totals.total|floatformat:2|thousands|default:"0.00" }}</strong></article>
-      <article><span>完工成本</span><strong>¥{{ section.totals.finished|floatformat:2|thousands|default:"0.00" }}</strong></article>
-      <article><span>在产品</span><strong>¥{{ section.totals.wip|floatformat:2|thousands|default:"0.00" }}</strong></article>
-      <article><span>直接材料</span><strong>¥{{ section.totals.material|floatformat:2|thousands|default:"0.00" }}</strong></article>
-    </section>
-    <section class="section-card">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">{{ section.workshop|workshop_label }}</p>
-          <h2>{{ section.label }} · 工单成本明细</h2>
-        </div>
-        <a class="button secondary" href="{% url 'export_listing' period.id 'work_order_cost' %}?workshop={{ section.workshop }}{% if request.GET.order_no %}&amp;order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.product %}&amp;product={{ request.GET.product|urlencode }}{% endif %}">导出Excel</a>
-      </div>
-      <p class="help-text">累计投料/投料状态来自「投料进度表」（数据导入→投料进度表上传）；累计完工=报工数量合计；累计完工率=累计完工÷(累计完工+在产品)；是否用粗纱：纺纱车间工单按BOM/投料/投料进度中是否含 BC- 粗纱判断。分配率口径：制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂）分配率＝车间该费用总额÷车间材料成本总额；工资分配率＝该工单折合数量（完工+0.5×在产品）÷车间折合数量合计。</p>
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>期间</th><th>工单</th><th>类别</th><th>产品编码</th><th>产品名称</th>
-          <th>计划完工时间</th><th>实际完工时间</th><th>完成状态</th>
-          <th class="num">计划数量</th>
-          <th class="num">期初数量</th><th class="num">期初金额</th>
-          <th class="num">本期投料</th><th class="num">投料单价</th><th class="num">累计投料</th><th>投料状态</th>
-          <th class="num">本期完工</th><th class="num">累计完工</th>
-          <th class="num">本期完工率</th><th class="num">累计完工率</th>
-          {% if section.workshop == "tefang" %}<th>是否用粗纱</th>{% endif %}
-          <th class="num">报工数量</th><th class="num">在产品</th><th class="num">折合产量</th>
-          <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
-          <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
-          {% if section.workshop != "tefang" %}<th class="num">天然气</th><th class="num">天然气分配率</th>{% endif %}
-          <th class="num">折旧</th><th class="num">折旧分配率</th>
-          <th class="num">机物料</th><th class="num">机物料分配率</th>
-          <th class="num">染料助剂</th><th class="num">染料助剂分配率</th>
-          <th class="num">工资</th><th class="num">工资分配率</th>
-          <th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">期末在产品数量</th><th class="num">在产品成本</th>
-        </tr></thead>
-        <tbody>
-        {% for item in section.rows %}
-        <tr>
-          <td>{{ period.month|date:"Y-m" }}</td>
-          <td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small></td>
-          <td>{{ item.wo_category }}</td>
-          <td><strong>{{ item.product_code }}</strong></td><td>{{ item.product_name }}</td>
-          <td>{{ item.wo_planned_finish }}</td>
-          <td>{{ item.wo_actual_finish }}</td>
-          <td>{{ item.wo_completion_status }}</td>
-          <td class="num">{{ item.plan_quantity|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.opening_quantity %}{{ item.opening_quantity|floatformat:2|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{% if item.opening_amount %}{{ item.opening_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{{ item.current_issue|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.current_unit_price %}{{ item.current_unit_price|floatformat:4|thousands }}{% else %}—{% endif %}</td>
-          <td class="num">{{ item.accum_issue|floatformat:2|thousands }}</td>
-          <td>{{ item.issue_status }}</td>
-          <td class="num">{{ item.current_finished|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.accum_finished|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.current_finish_rate_pct is not None %}{{ item.current_finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num">{% if item.finish_rate_pct is not None %}{{ item.finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          {% if section.workshop == "tefang" %}<td>{{ item.uses_roving }}</td>{% endif %}
-          <td class="num">{{ item.finished_quantity|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.wip_quantity|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.equivalent_qty|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.direct_material|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.water_power|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_water_power_pct %}{{ item.rate_water_power_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num">{{ item.steam|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_steam_pct %}{{ item.rate_steam_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          {% if section.workshop != "tefang" %}<td class="num">{{ item.natural_gas|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_natural_gas_pct %}{{ item.rate_natural_gas_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>{% endif %}
-          <td class="num">{{ item.depreciation|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_depreciation_pct %}{{ item.rate_depreciation_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num">{{ item.consumables|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_consumables_pct %}{{ item.rate_consumables_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num">{{ item.dye_auxiliary|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_dye_auxiliary_pct %}{{ item.rate_dye_auxiliary_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num">{{ item.wages|floatformat:2|thousands }}</td>
-          <td class="num">{% if item.rate_wages_pct %}{{ item.rate_wages_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
-          <td class="num"><strong>{{ item.total_cost|floatformat:2|thousands }}</strong></td>
-          <td class="num">{{ item.finished_cost|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.finished_unit_cost|floatformat:6|thousands }}</td>
-          <td class="num">{{ item.wip_quantity|floatformat:2|thousands }}</td>
-          <td class="num">{{ item.wip_cost|floatformat:2|thousands }}</td>
-        </tr>
-        {% endfor %}
-        {% if section.subtotal %}
-        <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
-          <td colspan="4"><strong>{{ section.label }}合计（{{ section.subtotal.count }} 张工单）</strong></td>
-          <td></td>
-          <td></td><td></td><td></td>
-          <td class="num"></td>
-          <td class="num"></td><td class="num"></td>
-          <td class="num"></td><td class="num"></td><td class="num"></td><td></td>
-          <td class="num"></td><td class="num"></td>
-          <td class="num"></td><td class="num"></td>
-          {% if section.workshop == "tefang" %}<td></td>{% endif %}
-          <td class="num"></td><td class="num"></td><td class="num"></td>
-          <td class="num">{{ section.subtotal.direct_material|floatformat:2|thousands }}</td>
-          <td class="num">{{ section.subtotal.water_power|floatformat:2|thousands }}</td><td class="num"></td>
-          <td class="num">{{ section.subtotal.steam|floatformat:2|thousands }}</td><td class="num"></td>
-          {% if section.workshop != "tefang" %}<td class="num">{{ section.subtotal.natural_gas|floatformat:2|thousands }}</td><td class="num"></td>{% endif %}
-          <td class="num">{{ section.subtotal.depreciation|floatformat:2|thousands }}</td><td class="num"></td>
-          <td class="num">{{ section.subtotal.consumables|floatformat:2|thousands }}</td><td class="num"></td>
-          <td class="num">{{ section.subtotal.dye_auxiliary|floatformat:2|thousands }}</td><td class="num"></td>
-          <td class="num">{{ section.subtotal.wages|floatformat:2|thousands }}</td><td class="num"></td>
-          <td class="num"><strong>{{ section.subtotal.total_cost|floatformat:2|thousands }}</strong></td>
-          <td class="num">{{ section.subtotal.finished_cost|floatformat:2|thousands }}</td>
-          <td class="num"></td>
-          <td class="num"></td>
-          <td class="num">{{ section.subtotal.wip_cost|floatformat:2|thousands }}</td>
-        </tr>
-        {% endif %}
-        </tbody>
-      </table></div>
-    </section>
-  </div>
-  {% endfor %}
-</section>
-{% else %}
+
 <section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>工单成本明细</h2>
+    </div>
+  </div>
+  {# 期间 / 车间 / 工单编号 筛选 + 筛选 / 清空 + 导出Excel / 打印本表：都在这一排、底对齐 #}
+  <form class="woc-filter-row" method="get">
+    {% if request.GET.product %}<input type="hidden" name="product" value="{{ request.GET.product }}">{% endif %}
+    <label>期间
+      <select name="w_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == w_filter.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="w_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == w_filter.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单编号
+      <input type="text" name="order_no" value="{{ request.GET.order_no|default:'' }}"
+             placeholder="支持部分匹配，如 14.349" autocomplete="off">
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'work_order_costs' period.id %}">清空</a>
+      <a class="button secondary" href="{% url 'export_listing' export_period_id 'work_order_cost' %}?{% if w_filter.workshop %}workshop={{ w_filter.workshop|urlencode }}{% endif %}{% if request.GET.order_no %}{% if w_filter.workshop %}&amp;{% endif %}order_no={{ request.GET.order_no|urlencode }}{% endif %}{% if request.GET.product %}{% if w_filter.workshop or request.GET.order_no %}&amp;{% endif %}product={{ request.GET.product|urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+
+  {% if rows %}
+  <p class="help-text">共 {{ row_count }} 行（{{ period_label }}：开工单与浆粕成品）。金额/数量为 0 或空白的单元格显示 —。</p>
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th title="＝这张单的成本算在哪个月（本次结算的核算期间）">核算期间</th>
+      <th title="＝工单明细上传的「创建时间」（ERP 建单时间）所属月份，即这张单的下单月份">工单期间</th>
+      <th>车间</th><th>工单编号</th><th>类别</th><th>产品编码</th><th>产品名称</th>
+      <th>计划完工时间</th><th>实际完工时间</th><th>完成状态</th>
+      <th class="num">计划数量</th>
+      <th class="num">期初数量</th><th class="num">期初金额</th>
+      <th class="num">本期投料</th><th class="num">投料单价</th><th class="num">累计投料</th><th>投料状态</th>
+      <th class="num" title="＝本月报工数量合计（成本口径的完工数量）">本期完工</th>
+      <th class="num" title="＝「工单明细」上传的入库数量（ERP 跨月累计）；该工单没有工单明细时退回本月报工数量">累计完工</th>
+      <th class="num" title="＝本期完工 ÷ 计划数量 × 100">本期完工率</th>
+      <th class="num" title="＝累计完工 ÷ 计划数量 × 100；完工超过计划按实际显示（不封顶）">累计完工率</th>
+      <th>是否用粗纱</th>
+      <th class="num" title="＝本月报工数量合计（成本口径的完工数量；机织为米）">报工数量</th>
+      <th class="num" title="＝期末在产品数量。机织＝在产纱线的重量（kg）＝期初kg＋投料kg−报工米×米重×(1+损耗率7.5%)；纺纱＝投料kg−完工kg；其它车间＝计划数量−完工数量；米重缺失的机织单退回「计划−完工」（米）">在产品</th>
+      <th class="num" title="折合产量 ＝ 完工部分 ＋ 0.5×在产品（在产品的约当系数 0.5）。机织（有BOM米重）以 kg 计：完工米×米重 ＋ 0.5×在产纱线kg；其它车间用各自数量。用于分摊车间工资：工资分配率＝本工单折合产量÷车间折合产量合计">折合产量</th>
+      <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
+      <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
+      <th class="num">天然气</th><th class="num">天然气分配率</th>
+      <th class="num">折旧</th><th class="num">折旧分配率</th>
+      <th class="num">机物料</th><th class="num">机物料分配率</th>
+      <th class="num">染料助剂</th><th class="num">染料助剂分配率</th>
+      <th class="num">加工费</th><th class="num">加工费分配率</th>
+      <th class="num">工资</th><th class="num">工资分配率</th>
+      <th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">标准单位成本</th><th class="num">单位成本差异</th><th class="num">期末在产品数量</th><th class="num">在产品成本</th>
+    </tr></thead>
+    <tbody>
+    {% for item in rows %}
+    <tr>
+      <td>{{ period_label }}</td>
+      <td>{{ item.order_period_label|default:"—" }}</td>
+      <td>{{ item.work_order.production_dept_code|workshop_label }}</td>
+      <td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small></td>
+      <td>{{ item.wo_category }}</td>
+      <td><strong>{{ item.product_code }}</strong></td><td>{{ item.product_name }}</td>
+      <td>{{ item.wo_planned_finish }}</td>
+      <td>{{ item.wo_actual_finish }}</td>
+      <td>{{ item.wo_completion_status }}</td>
+      <td class="num">{{ item.plan_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.opening_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.opening_amount|dash_num:2 }}</td>
+      <td class="num">{{ item.current_issue|dash_num:2 }}</td>
+      {# 投料单价保留 2 位小数（用户 2026-09-27）；没有投料时按 BOM 表折算 #}
+      <td class="num"{% if item.current_unit_price_from_bom %} title="按 BOM 表折算的每单位料钱：Σ(子项单价 × 子项用量占比)，用量占比＝子项用量÷Σ用量；本例 ＝ {{ item.current_unit_price|floatformat:'-4' }}（本期没有可计价投料、或材料里有按 BOM 反推补投时用这个价）"{% endif %}>{{ item.current_unit_price|dash_num:"-4" }}</td>
+      <td class="num">{{ item.accum_issue|dash_num:2 }}</td>
+      <td>{{ item.issue_status }}</td>
+      <td class="num">{{ item.current_finished|dash_num:2 }}</td>
+      <td class="num">{{ item.accum_finished|dash_num:2 }}</td>
+      <td class="num">{% if item.current_finish_rate_pct %}{{ item.current_finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{% if item.finish_rate_pct %}{{ item.finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td>{{ item.uses_roving }}</td>
+      <td class="num">{{ item.finished_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.equivalent_qty|dash_num:2 }}</td>
+      <td class="num">{{ item.direct_material|dash_num:2 }}</td>
+      <td class="num">{{ item.water_power|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_water_power_pct %}{{ item.rate_water_power_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.steam|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_steam_pct %}{{ item.rate_steam_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.natural_gas|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_natural_gas_pct %}{{ item.rate_natural_gas_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.depreciation|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_depreciation_pct %}{{ item.rate_depreciation_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.consumables|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_consumables_pct %}{{ item.rate_consumables_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.dye_auxiliary|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_dye_auxiliary_pct %}{{ item.rate_dye_auxiliary_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.processing_fee|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_processing_fee_pct %}{{ item.rate_processing_fee_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.wages|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_wages_pct %}{{ item.rate_wages_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num"><strong>{{ item.total_cost|dash_num:2 }}</strong></td>
+      <td class="num">{{ item.finished_cost|dash_num:2 }}</td>
+      <td class="num">{{ item.finished_unit_cost|dash_num:2 }}</td>
+      <td class="num">{{ item.standard_unit_cost|dash_num:2 }}</td>
+      <td class="num {{ item.unit_cost_diff_class }}">{{ item.unit_cost_diff_pct|dash_pct:2 }}</td>
+      <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.wip_cost|dash_num:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
+      <td colspan="5"><strong>合计（{{ subtotal.count }} 行）</strong></td>
+      <td></td>
+      <td></td><td></td><td></td>
+      <td class="num"></td>
+      <td class="num"></td><td class="num"></td>
+      <td class="num"></td><td class="num"></td><td class="num"></td><td></td>
+      <td class="num"></td><td class="num"></td>
+      <td class="num"></td><td class="num"></td>
+      <td></td>
+      <td class="num"></td><td class="num"></td><td class="num"></td>
+      <td class="num">{{ subtotal.direct_material|dash_num:2 }}</td>
+      <td class="num">{{ subtotal.water_power|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.steam|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.natural_gas|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.depreciation|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.consumables|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.dye_auxiliary|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.processing_fee|dash_num:2 }}</td><td class="num"></td>
+      <td class="num">{{ subtotal.wages|dash_num:2 }}</td><td class="num"></td>
+      <td class="num"><strong>{{ subtotal.total_cost|dash_num:2 }}</strong></td>
+      <td class="num">{{ subtotal.finished_cost|dash_num:2 }}</td>
+      <td class="num"></td>
+      <td class="num">{{ subtotal.standard_unit_cost|dash_num:2 }}</td>
+      <td class="num {{ subtotal.unit_cost_diff_class }}">{{ subtotal.unit_cost_diff_pct|dash_pct:2 }}</td>
+      <td class="num"></td>
+      <td class="num">{{ subtotal.wip_cost|dash_num:2 }}</td>
+    </tr>
+    </tbody>
+  </table></div>
+  {% else %}
   <p class="empty-cell">暂无工单成本数据：请先上传生产工单/投料/报工并执行结算，或调整筛选条件。</p>
+  {% endif %}
+
+  {# 口径说明：表格左下角 #}
+  <p class="woc-basis">
+    <strong>口径说明：</strong>
+    <span>① <b>本期完工</b>＝本月报工数量合计；<b>累计完工</b>＝「工单明细」的<b>入库数量</b>（ERP 跨月累计，该工单没有工单明细时退回本月报工）；<b>本期完工率 ＝ 本期完工 ÷ 计划数量</b>、<b>累计完工率 ＝ 累计完工 ÷ 计划数量</b>（×100，完工超过计划按实际显示、不封顶；计划数量为 0 显示 —）——与「视同完工」判定用的是同一口径。累计投料、投料状态来自「投料进度表」（数据导入 → 投料进度表上传）。</span>
+    <span>② 是否用粗纱：<b>BOM 子项 100% 都是粗纱（BC-）</b>才显示「是」（这类单没有在产品）；混料单（粗纱＋其它料）与不含粗纱的单都显示「否」；所有车间都显示，浆粕没有工单显示「—」。</span>
+    <span>③ 分配率：制造费用（水电/蒸汽/天然气/折旧/机物料/染料助剂/加工费）分配率＝车间该费用总额÷车间材料成本总额；工资分配率＝该工单折合产量÷车间折合产量合计；加工费不是每月都有，填了才参与分配。<br>
+      <b>折合产量</b>＝完工部分＋<b>0.5</b>×在产品（0.5＝在产品的约当完工系数）——<b>机织（有 BOM 米重）以 kg 计</b>（完工米×米重＋0.5×在产纱线kg），其它车间用各自数量（件/kg/米）；它只用来分摊工资，<b>材料和制造费用不按折合产量拆</b>。<br>
+      <b>在产品数量</b>：机织＝<b>在产纱线的重量（kg）</b>＝期初kg＋投料kg−报工米×米重×(1+损耗率7.5%)；纺纱＝投料kg−完工kg；其它车间（染色/包覆/针织）＝计划数量−完工数量；没有 BOM 米重的机织单退回「计划−完工」（米）。机织的材料拆分＝<b>完工耗料kg ÷（完工耗料kg＋在产品kg）</b>，即完工只承担"报工该用的料"、余额留在产品。</span>
+    <span>④ 单位成本＝完工成本÷完工数量（完工数量为 0 显示 —），保留两位小数；完工成本＝完工部分材料＋制造费用＋工资，在产品成本＝总成本−完工成本。</span>
+    <span>⑤ 浆粕车间没有工单：一行＝一个浆粕成品，数据来自上传的浆粕流水（材料＝原料领料、费用与工资按产量分摊，在产品为 0）。</span>
+    <span>⑥ 金额、数量为 0 或空白的单元格显示 —（含 0.00）；合计行只汇总金额，不汇总比率。</span>
+    <span>⑦ 标准单位成本 ＝ BOM「标准成品单价」（Σ(子项用量×子项单价)，结算后自动回填）×（1 ＋ 车间人工费用占比 ＋ 车间制造费用占比）；占比取上一个完整半年各月占比的平均数，在「标准成本」页「标准成本构成表」可见（基期无数据的车间沿用本页参数）。<b>单位成本差异</b> ＝ （实际单位成本 − 标准单位成本）÷ 标准单位成本，按<b>百分比保留两位小数</b>显示，正数（红）为实际超支、负数（绿）为低于标准。工单算不出标准成品单价（BOM 子项原料当月没有月末加权价）时这两列显示 —。</span>
+    <span>⑧ 合计行的标准单位成本、单位成本差异按「算得出标准成本」的工单的完工数量加权（实际侧同口径取完工成本÷完工数量）。</span>
+  </p>
 </section>
-{% endif %}
 {% endblock %}

@@ -26,6 +26,9 @@ from settlement.services.profit_statement import (
     BASIS_CHOICES,
     BASIS_INVOICE,
     BASIS_OUT,
+    HEADERS,
+    ROW_KEYS,
+    UNINVOICED_LABEL,
     build_profit_statement,
     build_profit_statement_sheet,
     build_summary,
@@ -35,10 +38,11 @@ from settlement.services.profit_statement import (
     ledger_months,
     month_label,
     row_totals,
-    UNINVOICED_LABEL,
+    row_values,
     summary_category_options,
     summary_channel_options,
     summary_period_options,
+    summary_row_values,
 )
 
 PAGE_SIZE = 200
@@ -83,23 +87,62 @@ def _field_name(month, field):
 
 
 def _month_forms(months):
-    """把服务返回的按月信息整理成模板直接可渲染的字段列表。"""
+    """把服务返回的按月信息整理成模板直接可渲染的字段列表。
+
+    另外算好每行「合计」（用户 2026-09-28）：该月 7 项费用之和。
+    """
     forms = []
     for item in months:
+        fields = []
+        row_total = Decimal("0")
+        for field, label in ALLOCATION_FIELDS:
+            value = item["values"].get(field, Decimal("0"))
+            row_total += value
+            fields.append(
+                {
+                    "name": _field_name(item["month"], field),
+                    "label": label,
+                    "value": value,
+                }
+            )
         forms.append(
             {
                 **item,
-                "fields": [
-                    {
-                        "name": _field_name(item["month"], field),
-                        "label": label,
-                        "value": item["values"].get(field, Decimal("0")),
-                    }
-                    for field, label in ALLOCATION_FIELDS
-                ],
+                "fields": fields,
+                "total": row_total.quantize(Decimal("0.01")),
             }
         )
     return forms
+
+
+def _month_totals(forms):
+    """「按月费用录入」表的合计行（用户 2026-09-28）：7 项费用纵向合计 + 收入/行数合计。"""
+    totals = []
+    for index, (field, label) in enumerate(ALLOCATION_FIELDS):
+        # 注意：不能用 `value or Decimal("0")` —— Decimal("0.00") 为假值，会丢掉小数位
+        value = Decimal("0")
+        for item in forms:
+            raw = item["fields"][index]["value"]
+            if raw is not None:
+                value += raw
+        totals.append(
+            {"field": field, "label": label, "value": value.quantize(Decimal("0.01"))}
+        )
+    revenue = Decimal("0")
+    for item in forms:
+        if item.get("revenue") is not None:
+            revenue += item["revenue"]
+    grand = Decimal("0")
+    for item in forms:
+        if item.get("total") is not None:
+            grand += item["total"]
+    return {
+        "fields": totals,
+        "revenue": revenue.quantize(Decimal("0.01")),
+        "row_count": sum((item.get("row_count") or 0 for item in forms), 0),
+        "month_count": len(forms),
+        "grand": grand.quantize(Decimal("0.01")),
+    }
 
 
 def _normalise_selection(options, selected):
@@ -239,9 +282,11 @@ def profit_statement_view(request, period_id):
     period = get_object_or_404(AccountingPeriod, pk=period_id)
     months = ledger_months(period)
 
-    basis = request.POST.get("basis") or request.GET.get("basis") or BASIS_OUT
+    # 用户 2026-09-28：汇总表去掉「按出库期间」这个切换入口，统一按【开票期间】归月
+    # （与用户上传的销售台账口径一致）。仍兼容显式传 basis=out（老链接/导出），但页面不再提供切换按钮。
+    basis = request.POST.get("basis") or request.GET.get("basis") or BASIS_INVOICE
     if basis not in BASIS_VALUES:
-        basis = BASIS_OUT
+        basis = BASIS_INVOICE
     querystring = _filter_query(request)
     back_url = f"{request.path}?{querystring}" if querystring else request.path
 
@@ -346,10 +391,24 @@ def profit_statement_view(request, period_id):
     detail_hidden_inputs = summary_params
     summary_hidden_inputs = detail_params
 
+    # 「损益明细表」筛选行右上角的「导出Excel」（用户 2026-09-28）：
+    # 导出=当前筛选条件看到的这张明细表（筛选口径与页面完全一致）。
+    detail_export_query = urlencode([pair for pair in detail_params if pair[1]])
+
     page = Paginator(detail["rows"], PAGE_SIZE).get_page(request.GET.get("page"))
     page.querystring = urlencode(
         [pair for pair in (summary_params + detail_params) if pair[1] != ""]
     )
+
+    # 「损益汇总表」右上角的「导出Excel」（用户 2026-09-28）：导出=当前筛选条件看到的这张汇总表
+    summary_export_query = urlencode(
+        [("m", value) for value in selected_periods]
+        + [("ch", value) for value in selected_channels]
+        + [("cat", value) for value in selected_categories]
+    )
+
+    # 「按月费用录入」表的合计行（用户 2026-09-28）：7 项费用纵向合计
+    month_forms = _month_forms(data["months"])
 
     return render(
         request,
@@ -358,6 +417,8 @@ def profit_statement_view(request, period_id):
             "period": period,
             "data": data,
             "summary": summary,
+            "summary_export_query": summary_export_query,
+            "detail_export_query": detail_export_query,
             "period_options": period_options,
             "detail": detail,
             "detail_page": page,
@@ -371,13 +432,88 @@ def profit_statement_view(request, period_id):
             "selected_channels": selected_channels,
             "selected_categories": selected_categories,
             "basis_links": basis_links,
-            "months": _month_forms(data["months"]),
+            "months": month_forms,
+            "months_total": _month_totals(month_forms),
             "basis": basis,
             "basis_choices": BASIS_CHOICES,
             "basis_values": BASIS_VALUES,
             "page": page,
         },
     )
+
+
+@login_required
+def profit_summary_export(request, period_id):
+    """导出「损益汇总表」（导出 = 当前筛选条件看到的这张汇总表）。
+
+    用户 2026-09-28：在损益汇总表的筛选行加一个「导出Excel」，与 期间 / 销售渠道 /
+    销售大类 三个筛选对齐；导出的就是这三个筛选当前条件下的那张汇总表。
+    归月口径固定按【开票期间】（与页面一致）。
+    """
+    period = get_object_or_404(AccountingPeriod, pk=period_id)
+    data = build_profit_statement(period)
+    basis = BASIS_INVOICE
+
+    period_options = summary_period_options(data["rows"], basis)
+    channel_options = summary_channel_options(data["rows"])
+    category_options = summary_category_options(data["rows"])
+    selected_periods = _normalise_selection(period_options, request.GET.getlist("m"))
+    selected_channels = _normalise_selection(channel_options, request.GET.getlist("ch"))
+    selected_categories = _normalise_selection(
+        category_options, request.GET.getlist("cat")
+    )
+
+    summary = build_summary(
+        filter_summary_rows(
+            data["rows"], basis, selected_periods, selected_channels, selected_categories
+        ),
+        basis,
+        has_filter=bool(selected_periods or selected_channels or selected_categories),
+    )
+    sheets = [
+        (
+            "损益汇总表",
+            list(summary["headers"]),
+            [summary_row_values(row) for row in summary["rows"]],
+        )
+    ]
+    stream = build_listing_workbook(sheets)
+    filename = f"损益汇总表-{period.month:%Y%m}.xlsx"
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return response
+
+
+@login_required
+def profit_detail_export(request, period_id):
+    """导出「损益明细表」（导出 = 当前筛选条件看到的这张明细表）。
+
+    用户 2026-09-28：明细表筛选行加「导出Excel」，与 出库期间 / 开票期间 / 客户名称 /
+    销售大类 / 产品编码 等字段同一行、底部对齐。筛选口径与页面完全一致（复用 _detail_filter），
+    导出内容是筛选后的逐行损益明细 + 合计行。
+    """
+    period = get_object_or_404(AccountingPeriod, pk=period_id)
+    data = build_profit_statement(period)
+    detail = _detail_filter(request, data, period)
+
+    totals = {key: "" for key in ROW_KEYS}
+    totals.update(detail["totals"])
+    totals["seq"] = "合计"
+    rows = [row_values(row) for row in detail["rows"]]
+    rows.append(row_values(totals))
+
+    sheets = [("损益明细表", list(HEADERS), rows)]
+    stream = build_listing_workbook(sheets)
+    filename = f"损益明细表-{period.month:%Y%m}.xlsx"
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return response
 
 
 @login_required

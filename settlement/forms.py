@@ -23,7 +23,12 @@ class PeriodForm(forms.ModelForm):
 
 
 class UploadForm(forms.Form):
-    kind = forms.ChoiceField(label="资料类型", choices=[c for c in ImportBatch.Kind.choices if c[0] not in ("pulp_flow", "pulp_material")])
+    # 用户 2026-09-30：「车间费用」不再上传（改在平台「车间费用」页录入）→ 从上传下拉里去掉；
+    # 模型里的 kind 保留，因为页面录入的数据仍然用这个 kind 存批次记录。
+    kind = forms.ChoiceField(label="资料类型", choices=[
+        c for c in ImportBatch.Kind.choices
+        if c[0] not in ("pulp_flow", "pulp_material", "workshop_cost")
+    ])
     file = forms.FileField(
         label="选择文件",
         help_text="支持CSV、XLSX和XLSM；同一文件不会重复导入。",

@@ -92,6 +92,11 @@ if os.getenv("DB_ENGINE", "postgres") == "sqlite":
             "NAME": BASE_DIR / "db.sqlite3",
             # 本地 sqlite 加固：车间结转是分钟级的长写事务，默认配置下会被页面轮询
             # 顶成 "database is locked"。这里让写事务排队等待、并开启 WAL 读写不互斥。
+            # ⚠ 2026-09-30 补：WAL 模式下页缓存默认只有 2MB，长事务里要"换出脏页"时会去开
+            #   临时文件，本机环境拒绝 → 报 `OperationalError: unable to open database file`
+            #   （实测同一句 bulk_update：2MB 缓存必失败、cache_size=64MB 必成功；
+            #     journal_mode=DELETE 也能过但会丢掉 WAL 的读写并发，故不采用）。
+            #   本库才 14MB，给 128MB 缓存后整库都能常驻内存，长事务不再换页。
             "OPTIONS": {
                 "timeout": 120,
                 "transaction_mode": "IMMEDIATE",
@@ -99,6 +104,7 @@ if os.getenv("DB_ENGINE", "postgres") == "sqlite":
                     "PRAGMA journal_mode=WAL;"
                     "PRAGMA synchronous=NORMAL;"
                     "PRAGMA busy_timeout=120000;"
+                    "PRAGMA cache_size=-131072;"
                 ),
             },
         }

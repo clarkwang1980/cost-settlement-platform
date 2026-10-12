@@ -31,18 +31,13 @@
   </div>
   <div class="period-grid">
     {% for item in periods %}
+      
       <a class="period-card" href="{% url 'period_detail' item.id %}">
         <div>
           <span class="status status-{{ item.status }}">{{ item.get_status_display }}</span>
           <h3>{{ item }}</h3>
         </div>
-        <dl>
-          <dt>导入批次</dt><dd>{{ item.import_batches.count }}</dd>
-          <dt>库存流水</dt><dd>{{ item.inventory_transactions.count }}</dd>
-          <dt>生产工单</dt><dd>{{ item.work_orders.count }}</dd>
-        </dl>
         <span class="card-link">进入月结 →</span>
-        <span class="card-link" style="color:#4a7ca8;" onclick="event.preventDefault();event.stopPropagation();location.href='{% url 'purchase_summary' item.id %}';">采购暂估汇总 →</span>
       </a>
     {% empty %}
       <div class="empty-state">

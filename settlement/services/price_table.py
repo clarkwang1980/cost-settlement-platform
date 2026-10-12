@@ -61,7 +61,32 @@ def _price(amount, quantity):
     return (Decimal(amount or ZERO) / qty).quantize(Decimal("0.00000001"))
 
 
-def build_price_matrix(period):
+def internal_transfer_qty(periods):
+    """内部流转（调拨/库存调整/库存转换/报工调整）的入库/出库数量：{(月份, 编码): (in, out)}。
+
+    用户 2026-09-30：这些行**算期末数量**（它们是真实的数量移动），但**不算成本**（没有金额），
+    所以计算「入库单价＝入库金额÷入库数量」时必须把它们从分母里扣掉，否则单价被摊薄。
+    """
+    from collections import defaultdict
+
+    from settlement.services.costing import is_internal_transfer
+
+    result = defaultdict(lambda: [ZERO, ZERO])
+    for period in periods:
+        month = period.month.month
+        for txn in period.inventory_transactions.all():
+            if not is_internal_transfer(txn):
+                continue
+            qty = abs(Decimal(txn.quantity or ZERO))
+            slot = result[(month, txn.material_code)]
+            if txn.direction == "in":
+                slot[0] += qty
+            else:
+                slot[1] += qty
+    return result
+
+
+def build_price_matrix(period, months=None, code_filter=""):
     """按年度汇总各物料的月度入库/出库单价。
 
     返回 dict(year=, inbound=[row], outbound=[row])，
@@ -78,6 +103,9 @@ def build_price_matrix(period):
     year = period.month.year
     periods = list(AccountingPeriod.objects.filter(month__year=year))
     month_to_period = {p.month.month: p for p in periods}
+    wanted_months = sorted(months) if months else list(range(1, 13))
+    wanted_months = [m for m in wanted_months if m in month_to_period] or sorted(month_to_period)
+    internal_qty = internal_transfer_qty(periods)
 
     valuations = {}  # (月份, 编码) -> InventoryValuation
     historical = {}  # (月份, 编码) -> HistoricalPrice
@@ -109,25 +137,29 @@ def build_price_matrix(period):
 
     codes = {code for (_month, code) in valuations}
     codes |= {code for (_month, code) in historical}
+    if code_filter:
+        needle = code_filter.strip().lower()
+        codes = {code for code in codes if needle in code.lower()}
 
     inbound_rows = []
     outbound_rows = []
     for code in codes:
         in_prices = {}
         out_prices = {}
-        for month in range(1, 13):
-            if month not in month_to_period:
-                continue
+        for month in wanted_months:
             v = valuations.get((month, code))
             hp = historical.get((month, code))
             in_price = None
             out_price = None
             # 只填「当月确有入库/出库」的月份（按你的口径：有进出的才补到对应月份）
             if v is not None:
-                if Decimal(v.receipt_quantity or ZERO) > ZERO:
-                    in_price = _price(v.receipt_amount, v.receipt_quantity)
-                if Decimal(v.issue_quantity or ZERO) > ZERO:
-                    out_price = _price(v.issue_amount, v.issue_quantity)
+                in_qty_internal, out_qty_internal = internal_qty.get((month, code), [ZERO, ZERO])
+                in_qty = Decimal(v.receipt_quantity or ZERO) - Decimal(in_qty_internal)
+                out_qty = Decimal(v.issue_quantity or ZERO) - Decimal(out_qty_internal)
+                if in_qty > ZERO:
+                    in_price = _price(v.receipt_amount, in_qty)
+                if out_qty > ZERO:
+                    out_price = _price(v.issue_amount, out_qty)
             # 该月有进出的，若上传过历史单价则以上传价为准（与单价表页面口径一致）
             if hp is not None:
                 if in_price is not None and hp.receipt_price is not None:
@@ -177,11 +209,13 @@ def _write_sheet(
     rows,
     *,
     number_format: str = "#,##0.0000",
+    months=None,
 ):
     """写一个工作表：标题行 + 表头行 + 数据行。"""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-    headers = BASE_HEADERS + month_headers(year)
+    months = sorted(months) if months else list(range(1, 13))
+    headers = BASE_HEADERS + [MONTH_HEADER_FMT.format(year=year, month=m) for m in months]
     ws.append([title])
     ws.merge_cells(
         start_row=1, start_column=1, end_row=1, end_column=len(headers)
@@ -201,7 +235,7 @@ def _write_sheet(
 
     for row in rows:
         line = [row["seq"], row["category"], row["code"], row["name"]]
-        line += [row["prices"].get(month) for month in range(1, 13)]
+        line += [row["prices"].get(month) for month in months]
         ws.append(line)
         current = ws.max_row
         for col in range(1, len(headers) + 1):
@@ -223,22 +257,27 @@ def _write_sheet(
     ws.freeze_panes = ws.cell(3, len(BASE_HEADERS) + 1).coordinate
 
 
-def build_price_table_workbook(period):
-    """生成单价表工作簿（两个工作表：入库单价 / 出库单价）。"""
+def build_price_table_workbook(period, n=None, months=None, code_filter=""):
+    """生成单价表工作簿（两个工作表：入库单价 / 出库单价）。
+
+    用户 2026-09-30：只输出**所选期间**的月份列（默认页面筛出来的那几期），
+    并支持按物料编码筛选 —— 否则永远 1~12 月、11 列空着，表看着特别大。
+    """
     from io import BytesIO
 
     from openpyxl import Workbook
 
-    data = build_price_matrix(period)
+    data = build_price_matrix(period, months=months, code_filter=code_filter)
     year = data["year"]
+    used_months = sorted({m for row in (data["inbound"] + data["outbound"]) for m in row["prices"]}) or (sorted(months) if months else list(range(1, 13)))
 
     wb = Workbook()
     ws_in = wb.active
     ws_in.title = SHEET_INBOUND
-    _write_sheet(ws_in, f"入库单价表（{year}年）", year, data["inbound"])
+    _write_sheet(ws_in, f"入库单价表（{year}年）", year, data["inbound"], months=used_months)
 
     ws_out = wb.create_sheet(SHEET_OUTBOUND)
-    _write_sheet(ws_out, f"出库单价表（{year}年）", year, data["outbound"])
+    _write_sheet(ws_out, f"出库单价表（{year}年）", year, data["outbound"], months=used_months)
 
     stream = BytesIO()
     wb.save(stream)

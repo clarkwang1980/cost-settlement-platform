@@ -6,137 +6,164 @@
   <div>
     <p class="eyebrow">MONTH-END GOODS ISSUED</p>
     <h1>月末已出库未开票</h1>
-    <p>截至{{ period }}月末仍未开票的销售出库，包含以前月份出库；未开票成本按实际匹配数量拆分。</p>
   </div>
-  <div class="heading-actions">
-    <a class="button secondary" href="{% url 'export_listing' period.id 'sales_uninvoiced' %}?{{ request.GET.urlencode }}">导出Excel</a>
-    <a class="button secondary" href="{% url 'sales_matches' period.id %}">销售核销核对</a>
-    <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
-    <a class="button secondary" href="{% url 'sales_cost_voucher' period.id %}">销售结转成本凭证</a>
-  </div>
-</section>
-
-<section class="summary-strip six">
-  <article><span>未开票出库笔数</span><strong>{{ summary.issue_count }}</strong></article>
-  <article><span>未开票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>期末发出商品</span><strong>{{ summary.outstanding_cost|floatformat:2|thousands }}</strong></article>
-  <article><span>部分开票</span><strong>{{ summary.partial_count }}</strong></article>
-  <article><span>以前月份出库</span><strong>{{ summary.prior_period_count }}</strong></article>
-  <article><span>缺少出库成本</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
     <div>
       <p class="eyebrow">GOODS ISSUED ROLLFORWARD</p>
-      <h2>发出商品跨月滚动勾稽</h2>
+      <h2>未开票 · 免费样品 · 发出商品跨月滚动勾稽</h2>
     </div>
     <span class="pill {% if rollforward.difference %}danger{% else %}success{% endif %}">差额 {{ rollforward.difference|floatformat:2|thousands }}</span>
   </div>
-  <div class="summary-strip compact">
-    <article><span>期初发出商品</span><strong>{{ rollforward.opening_amount|floatformat:2|thousands }}</strong></article>
-    <article><span>本月销售出库成本</span><strong>{{ rollforward.current_issue_amount|floatformat:2|thousands }}</strong></article>
-    <article><span>本月开票结转成本</span><strong>{{ rollforward.invoice_cleared_amount|floatformat:2|thousands }}</strong></article>
-    <article><span>期末发出商品</span><strong>{{ rollforward.ending_amount|floatformat:2|thousands }}</strong></article>
+  <div class="table-wrap">
+    <table class="check-table">
+      <thead>
+        <tr>
+          <th>项目</th>
+          <th class="num">笔数</th>
+          <th class="num">数量</th>
+          <th class="num">金额</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in check_rows %}
+        <tr{% if row.level == 'total' %} class="check-total"{% elif row.level == 'group' %} class="check-group"{% endif %}>
+          <td>{% if row.level == 'item' %}&nbsp;&nbsp;&nbsp;{{ row.label }}{% else %}<strong>{{ row.label }}</strong>{% endif %}</td>
+          <td class="num">{% if row.count is not None %}{{ row.count }}{% else %}—{% endif %}</td>
+          <td class="num">{% if row.quantity is not None %}{{ row.quantity|floatformat:3|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if row.amount is not None %}{{ row.amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="muted-text">{{ row.note }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
-  <p class="help-text">期初发出商品＋本月销售出库成本－本月开票结转成本＝期末发出商品。样品出库和批准忽略的出库不进入本表。</p>
+  <p class="help-text">期初发出商品 ＋ 本期新增发出商品 － 本期开票结转成本 ＝ 期末发出商品。
+    「本期新增发出商品」只算<strong>本期及以后出库</strong>的未开票行——以前月份出库的那批就是「期初发出商品」，不重复计入。
+    下方明细表仍完整列出月末仍未开票的全部行（含以前月份出库）。</p>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
     <div>
-      <p class="eyebrow">GOODS ISSUED &amp; SALES COST</p>
+      <p class="eyebrow">STATISTICS</p>
       <h2>发出商品及销售成本统计表</h2>
-      <p class="muted-text" style="margin:6px 0 0;">
-        成本口径；「当月期末发出商品未开票成本」= 上月期末 + 当月发货未开票挂发出商品 − 前期发货本期开票结转成本。
-        月份列为当前期间起连续 6 个月，尚未上传台账的月份显示 0。
-      </p>
     </div>
   </div>
+  <p class="help-text">按销售台账的「结转类型」逐月列示：一、本月销售成本（当月发货当月开票结转成本 /
+    前期发货本期开票结转成本 / 本月主营业务成本合计）；二、发出商品逐月结转（上月期末发出商品未开票成本 /
+    当月发货未开票挂发出商品 / 当月期末发出商品未开票成本）；三、其他（免费样品赠送计入销售费用）。</p>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th style="min-width:64px;">序号</th>
-          <th style="min-width:260px;">项目分类</th>
-          {% for label in statistics.month_headers %}<th class="num">{{ label }}</th>{% endfor %}
+          <th>序号</th><th>项目分类</th>
+          {% for header in statistics.month_headers %}<th class="num">{{ header }}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
-        {% for row in statistics.rows %}
-          {% if row.level == 'group' %}
-          <tr style="background:#F2F6FA;font-weight:700;">
-            <td></td>
-            <td>{{ row.label }}</td>
-            {% for label in statistics.month_headers %}<td></td>{% endfor %}
-          </tr>
+      {% for row in statistics.rows %}
+        <tr{% if row.level == 'total' %} style="background:#D9EAF7;font-weight:700;color:#1F4E78;"{% elif row.level == 'subtotal' %} style="background:#f5f8fa;font-weight:700;"{% endif %}>
+          <td>{{ forloop.counter }}</td>
+          <td>{% if row.level == 'item' %}&nbsp;&nbsp;&nbsp;{{ row.label }}{% else %}{{ row.label }}{% endif %}</td>
+          {% if row.cells %}
+            {% for cell in row.cells %}<td class="num">{{ cell|floatformat:2|thousands }}</td>{% endfor %}
           {% else %}
-          <tr{% if row.is_total %} style="font-weight:700;background:#FBFCFD;"{% endif %}>
-            <td class="muted-text"></td>
-            <td{% if not row.is_total %} style="padding-left:22px;"{% endif %}>{{ row.label }}</td>
-            {% for cell in row.cells %}
-            <td class="num">{{ cell|floatformat:2|thousands }}</td>
-            {% endfor %}
-          </tr>
+            <td colspan="{{ statistics.month_headers|length }}"></td>
           {% endif %}
-        {% endfor %}
+        </tr>
+      {% empty %}
+        <tr><td colspan="{{ statistics.month_headers|length|add:2 }}" class="empty-cell">暂无数据。</td></tr>
+      {% endfor %}
       </tbody>
     </table>
   </div>
-  <p class="muted-text">
-    说明：一、本月销售成本 = 当月发货当月开票结转成本 + 前期发货本期开票结转成本；
-    二、发出商品逐月结转展示月末未开票成本的滚动过程；三、其他为免费样品赠送（计入销售费用）。
-  </p>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
-    <h2>截至月末仍未开票的销售出库明细</h2>
-    <span class="pill warning">发出商品明细</span>
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>截至月末仍未开票的销售出库明细（销售台账口径）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        共 {{ detail_total.issue_count }} 笔{% if detail_filter.active %}（已按下方筛选条件过滤）{% else %}（本期全部未开票行）{% endif %}。
+      </p>
+    </div>
+  </div>
+  {# 筛选（期间 / 客户）：只影响本表与「导出Excel」，与导出用同一个筛选函数 #}
+  <div class="filter-card purchase-filter">
+    <form class="filter-grid" method="get">
+      <label>期间
+        {# 选完期间立即提交（与其它页面同款） #}
+        <select name="issue_month" onchange="this.form.submit()">
+          <option value="">全部期间</option>
+          {% for item in period_options %}<option value="{{ item.value }}" {% if detail_filter.issue_month == item.value %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>客户<input name="customer" value="{{ detail_filter.customer }}" placeholder="客户名称关键字"></label>
+      {# 按钮组靠左，与「期间 / 客户」筛选字段对齐（用户 2026-09-27） #}
+      <div class="filter-actions align-start">
+        <button class="button secondary" type="submit">筛选</button>
+        <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">清空</a>
+        <a class="button secondary" href="{% url 'export_listing' period.id 'sales_uninvoiced' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+        <div class="print-here"></div>
+      </div>
+    </form>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>出库月份</th><th>出库日期</th><th>出库单号</th><th>销售订单</th><th>客户</th><th>销售大类</th><th>产品编码</th><th>产品名称</th>
-          <th class="num">出库数量</th><th class="num">累计开票</th><th class="num">未开票数量</th>
-          <th class="num">出库单价</th><th class="num">出库成本</th><th class="num">已开票成本</th><th class="num">未开票成本</th>
-          <th>匹配发票</th><th>未开票天数</th><th>状态</th>
+          <th>出库期间</th><th>销售订单号</th><th>客户</th><th>销售渠道</th><th>销售公司</th>
+          <th>销售大类</th><th>产品编码</th><th>产品名称</th><th>规格型号</th><th>单位</th>
+          <th class="num">数量</th><th class="num">成本单价</th><th class="num">销售成本</th>
+          <th class="num">未开票天数</th><th>是否以前月份</th>
         </tr>
       </thead>
       <tbody>
       {% for row in page %}
         <tr>
-          <td><strong>{{ row.issue_month|date:"Y-m" }}</strong></td>
-          <td>{{ row.document_date }}</td>
-          <td>
-            {% if row.transaction %}
-              <a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong><small>流水ID {{ row.transaction.id }}</small></a>
-            {% else %}
-              <strong>{{ row.document_no|default:"—" }}</strong><small>期初发出商品台账</small>
-            {% endif %}
-          </td>
-          <td>{{ row.sales_order_no|default:"—" }}</td>
-          <td>{{ row.customer_name|default:row.customer_code|default:"—" }}</td>
+          <td>{{ row.out_month|date:"Y-m" }}</td>
+          <td>{{ row.order_no|default:"—" }}</td>
+          <td>{{ row.customer_name|default:"—" }}</td>
+          <td>{{ row.channel|default:"—" }}</td>
+          <td>{{ row.company|default:"—" }}</td>
           <td>{{ row.sales_category|default:"—" }}</td>
-          <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
-          <td class="num">{{ row.issue_quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
-          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
-          <td class="num">{{ row.issue_unit_price|floatformat:4|thousands|default:"—" }}</td>
-          <td class="num">{{ row.issue_amount|floatformat:2|thousands|default:"—" }}</td>
-          <td class="num">{{ row.invoiced_cost|floatformat:2|thousands|default:"—" }}</td>
-          <td class="num"><strong>{{ row.outstanding_cost|floatformat:2|thousands|default:"—" }}</strong></td>
-          <td>{{ row.invoice_nos|default:"—" }}{% if row.latest_invoice_period %}<small>最近 {{ row.latest_invoice_period|date:"Y-m" }}</small>{% endif %}</td>
-          <td>{{ row.outstanding_days }}天</td>
-          <td><span class="pill {% if row.status == '缺少出库成本' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td>{{ row.specification|default:"—" }}</td>
+          <td>{{ row.uom|default:"—" }}</td>
+          <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td class="num">{% if row.unit_cost is not None %}{{ row.unit_cost|floatformat:4|thousands }}{% else %}<span class="no-price">未填成本</span>{% endif %}</td>
+          <td class="num">{{ row.cost_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.outstanding_days }}</td>
+          <td>{% if row.prior_period %}是{% else %}否{% endif %}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="18" class="empty-cell">截至本月末没有已出库未开票记录。</td></tr>
+        <tr><td colspan="15" class="empty-cell">本期销售台账里没有「当月发货未开票挂发出商品」的行。</td></tr>
       {% endfor %}
       </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="10"><strong>合计（{{ detail_total.issue_count }} 行）</strong></td>
+          <td class="num"><strong>{{ detail_total.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td></td>
+          <td class="num"><strong>{{ detail_total.outstanding_cost|floatformat:2|thousands }}</strong></td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
     </table>
   </div>
   {% include "settlement/_pagination.html" %}
 </section>
+
+<style>
+  /* 勾稽表：分节标题行淡底、合计行加粗加底色（与其它汇总表一致） */
+  .check-table .check-group td { background: #f5f8fa; }
+  .check-table .check-total td { background: #d9eaf7; font-weight: 700; color: #1f4e78; }
+  .check-table td.muted-text { font-size: 12px; }
+</style>
 {% endblock %}

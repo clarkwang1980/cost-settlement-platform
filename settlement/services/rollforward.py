@@ -253,7 +253,10 @@ def _carry_wip_and_orders(period, previous):
 
 def _carry_contracts(period, previous):
     prior_contracts = list(
-        previous.purchase_contracts.filter(remaining_quantity__gt=ZERO)
+        previous.purchase_contracts.filter(remaining_quantity__gt=ZERO).exclude(
+            # 忽略匹配的合同不往后续期间承接（否则每月都会把它带出来）
+            match_mode=MatchingMode.IGNORED
+        )
     )
     active_source_ids = set()
     for source in prior_contracts:
@@ -274,6 +277,13 @@ def _carry_contracts(period, previous):
                 "quantity": quantity,
                 "remaining_quantity": quantity,
                 "unit_price_excl_tax": source.unit_price_excl_tax,
+                # 用户 2026-09-19：暂估归属按合同的「收货期间」，这两个字段必须跟着承接 ——
+                # 匹配时用的是**本期这一行**（`_candidate_contracts` 只看 period.purchase_contracts），
+                # 不承接的话副本的收货期间为空 → 规则在承接后的月份失效、回落成入库流水月份。
+                "receipt_period": source.receipt_period,
+                "received_quantity": source.received_quantity,
+                "invoice_date": source.invoice_date,
+                "amount_excl_tax": source.amount_excl_tax,
             },
         )
     period.purchase_contracts.filter(is_system_generated=True).exclude(
@@ -369,11 +379,7 @@ def invalidate_downstream_periods(source_period: AccountingPeriod):
         period.last_run_at = None
         period.save(update_fields=["status", "last_run_at"])
     if later_periods:
-        from settlement.services.matching import (
-            refresh_purchase_invoice_metadata,
-            refresh_sales_invoice_metadata,
-        )
+        from settlement.services.matching import refresh_purchase_invoice_metadata
 
         refresh_purchase_invoice_metadata(source_period)
-        refresh_sales_invoice_metadata(source_period)
     return len(later_periods)

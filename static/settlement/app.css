@@ -15,6 +15,8 @@
   --warning: #9a6a16;
   --warning-soft: #fff3d9;
   --shadow: 0 12px 36px rgba(25, 46, 61, .08);
+  /* 顶部品牌条高度：导航条紧贴在它下面，表格容器的可视高度上限也要减掉它 */
+  --topbar-h: 72px;
 }
 
 * { box-sizing: border-box; }
@@ -24,7 +26,13 @@ a { color: inherit; text-decoration: none; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 
-.topbar { height: 72px; padding: 0 4vw; display: flex; align-items: center; justify-content: space-between; color: #fff; background: var(--navy); }
+/* 顶部品牌条（「月度成本结算平台」那一小块）：和下面的期间导航一样**永远固定在窗口顶部**，
+   向下滚动时不消失，导航条紧贴在它正下方。高度用 --topbar-h，导航的 top 与表格高度上限都引用它。 */
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  height: var(--topbar-h); padding: 0 4vw; display: flex; align-items: center;
+  justify-content: space-between; color: #fff; background: var(--navy);
+}
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand strong, .brand small { display: block; }
 .brand small { margin-top: 3px; color: #a8bfce; font-size: 12px; }
@@ -36,10 +44,86 @@ button { cursor: pointer; }
 .link-button { border: 0; background: transparent; }
 .user-name { color: #fff; font-weight: 600; }
 
-.period-nav { padding: 12px 4vw; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid var(--line); }
-.period-nav-title { display: flex; gap: 10px; align-items: center; font-weight: 700; white-space: nowrap; }
-.period-links { display: flex; gap: 18px; overflow-x: auto; font-size: 14px; color: #45535f; }
-.period-links a:hover { color: var(--blue); }
+/* 期间导航：按"月结流程"分 4 组（组顺序=操作顺序），**每组独占一行，共 4 行**。
+   这 4 行**始终固定在窗口顶部**（position: sticky），向下滚动不会收窄、不会消失，
+   任何时候都能直接切页面；组内按钮不压缩、不折行。
+   4 个组名长短不一，用固定标签列 + 等宽按钮把它们对齐成一列一列，看起来整齐。 */
+.period-nav {
+  /* 顶部品牌条也固定了（见 .topbar），所以这里让出它的高度，贴在它正下方 */
+  position: sticky; top: var(--topbar-h); z-index: 30;
+  padding: 7px 3vw; display: flex; flex-wrap: wrap;
+  align-items: flex-start; justify-content: space-between;
+  gap: 6px 18px; background: #fff; border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 4px rgba(25, 46, 61, .05);
+}
+.period-nav-title { display: flex; gap: 10px; align-items: center; font-weight: 700; white-space: nowrap; padding-top: 4px; flex: 0 0 auto; }
+.period-links {
+  flex: 1 1 560px; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start;
+  gap: 5px 0; font-size: 14px; color: #45535f;
+}
+.nav-group {
+  /* 每组独占一行（flex-basis:100%）：左边是固定宽度的「组名列」，右边是「按钮块」。
+     按钮块自己换行，所以折下来的那一排仍然和上一排按钮左端对齐（不会缩到组名底下去）。 */
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  flex: 1 0 100%;
+  padding: 0;
+}
+.nav-group-label {
+  /* 组名（资料与采购/成本核算/销售成本/报表与核对）长短不一，这里**固定标签列宽**，
+     4 行的按钮就从同一条竖线开始，左边整齐对齐 */
+  flex: 0 0 92px; padding-top: 4px; white-space: nowrap;
+  color: var(--blue); font-size: 15px; font-weight: 800; letter-spacing: .04em;
+}
+.nav-group-links {
+  /* 按钮块：等宽按钮 + 等间距；一排排不下就整排换行（折下来的那排仍与上一排左端对齐） */
+  display: flex; flex-wrap: wrap; align-items: center;
+  flex: 1 1 0; min-width: 0;
+  gap: 5px 6px;
+}
+.nav-group a {
+  /* 用户 2026-09-30：按钮**等宽并铺满整行**（flex:1），四行的左右边界就对齐了，
+     不会再出现"长的长短的短"；宽度下限保证窄窗口也不折行 */
+  flex: 1 1 0; white-space: nowrap; text-align: center;
+  min-width: 96px; padding: 4px 8px; line-height: 1.3;
+  border: 1px solid transparent; border-radius: 8px;   /* 边框常驻，hover/选中只换颜色，不再跳动 */
+  background: #eef3f6;
+}
+.nav-group a:hover { color: var(--blue); background: var(--blue-soft); border-color: #c3dced; }
+/* 当前所在分组/页面：所在组的组名变深，当前页用实心色块标出 */
+.nav-group.is-active .nav-group-label { color: var(--navy); }
+.nav-group a.is-active { color: #fff; font-weight: 700; background: var(--blue); border-color: var(--blue); }
+.nav-group a.is-active:hover { color: #fff; }
+/* 窄一点的窗口（笔记本 1440/1366）按钮整体收一档，保证 11 条的「成本核算」仍是一行 */
+@media (max-width: 1560px) {
+  .nav-group-label { flex: 0 0 80px; font-size: 14px; }
+  .nav-group a { min-width: 90px; padding: 4px 5px; font-size: 13px; }
+  .nav-group-links { gap: 5px 3px; }
+}
+/* 1280 一档：再收一档，依然是「固定标签列 + 等宽按钮」的一行 */
+@media (max-width: 1300px) {
+  .nav-group-label { flex: 0 0 76px; }
+  .nav-group a { min-width: 83px; padding: 4px 3px; font-size: 12.5px; }
+}
+/* 再窄：让「期间 + 状态」独占一行，按钮拿到整行宽度，同样不折行 */
+@media (max-width: 1200px) {
+  .period-nav { flex-direction: column; align-items: stretch; gap: 6px; }
+  .period-nav-title { padding-top: 0; }
+  .period-links { flex: 1 1 auto; width: 100%; }
+}
+/* 1024 一档：横向更省（左右留白补到按钮里），「成本核算」11 条仍然是一行 */
+@media (max-width: 1100px) {
+  .nav-group a { min-width: 76px; padding: 4px 10px; }
+  .nav-group-links { gap: 5px 2px; }
+}
+
+/* 汇总表标题右侧的紧凑筛选（如「期间」下拉） */
+.filter-inline { display: inline-flex; align-items: center; gap: 8px; } 
+.filter-inline label { display: inline-flex; align-items: center; gap: 6px; color: #56636e; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.filter-inline select { min-height: 34px; }
+/* 销售台账汇总表：期间小计行与合计行加底色（只作用于该表） */
+.sales-summary-table tr.subtotal-row td { background: #f5f8fa; font-weight: 700; }
+.sales-summary-table tfoot td { background: #eef2f5; font-weight: 700; }
 
 .page-shell { width: min(1500px, 92vw); margin: 0 auto; padding: 32px 0 56px; }
 .footer { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
@@ -58,7 +142,7 @@ button { cursor: pointer; }
 .new-period-card h2 { margin: 0; font-size: 18px; }
 .new-period-card input { width: 100%; }
 
-.page-heading { margin-bottom: 24px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.page-heading { margin-bottom: 24px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
 .page-heading h1 { margin: 3px 0 6px; font-size: clamp(28px, 3vw, 42px); letter-spacing: -.025em; }
 .page-heading p:not(.eyebrow) { margin: 0; color: var(--muted); }
 .heading-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -85,7 +169,7 @@ button { cursor: pointer; }
 
 .section-card { margin-bottom: 22px; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
 .section-card h2 { margin: 0 0 18px; font-size: 20px; }
-.section-heading { margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.section-heading { margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
 .section-heading h2 { margin: 0; }
 .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 .two-column > .section-card { min-width: 0; }
@@ -116,7 +200,7 @@ button { cursor: pointer; }
 .workflow-step.done > span { color: var(--green); }
 
 /* 期间详情「最近导入」等长列表：超出一屏也在卡片内滚动，页面不再被拉长 */
-.compact-list { display: grid; max-height: calc(100vh - 380px); overflow: auto; overscroll-behavior: contain; }
+.compact-list { display: grid; max-height: calc(100vh - 380px - var(--topbar-h)); overflow: auto; overscroll-behavior: contain; }
 .compact-row { padding: 12px 0; display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid #edf0f2; }
 .compact-row:last-child { border-bottom: 0; }
 .compact-row strong, .compact-row small { display: block; }
@@ -175,6 +259,116 @@ input:focus, select:focus { outline: 3px solid rgba(31,109,155,.14); border-colo
 .filter-grid label { display: grid; gap: 6px; color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid input, .filter-grid select { width: 100%; min-height: 38px; }
 .filter-actions { display: flex; gap: 8px; align-items: center; }
+/* 销售台账筛选栏：按钮（筛选 / 清空 / 打印本表）单独占一行右对齐，
+   避免按钮被挤成两行，也保证与“清空”等高对齐 */
+.filter-card .filter-actions.row-actions { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; }
+.filter-card .filter-actions.row-actions > * { white-space: nowrap; }
+/* 筛选栏里的「打印本表」：与下拉同高、底部对齐 */
+.filter-grid .print-here { align-self: end; }
+.filter-grid .print-here .section-print { min-height: 38px; padding: 8px 14px; white-space: nowrap; }
+
+/* 损益表「损益汇总表 / 损益明细表」的筛选行（用户 2026-09-28，照标准成本构成表那套）：
+   筛选字段 + 确定 / 显示全部(或清空筛选) / 导出Excel / 打印本表 排成一行、底部对齐；
+   方框比通用筛选栏略窄略矮。窗口变窄时按钮组整体换行，字段本身仍在一行。 */
+form.filter-grid.compact-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 10px;
+}
+form.filter-grid.compact-filters .filter-field {
+  flex: 1 1 110px;
+  min-width: 106px;
+  max-width: 172px;
+}
+/* 文字输入（客户名称 / 产品编码）稍宽一点，便于输关键字 */
+form.filter-grid.compact-filters .filter-field.text-field {
+  flex: 1 1 130px;
+  max-width: 196px;
+}
+form.filter-grid.compact-filters .filter-field > span { white-space: nowrap; }
+form.filter-grid.compact-filters input,
+form.filter-grid.compact-filters select { height: 34px; min-height: 34px; }
+form.filter-grid.compact-filters .filter-field .multi-select > summary {
+  min-height: 34px; padding: 6px 10px;
+}
+form.filter-grid.compact-filters .filter-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-self: flex-end;
+}
+form.filter-grid.compact-filters .filter-actions > .button {
+  flex: 0 0 auto;
+  height: 34px; min-height: 34px; padding: 0 12px;
+  font-size: 13px; line-height: 1; white-space: nowrap; border-radius: 9px;
+}
+/* 「打印本表」的容器：本身不占位、不加内边距（按钮样式由下面的 .section-print 规则给） */
+form.filter-grid.compact-filters .filter-actions > .print-here {
+  flex: 0 0 auto;
+  padding: 0; height: auto; min-height: 0;
+  align-self: flex-end;
+  display: flex; align-items: center;
+}
+form.filter-grid.compact-filters .print-here .section-print {
+  height: 34px; min-height: 34px; padding: 0 12px;
+  font-size: 13px; line-height: 1; white-space: nowrap; border-radius: 9px;
+}
+
+/* 「带按钮组的筛选栏」（采购发票匹配 / 月末采购暂估 等）：上排是输入框，右侧是按钮组，
+   两边统一 38px 高、底部对齐。
+   背景：按钮默认 .button 是 40px、字号 16px，挤在 1fr 的栅格里会折成两行 → 高度变 62px，
+   和 38px 的输入框明显不齐。这里统一压到 38px 并禁止折行。
+   原先这套规则只写在 purchase_matches.html 的页面内 <style> 里，现提到公共样式，
+   页面只需给筛选栏加 class="purchase-filter"。 */
+.section-card .purchase-filter {
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: #f5f8fa;
+  border: 1px solid #e3e9ed;
+  border-radius: 10px;
+}
+.purchase-filter .filter-actions { flex-wrap: nowrap; justify-content: flex-start; }
+.purchase-filter .filter-actions > * {
+  flex: 0 0 auto;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  border-radius: 9px;
+}
+@media (min-width: 1101px) {
+  /* 6 列栅格：字段各占 1 列，按钮组占满其余并右对齐，视觉上是一条整齐的筛选栏 */
+  .purchase-filter .filter-actions { grid-column: span 3; justify-content: flex-end; }
+}
+/* 按钮组靠左版（用户 2026-09-27）：按钮紧跟在筛选字段后面、左对齐，
+   不再被推到最右边（月末未开票「明细表」、「车间费用汇总表（按车间）」）。
+   选择器比重比上面那两条高，所以宽屏下也是靠左。 */
+.purchase-filter .filter-actions.align-start { justify-content: flex-start; }
+.purchase-filter .filter-actions.align-start > * { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .section-card .purchase-filter { padding: 10px 12px; }
+}
+/* 板块/页头右侧的操作区：按钮与下拉排成一行；一行放不下就换行。
+   注意：这里绝不能再用 overflow 裁切（旧写法 overflow-y:hidden + nowrap 会把靠左的
+   筛选字段直接从左侧裁掉，而且 scrollWidth 只统计右侧溢出，用户连滚都滚不到）。 */
+.heading-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end;
+  min-width: 0; max-width: 100%; }
+.heading-actions > * { flex: 0 0 auto; }
+.heading-actions .filter-actions { display: inline-flex; flex-wrap: wrap; margin: 0; }
+.heading-actions .button, .heading-actions .section-print { white-space: nowrap; }
+.heading-actions select { max-width: 210px; }
+
+/* 凭证类页面的筛选条：标签在上、控件在下，和「月末采购暂估」等页面的筛选一致 */
+.voucher-toolbar { margin: -6px 0 22px; padding: 13px 16px; display: flex; align-items: center;
+  justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  background: #f7fafb; border: 1px solid #cddbe3; border-radius: 10px; }
+.voucher-toolbar form { margin: 0; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.voucher-toolbar label { display: grid; gap: 6px; color: #56636e; font-size: 12px; font-weight: 700; }
+.voucher-toolbar select { min-height: 38px; max-width: 280px; }
+.voucher-toolbar .voucher-toolbar-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.section-heading > div:first-child { min-width: 0; }
 .production-cost-filter { display: grid; grid-template-columns: minmax(240px, 420px) auto; gap: 12px; align-items: end; }
 .production-cost-filter label { display: grid; gap: 6px; color: #56636e; font-size: 12px; font-weight: 700; }
 .cost-notice { margin: 0 0 22px; padding: 14px 17px; color: var(--warning); background: var(--warning-soft); border: 1px solid #ebcf99; border-radius: 10px; line-height: 1.65; }
@@ -206,7 +400,8 @@ input:focus, select:focus { outline: 3px solid rgba(31,109,155,.14); border-colo
   width: 100%;
   max-width: 100%;
   min-width: 0;                 /* 作为 flex/grid 子项时也能收缩，防止被超宽表格撑破布局 */
-  max-height: min(calc(100vh - 260px), 680px);
+  /* 减掉固定不动的顶部条高度（--topbar-h）：否则表底会被顶到屏幕外 */
+  max-height: min(calc(100vh - 260px - var(--topbar-h)), 680px);
   min-height: 200px;
   overflow: auto;
   overscroll-behavior: contain;
@@ -325,6 +520,13 @@ th input, td input, th select, td select {
   .topbar { padding: 0 18px; }
   .brand small, .user-name, .top-actions a { display: none; }
   .period-nav { align-items: flex-start; flex-direction: column; padding: 12px 18px; }
+  .period-links { flex: 0 0 auto; width: 100%; }
+  /* 窄屏改成上下排列：竖排时左右分隔线没意义，改成「组名单独一行 + 链接换行」 */
+  .nav-group { flex-wrap: wrap; padding: 0; gap: 6px 0; }
+  .nav-group + .nav-group { margin-top: 7px; }
+  /* 窄屏：组名独占一行，按钮块整块落到第二行（basis 100% 才会换行，不能用 0） */
+  .nav-group-label { flex: 0 0 100%; padding-top: 0; }
+  .nav-group-links { flex: 1 1 100%; gap: 6px 6px; }
   .page-shell { width: min(94vw, 680px); padding-top: 22px; }
   .hero { padding: 28px; grid-template-columns: 1fr; }
   .hero h1 { font-size: 34px; }
@@ -370,6 +572,66 @@ th input, td input, th select, td select {
 .filter-grid .filter-field { display: grid; gap: 6px; color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field > span { color: #56636e; font-size: 12px; font-weight: 700; }
 .filter-grid .filter-field .multi-select > summary { font-size: 14px; font-weight: 400; color: var(--ink); }
+
+/* 明细小表自己的筛选栏（月末采购暂估页 4 张明细表，用户 2026-09-19）：
+   字段按可用宽度自适应铺开、按钮右对齐，一行放不下就换行。
+   注意：绝不用 overflow 裁切（窄屏会把左侧字段直接裁没、也滚不到）。 */
+.detail-filter {
+  display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end;
+  padding: 10px 12px; margin: 0 0 12px;
+  background: #f5f8fa; border: 1px solid #e3e9ed; border-radius: 10px;
+}
+.detail-filter label {
+  display: grid; gap: 5px; flex: 1 1 180px; min-width: 150px; max-width: 280px;
+  color: #56636e; font-size: 12px; font-weight: 700;
+}
+.detail-filter input, .detail-filter select { width: 100%; min-height: 34px; }
+.detail-filter .filter-actions { flex: 0 0 auto; margin-left: auto; flex-wrap: wrap; }
+/* 这一排：筛选 / 清空 / 金额徽标 / 导出Excel / 打印本表（用户 2026-09-19）——
+   按钮统一 34px 高，徽标也撑到同高，视觉上是一条线 */
+.detail-filter .filter-actions .button {
+  height: 34px; min-height: 34px; padding: 0 12px;
+  font-size: 13px; line-height: 1; white-space: nowrap; border-radius: 9px;
+}
+/* 金额徽标（34px 高，与筛选按钮同高）：明细表筛选行、以及板块标题里的金额方框都用它 */
+.detail-filter-pill {
+  display: inline-flex; align-items: center; height: 34px;
+  padding: 0 12px; font-size: 13px; white-space: nowrap;
+}
+.detail-filter-note { margin: 0 0 12px; font-size: 12.5px; }
+
+/* 口径说明块（全站统一，用户 2026-09-21）：
+   ① 左上角一个「口径说明」标签（.basis-title）；
+   ② 下面一张四列表：字段 / 数据来源 / 计算依据 / 作用，一个字段一行 —— 比长段落好扫读。
+   用法：<div class="basis-block"><p class="basis-title">口径说明</p>
+            <div class="table-wrap"><table class="basis-table">…</table></div></div> */
+.basis-block { margin-top: 14px; }
+.basis-title {
+  display: inline-block; margin: 0 0 8px; padding: 3px 12px;
+  border-left: 3px solid #2e86c1; border-radius: 4px; background: #eef6ff;
+  color: #2c5f8a; font-size: 12.5px; font-weight: 700; letter-spacing: .5px;
+}
+/* 口径表通常只有几行，不要被 .table-wrap 的 200px 最小高度撑出空白 */
+.basis-block .table-wrap { min-height: 0; }
+.basis-table { font-size: 12.5px; }
+.basis-table th, .basis-table td {
+  padding: 7px 10px; vertical-align: top; line-height: 1.6; white-space: normal;
+}
+.basis-table th { font-size: 12px; white-space: nowrap; color: #56636e; }
+.basis-table td:first-child { white-space: nowrap; color: var(--navy); }
+.basis-table b { color: var(--navy); }
+
+/* 口径说明的「简短版」：不列表格，只要几条要点（用在字段少、无需逐字段解释的页面）。
+   用法：<div class="basis-block"><p class="basis-title">口径说明</p><ul class="basis-notes">…</ul></div> */
+.basis-notes {
+  margin: 0; padding: 10px 16px 10px 34px; list-style: disc;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  font-size: 12.5px; color: #45535e;
+}
+.basis-notes li { margin: 5px 0; line-height: 1.7; }
+.basis-notes li:first-child { margin-top: 0; }
+.basis-notes li:last-child { margin-bottom: 0; }
+.basis-notes strong { color: var(--navy); }
 
 /* 按月费用录入：每个期间一行（期间逐一列出）。
    1) 整张表按容器宽度等分（table-layout: fixed），一屏放得下，不用左右拖；
@@ -418,11 +680,25 @@ th input, td input, th select, td select {
 .expense-entry-table .expense-month-cell strong { font-size: 13px; line-height: 1.2; color: var(--navy); }
 .expense-entry-table .expense-month-meta { display: inline; margin-left: 8px; font-size: 12px; white-space: nowrap; }
 .pill-ok { background: var(--green-soft); color: var(--green); }
+/* 「按月费用录入」表的合计行（用户 2026-09-28）：7 项费用的纵向合计，与明细表合计行同款配色 */
+.expense-entry-table tfoot .expense-total-row td {
+  background: #f2f7fd;
+  font-weight: 600;
+  border-top: 2px solid #cfd8de;
+}
+.expense-entry-table tfoot .expense-total-row .expense-total-cell { text-align: right; }
+.expense-entry-table tfoot .expense-total-row .expense-total-cell strong { color: var(--navy); }
+/* 每月行尾的「合计」列（用户 2026-09-28）：该月 7 项费用之和 */
+.expense-entry-table tbody td.expense-total-cell {
+  text-align: right;
+  background: #f6fafd;
+}
+.expense-entry-table tbody td.expense-total-cell strong { color: var(--navy); }
 /* 逐行损益：一屏内横竖滚动 + 滚动时表头固定 + 紧凑列宽（整体不再铺太宽） */
 .profit-table-wrap {
   width: 100%;
   max-width: 100%;
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - 160px - var(--topbar-h));
   min-height: 280px;
   overflow: auto;              /* 横向 + 纵向滚动条 */
   border: 1px solid var(--line);
@@ -445,7 +721,7 @@ th input, td input, th select, td select {
 .summary-table-wrap {
   width: 100%;
   max-width: 100%;
-  max-height: calc(100vh - 300px);
+  max-height: calc(100vh - 300px - var(--topbar-h));
   min-height: 240px;
   margin-top: 10px;
   overflow: auto;

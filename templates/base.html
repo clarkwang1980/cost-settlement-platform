@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}月度成本结算平台{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260915-inline-filter">
+  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260928-expcol">
 </head>
 <body>
   <header class="topbar">
@@ -35,29 +35,49 @@
         <span class="status status-{{ period.status }}">{{ period.get_status_display }}</span>
       </div>
       <div class="period-links">
-        <a href="{% url 'upload_file' period.id %}">资料导入</a>
-        <a href="{% url 'purchase_matches' period.id %}">采购匹配</a>
-        <a href="{% url 'purchase_accruals' period.id %}">月末暂估</a>
-        <a href="{% url 'purchase_differences' period.id %}">暂估差异</a>
-        <a href="{% url 'purchase_reversal_report' period.id %}">回冲明细</a>
-        <a href="{% url 'purchase_summary' period.id %}">回冲汇总</a>
-        <a href="{% url 'sales_matches' period.id %}">销售核销核对</a>
-        <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
-        <a href="{% url 'voucher_center' period.id %}">凭证中心</a>
-        <a href="{% url 'profit_statement' period.id %}">损益表</a>
-        <a href="{% url 'work_order_matches' period.id %}">工单匹配</a>
-        <a href="{% url 'work_order_report' period.id %}">生产工单</a>
-        <a href="{% url 'order_material_report' period.id %}">工单投料</a>
-        <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
-        <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
-        <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
-        <a href="{% url 'inventory_results' period.id %}">库存结转</a>
-        <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
-        <a href="{% url 'work_order_costs' period.id %}">工单成本</a>
-        <a href="{% url 'total_cost' period.id %}">总成本表</a>
-        <a href="{% url 'price_table' period.id %}">单价表</a>
-        <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
-        <a href="{% url 'export_center' period.id %}">报表导出</a>
+        <div class="nav-group" data-nav="import">
+          <span class="nav-group-label">资料与采购</span>
+          <div class="nav-group-links">
+            <a href="{% url 'upload_file' period.id %}">资料导入</a>
+            <a href="{% url 'purchase_matches' period.id %}">采购发票</a>
+            <a href="{% url 'purchase_contracts' period.id %}">采购合同</a>
+            <a href="{% url 'purchase_receipts' period.id %}">采购入库</a>
+            <a href="{% url 'purchase_accruals' period.id %}">月末暂估</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="production">
+          <span class="nav-group-label">生产与投料</span>
+          <div class="nav-group-links">
+            <a href="{% url 'work_order_report' period.id %}">生产工单</a>
+            <a href="{% url 'order_material_report' period.id %}">工单投料</a>
+            <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
+            <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
+            <a href="{% url 'workshop_costs' period.id %}">车间费用</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="costing">
+          <span class="nav-group-label">成本结转</span>
+          <div class="nav-group-links">
+            <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
+            <a href="{% url 'inventory_results' period.id %}">库存结转</a>
+            <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
+            <a href="{% url 'ending_wip' period.id %}">期末在产品</a>
+            <a href="{% url 'work_order_costs' period.id %}">工单成本</a>
+            <a href="{% url 'standard_costs' period.id %}">标准成本</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="sales">
+          <span class="nav-group-label">销售与报表</span>
+          <div class="nav-group-links">
+            <a href="{% url 'sales_ledger' period.id %}">销售台账</a>
+            <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
+            <a href="{% url 'voucher_center' period.id %}">凭证中心</a>
+            <a href="{% url 'profit_statement' period.id %}">损益表</a>
+            <a href="{% url 'price_table' period.id %}">单价表</a>
+            <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
+            <a href="{% url 'export_center' period.id %}">报表导出</a>
+          </div>
+        </div>
       </div>
     </nav>
   {% endif %}
@@ -116,6 +136,13 @@
         return !!form && (form.getAttribute("method") || "get").toLowerCase() === "get";
       }
 
+      // 用户 2026-09-30：**POST 按钮（如「批准忽略」「确认差异」「标记处理」）也会跳页顶** ——
+      //   这些是提交后 302 重定向回同一页面，浏览器按新页面处理 → 滚回顶部。
+      //   这里对**所有表单提交**都记一次位置（不只 GET 表单），加载后照样还原。
+      document.addEventListener("submit", function (event) {
+        if (event.target && event.target.tagName === "FORM") { savePos(); }
+      }, true);
+
       document.addEventListener("change", function (event) {
         var el = event.target;
         if (el && el.form && isGetForm(el.form)) { savePos(); }
@@ -124,6 +151,10 @@
       document.addEventListener("click", function (event) {
         var el = event.target;
         if (!el) { return; }
+        // 翻页（上一页 / 下一页 / 页码）：链接不是表单提交，单独记一次位置，
+        // 否则点完会跳回页顶（用户 2026-09-21：明细翻页要"页面保持不动"）。
+        var link = el.closest ? el.closest(".pagination a") : null;
+        if (link) { savePos(); return; }
         var form = el.form || (el.closest ? el.closest("form") : null);
         if (!form || !isGetForm(form)) { return; }
         if (el.tagName === "BUTTON" || (el.type && el.type === "submit")) { savePos(); }
@@ -174,6 +205,7 @@
       function addSectionPrintButtons() {
         document.querySelectorAll('main section, main .section-card').forEach(function (sec) {
           if (sec.dataset.printReady) { return; }
+          if (sec.hasAttribute('data-no-print')) { return; }  // 页面明确说不要打印按钮的板块跳过
           if (!sec.querySelector('table')) { return; }        // 没有表格的板块不加
           var head = sec.querySelector('.section-heading');
           if (!head) {
@@ -186,7 +218,11 @@
             head.appendChild(h2);
             sec.insertBefore(head, sec.firstChild);
           }
-          var actions = head.querySelector('.heading-actions');
+          // 放置顺序：页面里的 print-here 容器（想放哪里就放哪里，
+          //   如筛选栏某个下拉旁边） -> 筛选栏的按钮行 -> 标题右侧。
+          var actions = sec.querySelector('.print-here')
+                     || sec.querySelector('.filter-card .filter-actions')
+                     || head.querySelector('.heading-actions');
           if (!actions) {
             actions = document.createElement('div');
             actions.className = 'heading-actions';
@@ -194,7 +230,7 @@
           }
           var btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'button small secondary section-print no-print';
+          btn.className = 'button secondary section-print no-print';  // 与筛选栏的「清空」同高
           btn.textContent = '打印本表';
           btn.title = '只打印这一块表格';
           btn.addEventListener('click', function () { window.printSection(btn); });
@@ -222,6 +258,48 @@
         addSectionPrintButtons();
       });
       window.addEventListener('beforeprint', fillPrintHeading);
+    })();
+
+    // 导航：①标出「当前在哪一页 / 属于哪一步」（子页面按前缀归到主条目）；
+    //       ②给换行后每一行的第一组加 is-row-start，去掉行首分隔线，左边始终齐平。
+    (function () {
+      var groups = document.querySelectorAll('.period-links .nav-group');
+
+      function markRowStarts() {
+        var prevTop = null;
+        Array.prototype.forEach.call(groups, function (g) {
+          var top = g.offsetTop;
+          g.classList.toggle('is-row-start', prevTop === null || Math.abs(top - prevTop) > 1);
+          prevTop = top;
+        });
+      }
+
+      var timer = null;
+      function scheduleMarkRowStarts() {
+        if (timer) { clearTimeout(timer); }
+        timer = setTimeout(markRowStarts, 120);
+      }
+      markRowStarts();
+      window.addEventListener('load', markRowStarts);
+      window.addEventListener('resize', scheduleMarkRowStarts);
+      // 字体加载完尺寸可能变化，重算一次
+      if (document.fonts && document.fonts.ready) { document.fonts.ready.then(markRowStarts); }
+
+      var links = document.querySelectorAll('.period-links .nav-group a');
+      if (!links.length) { return; }
+      var path = window.location.pathname;
+      var best = null, bestLen = -1, exact = false;
+      Array.prototype.forEach.call(links, function (a) {
+        var href = a.getAttribute('href');
+        if (!href) { return; }
+        if (path === href) { best = a; exact = true; return; }
+        if (exact) { return; }
+        if (path.indexOf(href) === 0 && href.length > bestLen) { best = a; bestLen = href.length; }
+      });
+      if (!best) { return; }
+      best.classList.add('is-active');
+      var group = best.closest('.nav-group');
+      if (group) { group.classList.add('is-active'); }
     })();
   </script>
 {% block extra_js %}{% endblock %}

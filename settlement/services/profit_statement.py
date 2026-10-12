@@ -816,7 +816,10 @@ def build_profit_statement_sheet(period, expenses=None):
     """
     data = build_profit_statement(period, expenses=expenses)
     detail_rows = [row_values(row) for row in data["rows"]]
-    detail_rows.append(row_values(data["totals"]))
+    # 明细表最后一行是合计（用户 2026-09-28：这一行要写明「合计」，否则导出的表尾看不出来是合计行）
+    detail_totals = dict(data["totals"])
+    detail_totals["seq"] = "合计"
+    detail_rows.append(row_values(detail_totals))
     sheets = [("损益表", list(HEADERS), detail_rows)]
     for basis, title in (
         (BASIS_OUT, "汇总-按出库期间"),

@@ -1,7 +1,7 @@
 {% if page.has_other_pages %}
 <nav class="pagination">
-  {% if page.has_previous %}<a href="?{% if page.querystring %}{{ page.querystring }}&amp;{% endif %}page={{ page.previous_page_number }}">上一页</a>{% endif %}
+  {% if page.has_previous %}<a href="?{% if page.querystring %}{{ page.querystring }}&amp;{% endif %}{{ param|default:"page" }}={{ page.previous_page_number }}">上一页</a>{% endif %}
   <span>第 {{ page.number }} / {{ page.paginator.num_pages }} 页</span>
-  {% if page.has_next %}<a href="?{% if page.querystring %}{{ page.querystring }}&amp;{% endif %}page={{ page.next_page_number }}">下一页</a>{% endif %}
+  {% if page.has_next %}<a href="?{% if page.querystring %}{{ page.querystring }}&amp;{% endif %}{{ param|default:"page" }}={{ page.next_page_number }}">下一页</a>{% endif %}
 </nav>
 {% endif %}

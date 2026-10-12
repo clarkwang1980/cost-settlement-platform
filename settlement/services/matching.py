@@ -19,6 +19,7 @@ from settlement.models import (
 
 
 ZERO = Decimal("0")
+CENT = Decimal("0.01")
 
 
 def _norm(value: str) -> str:
@@ -119,6 +120,11 @@ def _manual_used(source, field_name: str, kind: str) -> Decimal:
 
 def _reset_remaining(period: AccountingPeriod):
     for contract in period.purchase_contracts.all():
+        if contract.match_mode == MatchingMode.IGNORED:
+            # 忽略匹配：不参与分配，剩余数量保持合同数量（与期初台账的处理一致）
+            contract.remaining_quantity = contract.quantity
+            contract.save(update_fields=["remaining_quantity"])
+            continue
         contract.remaining_quantity = max(
             contract.quantity
             - _manual_used(
@@ -141,15 +147,8 @@ def _reset_remaining(period: AccountingPeriod):
         )
         invoice.save(update_fields=["remaining_quantity"])
     for invoice in period.sales_invoices.all():
-        invoice.remaining_quantity = max(
-            invoice.quantity
-            - _manual_used(
-                invoice,
-                "sales_invoice_line",
-                MatchAllocation.Kind.SALES_INVOICE,
-            ),
-            ZERO,
-        )
+        # 销售发票不再参与核销（用户 2026-09-21）：剩余数量就是发票数量
+        invoice.remaining_quantity = invoice.quantity
         invoice.save(update_fields=["remaining_quantity"])
     for opening in OpeningPurchaseAccrual.objects.filter(
         period__month__lte=period.month
@@ -166,14 +165,8 @@ def _reset_remaining(period: AccountingPeriod):
     for opening in OpeningGoodsIssued.objects.filter(
         period__month__lte=period.month
     ):
-        used = (
-            opening.allocations.filter(
-                kind=MatchAllocation.Kind.SALES_INVOICE,
-                period__month__lte=period.month,
-            ).aggregate(total=Sum("matched_quantity"))["total"]
-            or ZERO
-        )
-        opening.remaining_quantity = max(opening.opening_quantity - used, ZERO)
+        # 期初发出商品不再被销售核销消耗（发出商品按销售台账口径滚动）
+        opening.remaining_quantity = opening.opening_quantity
         opening.save(update_fields=["remaining_quantity"])
 
 
@@ -187,9 +180,13 @@ def _txn_matched_quantity(txn, kind):
 
 
 def _candidate_contracts(period, txn):
+    # 只把「自动匹配」的合同作为候选（用户 2026-09-19，与采购发票一致）：
+    # 忽略的合同不参与；手工匹配的合同只保留人工关系，也不自动占用剩余数量。
     contracts = list(
         period.purchase_contracts.filter(
-            material_code=txn.material_code, remaining_quantity__gt=0
+            material_code=txn.material_code,
+            remaining_quantity__gt=0,
+            match_mode=MatchingMode.AUTO,
         )
     )
     if txn.supplier_code or txn.supplier_name:
@@ -249,6 +246,31 @@ def _candidate_contracts(period, txn):
     return contracts
 
 
+def invoice_unit_amount(invoice) -> Decimal:
+    """发票行的**单位不含税金额**（用户 2026-09-19：以「不含税金额」列为准）。
+
+    背景：发票模板的「不含税单价」列与「不含税金额」列在部分行对不上（原币/税口径混用），
+    直接拿单价乘数量会把核销金额放大（本期 390,482.64）。改成
+    `不含税金额 ÷ 发票数量`，核销金额就与用户上传文件的口径完全一致。
+    文件里没给金额时，退回用「不含税单价」。
+    """
+    quantity = Decimal(invoice.quantity or ZERO)
+    amount = getattr(invoice, "amount_excl_tax", None)
+    if amount is not None and quantity > ZERO:
+        return (Decimal(amount) / quantity).quantize(Decimal("0.00000001"))
+    return Decimal(invoice.unit_price_excl_tax or ZERO)
+
+
+def invoice_matched_amount(invoice, matched_quantity) -> Decimal:
+    """核销金额 = 发票行不含税金额 × 核销数量 ÷ 发票数量（末次分摊不留尾差）。"""
+    quantity = Decimal(invoice.quantity or ZERO)
+    amount = getattr(invoice, "amount_excl_tax", None)
+    matched = Decimal(matched_quantity or ZERO)
+    if amount is not None and quantity > ZERO:
+        return (Decimal(amount) * matched / quantity).quantize(CENT)
+    return (matched * Decimal(invoice.unit_price_excl_tax or ZERO)).quantize(CENT)
+
+
 def _candidate_purchase_receipts(period, invoice):
     txns = [
         txn
@@ -282,8 +304,9 @@ def _candidate_purchase_receipts(period, invoice):
         else:
             contract_bonus = 1
         # 流水暂估单价与发票单价差：越小越优先，避免不同价发票核销到错价流水产生假差异
-        if txn.unit_price is not None and invoice.unit_price_excl_tax is not None:
-            price_diff = abs(txn.unit_price - invoice.unit_price_excl_tax)
+        effective_unit = invoice_unit_amount(invoice)
+        if txn.unit_price is not None and effective_unit:
+            price_diff = abs(txn.unit_price - effective_unit)
         else:
             price_diff = Decimal("1e9")
         return (
@@ -322,89 +345,6 @@ def _candidate_opening_purchase_accruals(period, invoice):
             0
             if invoice.contract_no and item.contract_no == invoice.contract_no
             else 1,
-            item.original_period,
-            item.document_date,
-            item.id,
-        )
-    )
-    return rows
-
-
-def _candidate_sales_issues(period, invoice):
-    txns = [
-        txn
-        for txn in InventoryTransaction.objects.filter(
-            period__month__lte=period.month,
-            match_mode=MatchingMode.AUTO
-        ).select_related("period")
-        if is_sales_issue(txn) and not is_sample_issue(txn)
-    ]
-    if invoice.sales_order_no:
-        txns = [
-            txn
-            for txn in txns
-            if txn.material_code == invoice.material_code
-            and txn.order_no
-            and _norm(txn.order_no) == _norm(invoice.sales_order_no)
-            and _same_party_strict(
-                txn.customer_code,
-                txn.customer_name,
-                invoice.customer_code,
-                invoice.customer_name,
-            )
-        ]
-    elif invoice.invoice_no.startswith("LEDGER"):
-        # 无订单号：只有平台台账生成的 LEDGER 发票才按物料宽松核销（它们本就没有订单/客户）；
-        # 你上传的销售发票若缺订单号，不做自动核销，留在"销售匹配"页人工核销，避免张冠李戴。
-        txns = [
-            txn
-            for txn in txns
-            if txn.material_code == invoice.material_code
-            and _same_party_loose(
-                txn.customer_code,
-                txn.customer_name,
-                invoice.customer_code,
-                invoice.customer_name,
-            )
-        ]
-    else:
-        # 用户上传发票缺订单号：不自动核销（需人工指定对应出库/期初发出商品）
-        txns = []
-    txns.sort(
-        key=lambda txn: (
-            txn.period.month,
-            txn.txn_date,
-            txn.id,
-        )
-    )
-    return txns
-
-
-def _candidate_opening_goods_issued(period, invoice):
-    if not invoice.sales_order_no:
-        return []
-    rows = list(
-        OpeningGoodsIssued.objects.filter(
-            period__month__lte=period.month,
-            material_code=invoice.material_code,
-            remaining_quantity__gt=0,
-            match_mode=MatchingMode.AUTO,
-        )
-    )
-    rows = [
-        item
-        for item in rows
-        if item.sales_order_no
-        and _norm(item.sales_order_no) == _norm(invoice.sales_order_no)
-        and _same_party_strict(
-            item.customer_code,
-            item.customer_name,
-            invoice.customer_code,
-            invoice.customer_name,
-        )
-    ]
-    rows.sort(
-        key=lambda item: (
             item.original_period,
             item.document_date,
             item.id,
@@ -452,32 +392,72 @@ def _allocate_contracts(period):
             contract.save(update_fields=["remaining_quantity"])
 
 
+def _invoice_total_amount(invoice):
+    """发票行的不含税金额（没有这一列时返回 None）。"""
+    amount = getattr(invoice, "amount_excl_tax", None)
+    return None if amount is None else Decimal(amount)
+
+
+def _chunk_amount(invoice, qty, *, last_chunk, already, allocated_so_far):
+    """本次核销应记的金额。
+
+    · 有「不含税金额」→ 按数量比例分摊；**最后一块**用「发票金额 − 已记金额」收尾，
+      保证一张发票的核销金额合计＝发票金额（不留分摊尾差，用户 2026-09-19）。
+    · 没有金额列 → 退回 核销数量 × 不含税单价。
+    """
+    total = _invoice_total_amount(invoice)
+    if total is None:
+        return invoice_matched_amount(invoice, qty)
+    if last_chunk:
+        residual = (total - already - allocated_so_far).quantize(CENT)
+        if residual >= ZERO:
+            return residual
+    return invoice_matched_amount(invoice, qty)
+
+
 def _allocate_purchase_invoices(period):
     for invoice in period.purchase_invoices.filter(
         match_mode=MatchingMode.AUTO
     ):
         remaining_invoice = invoice.remaining_quantity
+        # 已被人工核销掉的金额（自动分配的会在重跑前清掉，这里只可能剩人工关系）
+        already = sum(
+            (
+                Decimal(a.amount or ZERO)
+                for a in MatchAllocation.objects.filter(
+                    period=period, purchase_invoice_line=invoice
+                )
+            ),
+            ZERO,
+        )
+        allocated_so_far = ZERO
         for opening in _candidate_opening_purchase_accruals(period, invoice):
             if remaining_invoice <= 0:
                 break
             qty = min(remaining_invoice, opening.remaining_quantity)
             if qty <= 0:
                 continue
+            amount = _chunk_amount(
+                invoice,
+                qty,
+                last_chunk=remaining_invoice - qty <= 0,
+                already=already,
+                allocated_so_far=allocated_so_far,
+            )
             MatchAllocation.objects.create(
                 period=period,
                 kind=MatchAllocation.Kind.PURCHASE_INVOICE,
                 opening_purchase_accrual=opening,
                 purchase_invoice_line=invoice,
                 matched_quantity=qty,
-                unit_price=invoice.unit_price_excl_tax,
-                amount=(qty * invoice.unit_price_excl_tax).quantize(
-                    Decimal("0.01")
-                ),
+                unit_price=invoice_unit_amount(invoice),
+                amount=amount,
                 confidence=100
                 if invoice.contract_no
                 and opening.contract_no == invoice.contract_no
                 else 85,
             )
+            allocated_so_far += amount
             remaining_invoice -= qty
             opening.remaining_quantity -= qty
             opening.save(update_fields=["remaining_quantity"])
@@ -486,72 +466,33 @@ def _allocate_purchase_invoices(period):
         for txn in _candidate_purchase_receipts(period, invoice):
             if remaining_invoice <= 0:
                 break
-            already = _txn_matched_quantity(
+            already_on_txn = _txn_matched_quantity(
                 txn, MatchAllocation.Kind.PURCHASE_INVOICE
             )
-            remaining_txn = max(txn.quantity - already, ZERO)
+            remaining_txn = max(txn.quantity - already_on_txn, ZERO)
             qty = min(remaining_invoice, remaining_txn)
             if qty <= 0:
                 continue
+            amount = _chunk_amount(
+                invoice,
+                qty,
+                last_chunk=remaining_invoice - qty <= 0,
+                already=already,
+                allocated_so_far=allocated_so_far,
+            )
             MatchAllocation.objects.create(
                 period=period,
                 kind=MatchAllocation.Kind.PURCHASE_INVOICE,
                 inventory_transaction=txn,
                 purchase_invoice_line=invoice,
                 matched_quantity=qty,
-                unit_price=invoice.unit_price_excl_tax,
-                amount=(qty * invoice.unit_price_excl_tax).quantize(
-                    Decimal("0.01")
-                ),
+                unit_price=invoice_unit_amount(invoice),
+                amount=amount,
                 confidence=100
                 if invoice.contract_no and txn.contract_no == invoice.contract_no
                 else 85,
             )
-            remaining_invoice -= qty
-            invoice.remaining_quantity -= qty
-            invoice.save(update_fields=["remaining_quantity"])
-
-
-def _allocate_sales_invoices(period):
-    for invoice in period.sales_invoices.filter(
-        match_mode=MatchingMode.AUTO
-    ):
-        remaining_invoice = invoice.remaining_quantity
-        for opening in _candidate_opening_goods_issued(period, invoice):
-            if remaining_invoice <= 0:
-                break
-            qty = min(remaining_invoice, opening.remaining_quantity)
-            if qty <= 0:
-                continue
-            MatchAllocation.objects.create(
-                period=period,
-                kind=MatchAllocation.Kind.SALES_INVOICE,
-                opening_goods_issued=opening,
-                sales_invoice_line=invoice,
-                matched_quantity=qty,
-                confidence=100,
-            )
-            remaining_invoice -= qty
-            opening.remaining_quantity -= qty
-            opening.save(update_fields=["remaining_quantity"])
-            invoice.remaining_quantity -= qty
-            invoice.save(update_fields=["remaining_quantity"])
-        for txn in _candidate_sales_issues(period, invoice):
-            if remaining_invoice <= 0:
-                break
-            already = _txn_matched_quantity(txn, MatchAllocation.Kind.SALES_INVOICE)
-            remaining_txn = max(txn.quantity - already, ZERO)
-            qty = min(remaining_invoice, remaining_txn)
-            if qty <= 0:
-                continue
-            MatchAllocation.objects.create(
-                period=period,
-                kind=MatchAllocation.Kind.SALES_INVOICE,
-                inventory_transaction=txn,
-                sales_invoice_line=invoice,
-                matched_quantity=qty,
-                confidence=100,
-            )
+            allocated_so_far += amount
             remaining_invoice -= qty
             invoice.remaining_quantity -= qty
             invoice.save(update_fields=["remaining_quantity"])
@@ -626,6 +567,28 @@ def _refresh_purchase_transaction_prices(period):
         )
 
 
+def refresh_sales_issue_metadata(period):
+    """销售出库行的状态（用户 2026-09-21 方案A：销售不再核销）。
+
+    销售侧不再用「销售发票」核销库存流水，所以这里只把状态标清楚供页面展示：
+      · 处理方式＝忽略匹配 → 无需匹配（这一行是用户手工忽略的）
+      · 其余 → 未匹配（不参与核销；发出商品与开票按「销售台账」口径另行计算）
+    「到票期间」在销售侧已无意义，统一清空。
+    """
+    for txn in InventoryTransaction.objects.filter(
+        period__month__lte=period.month
+    ).select_related("period"):
+        if not is_sales_issue(txn):
+            continue
+        txn.invoice_period = None
+        txn.match_status = (
+            InventoryTransaction.MatchStatus.NOT_REQUIRED
+            if txn.match_mode == MatchingMode.IGNORED
+            else InventoryTransaction.MatchStatus.UNMATCHED
+        )
+        txn.save(update_fields=["invoice_period", "match_status"])
+
+
 def refresh_purchase_invoice_metadata(period):
     """Refresh receipt invoice periods without changing historical inventory values."""
     receipts = InventoryTransaction.objects.filter(
@@ -688,92 +651,21 @@ def refresh_purchase_invoice_metadata(period):
         )
 
 
-def refresh_sales_invoice_metadata(period):
-    """Refresh sales issue invoice metadata through the selected month."""
-    transactions = InventoryTransaction.objects.filter(
-        period__month__lte=period.month
-    ).select_related("period")
-    for txn in transactions:
-        if not is_sales_issue(txn):
-            continue
-        if txn.match_mode == MatchingMode.IGNORED:
-            txn.invoice_period = None
-            txn.match_status = InventoryTransaction.MatchStatus.NOT_REQUIRED
-            txn.save(update_fields=["invoice_period", "match_status"])
-            continue
-        allocations = txn.allocations.filter(
-            kind=MatchAllocation.Kind.SALES_INVOICE,
-            period__month__lte=period.month,
-        )
-        matched = allocations.aggregate(total=Sum("matched_quantity"))["total"] or ZERO
-        periods = list(
-            allocations.values_list("sales_invoice_line__invoice_period", flat=True)
-        )
-        txn.invoice_period = max((item for item in periods if item), default=None)
-        if matched >= txn.quantity:
-            txn.match_status = InventoryTransaction.MatchStatus.MATCHED
-        elif matched > 0:
-            txn.match_status = InventoryTransaction.MatchStatus.PARTIAL
-        else:
-            txn.match_status = InventoryTransaction.MatchStatus.UNMATCHED
-        txn.save(update_fields=["invoice_period", "match_status"])
-    for opening in OpeningGoodsIssued.objects.filter(
-        period__month__lte=period.month
-    ):
-        if opening.match_mode == MatchingMode.IGNORED:
-            opening.invoice_period = None
-            opening.remaining_quantity = opening.opening_quantity
-            opening.match_status = InventoryTransaction.MatchStatus.NOT_REQUIRED
-            opening.save(
-                update_fields=[
-                    "invoice_period",
-                    "remaining_quantity",
-                    "match_status",
-                ]
-            )
-            continue
-        allocations = opening.allocations.filter(
-            kind=MatchAllocation.Kind.SALES_INVOICE,
-            period__month__lte=period.month,
-        )
-        matched = (
-            allocations.aggregate(total=Sum("matched_quantity"))["total"]
-            or ZERO
-        )
-        opening.remaining_quantity = max(
-            opening.opening_quantity - matched, ZERO
-        )
-        opening.invoice_period = allocations.aggregate(
-            latest=Max("sales_invoice_line__invoice_period")
-        )["latest"]
-        opening.match_status = (
-            InventoryTransaction.MatchStatus.MATCHED
-            if matched >= opening.opening_quantity
-            else InventoryTransaction.MatchStatus.PARTIAL
-            if matched > 0
-            else InventoryTransaction.MatchStatus.UNMATCHED
-        )
-        opening.save(
-            update_fields=[
-                "invoice_period",
-                "remaining_quantity",
-                "match_status",
-            ]
-        )
-
-
-@transaction.atomic
 def auto_match_all(period: AccountingPeriod):
     if period.status == AccountingPeriod.Status.LOCKED:
         raise ValueError("该期间已锁账，不能重新匹配。")
     period.match_allocations.filter(is_manual=False).delete()
+    # 销售出库不再参与匹配（用户 2026-09-21）：清掉既有的销售分摊（含历史 LEDGER 发票核销），
+    # 销售侧一律以「销售台账」的口径计算，不再由平台核销库存流水。
+    period.match_allocations.filter(
+        kind=MatchAllocation.Kind.SALES_INVOICE
+    ).delete()
     _reset_remaining(period)
     _allocate_contracts(period)
     _allocate_purchase_invoices(period)
-    _allocate_sales_invoices(period)
     _refresh_purchase_transaction_prices(period)
     refresh_purchase_invoice_metadata(period)
-    refresh_sales_invoice_metadata(period)
+    refresh_sales_issue_metadata(period)
 
 
 @transaction.atomic
@@ -787,10 +679,12 @@ def manual_match(
 ):
     if period.status == AccountingPeriod.Status.LOCKED:
         raise ValueError("该期间已锁账，不能人工匹配。")
-    if kind in {
-        MatchAllocation.Kind.PURCHASE_INVOICE,
-        MatchAllocation.Kind.SALES_INVOICE,
-    }:
+    if kind == MatchAllocation.Kind.SALES_INVOICE:
+        raise ValueError(
+            "销售出库不再参与匹配：销售的开票状态与成本以「销售台账」为准，"
+            "请修改台账后重新上传。"
+        )
+    if kind == MatchAllocation.Kind.PURCHASE_INVOICE:
         txn = InventoryTransaction.objects.get(
             id=transaction_id,
             period__month__lte=period.month,
@@ -872,10 +766,8 @@ def manual_match(
             Decimal("0.01")
         )
     elif kind == MatchAllocation.Kind.PURCHASE_INVOICE:
-        kwargs["unit_price"] = source.unit_price_excl_tax
-        kwargs["amount"] = (quantity * source.unit_price_excl_tax).quantize(
-            Decimal("0.01")
-        )
+        kwargs["unit_price"] = invoice_unit_amount(source)
+        kwargs["amount"] = invoice_matched_amount(source, quantity)
     MatchAllocation.objects.create(**kwargs)
     auto_match_all(period)
 
@@ -975,6 +867,8 @@ def _source_allocation_filter(source):
         return {"purchase_invoice_line": source}
     if isinstance(source, SalesInvoiceLine):
         return {"sales_invoice_line": source}
+    if isinstance(source, PurchaseContractLine):
+        return {"contract_line": source}
     raise ValueError("不支持的单据类型。")
 
 

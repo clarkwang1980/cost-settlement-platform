@@ -6,45 +6,65 @@
   <div>
     <p class="eyebrow">WORK ORDER REPORT</p>
     <h1>生产工单</h1>
-    <p>工单主档台账：工单编号、车间、计划数量、状态与计划时间。</p>
+    <p>与上传的生产工单文件<strong>一致</strong>：列名、列顺序都按上传文件（共 {{ columns|length }} 列，{{ page.paginator.count }} 行）。</p>
   </div>
-  <a class="button secondary" href="{% url 'export_listing' period.id 'work_order' %}?{{ request.GET.urlencode }}">导出Excel</a>
-</section>
-
-<section class="section-card filter-card">
-  <form class="filter-grid" method="get">
-    <label>工单编号<input name="order_no" value="{{ request.GET.order_no }}"></label>
-    <label>车间/部门<input name="workshop" value="{{ request.GET.workshop }}" placeholder="如 染色车间 / 纺纱车间"></label>
-    <label>状态<input name="status" value="{{ request.GET.status }}" placeholder="如 已下发 / 执行中"></label>
-    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_order_report' period.id %}">清空</a></div>
-  </form>
 </section>
 
 <section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>生产工单明细</h2>
+    </div>
+    <div class="heading-actions">
+      <a class="button secondary" href="{% url 'export_listing' period.id 'work_order' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>工单编号</th><th>车间/部门</th><th>工单类型</th><th>状态</th>
-          <th class="num">计划数量</th><th>计划开始</th><th>计划完工</th>
-          <th>产线/设备</th><th>订单号</th><th>备注</th>
+          <th>工单编号</th><th>工单类型</th><th>标识码</th>
+          <th class="num">计划数量</th>
+          <th>计划开始时间</th><th>计划完工时间</th>
+          <th>优先级</th><th>产线设备</th><th>班次</th>
+          <th>生产部门编号</th><th>生产主管编号</th><th>计划部门编号</th><th>计划员编号</th>
+          <th>备注</th><th>指定用料</th><th>外部单据编号</th><th>状态</th>
+          <th>是否使用物料清单</th><th>是否使用工艺路线</th><th>工序计划类型</th><th>启用SOP</th>
+          <th>生产模式</th><th>产线编号</th><th>订单号</th><th>物料颜色</th>
         </tr>
       </thead>
       <tbody>
       {% for order in page %}
         <tr>
-          <td><strong>{{ order.order_no }}</strong><small>{{ order.identifier }}</small></td>
-          <td>{{ order.production_dept_code|workshop_label|default:"—" }}</td>
+          <td><strong>{{ order.order_no }}</strong></td>
           <td>{{ order.order_type|default:"—" }}</td>
-          <td>{{ order.status|default:"—" }}</td>
-          <td class="num">{{ order.plan_quantity|floatformat:3|thousands }}</td>
-          <td>{{ order.planned_start|date:"Y-m-d H:i"|default:"—" }}</td>
-          <td>{{ order.planned_finish|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>{{ order.identifier|default:"—" }}</td>
+          <td class="num">{{ order.plan_quantity|trim_num }}</td>
+          <td>{{ order.planned_start|date:"Y-m-d H:i:s"|default:"—" }}</td>
+          <td>{{ order.planned_finish|date:"Y-m-d H:i:s"|default:"—" }}</td>
+          <td>{{ order.priority|default:"—" }}</td>
           <td>{{ order.line_equipment|default:"—" }}</td>
-          <td>{{ order.source_order_no|default:"—" }}</td>
+          <td>{{ order.shift|default:"—" }}</td>
+          <td>{{ order.production_dept_code|default:"—" }}</td>
+          <td>{{ order.production_supervisor_code|default:"—" }}</td>
+          <td>{{ order.planning_dept_code|default:"—" }}</td>
+          <td>{{ order.planner_code|default:"—" }}</td>
           <td>{{ order.remark|default:"—" }}</td>
+          <td>{{ order.specified_material|default:"—" }}</td>
+          <td>{{ order.external_document_no|default:"—" }}</td>
+          <td>{{ order.status|default:"—" }}</td>
+          <td>{{ order.use_bom|yes_no|default:"—" }}</td>
+          <td>{{ order.use_routing|yes_no|default:"—" }}</td>
+          <td>{{ order.process_plan_type|default:"—" }}</td>
+          <td>{{ order.enable_sop|yes_no|default:"—" }}</td>
+          <td>{{ order.production_mode|default:"—" }}</td>
+          <td>{{ order.line_code|default:"—" }}</td>
+          <td>{{ order.source_order_no|default:"—" }}</td>
+          <td>{{ order.material_color|default:"—" }}</td>
         </tr>
-      {% empty %}<tr><td colspan="10" class="empty-cell">尚未导入生产工单主档。</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="25" class="empty-cell">尚未导入生产工单主档。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

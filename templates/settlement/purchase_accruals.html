@@ -6,53 +6,383 @@
   <div>
     <p class="eyebrow">MONTH-END PURCHASE ACCRUAL</p>
     <h1>月末采购暂估</h1>
-    <p>截至{{ period }}月末尚未到票的采购入库，包含以前月份入库；金额始终采用入库时的暂估价格。</p>
+    <p>截至 {{ cutoff_date|date:"Y-m-d" }}（{{ period }}月末）尚未到票的采购入库，含以前月份入库。</p>
   </div>
   <div class="heading-actions">
-    <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_accrual' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_matches' period.id %}">采购发票匹配</a>
-    <a class="button secondary" href="{% url 'purchase_differences' period.id %}">本月暂估差异</a>
   </div>
-</section>
-
-<section class="summary-strip">
-  <article><span>暂估入库笔数</span><strong>{{ summary.receipt_count }}</strong></article>
-  <article><span>尚未到票数量</span><strong>{{ summary.outstanding_quantity|floatformat:3|thousands }}</strong></article>
-  <article><span>月末暂估金额</span><strong>{{ summary.provisional_amount|floatformat:2|thousands }}</strong></article>
-  <article><span>以前月份入库</span><strong>{{ summary.prior_period_count }}</strong></article>
-  <article><span>缺少暂估价格</span><strong class="{% if summary.unpriced_count %}danger-text{% endif %}">{{ summary.unpriced_count }}</strong></article>
-</section>
-
-<section class="section-card filter-card">
-  <form class="filter-grid" method="get">
-    <label>入库月份<input name="receipt_month" type="month" value="{{ request.GET.receipt_month }}"></label>
-    <label>入库单号<input name="document_no" value="{{ request.GET.document_no }}" placeholder="包含关键字"></label>
-    <label>供应商<input name="supplier" value="{{ request.GET.supplier }}" placeholder="编码或名称"></label>
-    <label>物料<input name="material" value="{{ request.GET.material }}" placeholder="编码或名称"></label>
-    <label>合同号<input name="contract_no" value="{{ request.GET.contract_no }}"></label>
-    <label>暂估状态
-      <select name="status">
-        <option value="">全部</option>
-        {% for value in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
-      </select>
-    </label>
-    <div class="filter-actions">
-      <button class="button secondary" type="submit">筛选</button>
-      <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">清空</a>
-    </div>
-  </form>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
-    <h2>截至月末仍未到票的入库明细</h2>
-    <span class="pill warning">供暂估应付核对</span>
+    <div><p class="eyebrow">BY PERIOD</p><h2>到票与暂估</h2></div>
+  </div>
+  {% if no_invoice_data %}
+    {# 方案A（用户 2026-09-19）：合同表管到货/暂估，发票表管到票/实际价。没传发票时先说明清楚，免得把 0 误读成"没有到票"。 #}
+    <div class="message message-warning">
+      {{ period }}<strong>没有上传采购发票</strong>：本表「本月到票 / 当月到货到票 / 本月回冲」按 <strong>0</strong> 计算
+      —— 不是没有到票，而是没有到票数据；未到票的采购入库会一直挂在暂估里（下方「本月暂估 / 期末暂估」照常）。
+      补传采购发票并「重新匹配」后，这几列会自动算出来。
+    </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table class="purchase-flow-table">
+      <thead>
+        <tr>
+          <th>期间</th>
+          <th class="num">期初暂估</th>
+          <th class="num">合同金额</th>
+          <th class="num">本月到票</th>
+          <th class="num">当月到货到票</th>
+          <th class="num">本月暂估</th>
+          <th class="num">本月回冲</th>
+          <th class="num">暂估价差</th>
+          <th class="num">期末暂估</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in flow_rows %}
+        <tr class="{% if r.current %}row-current{% endif %}">
+          <td>
+            {% if r.current %}<strong>{{ r.period }}</strong>
+            {% else %}<a class="document-link" href="{% url 'purchase_accruals' r.period.id %}">{{ r.period }}</a>{% endif %}
+          </td>
+          <td class="num">{{ r.opening_accrual|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.contract_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ r.invoice_matched|floatformat:2|thousands }}</strong></td>
+          <td class="num">{{ r.same_month|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.month_accrual|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.cross|floatformat:2|thousands }}</td>
+          <td class="num strong-diff">{{ r.difference_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ r.ending_accrual|floatformat:2|thousands }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td><strong>合计</strong></td>
+          <td class="num"><strong>{{ flow_total.opening_accrual|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.contract_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.invoice_matched|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.same_month|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.month_accrual|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.cross|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.difference_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ flow_total.ending_accrual|floatformat:2|thousands }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {# 口径说明（用户 2026-09-21：统一格式 —— 左上角「口径说明」标签 + 字段/数据来源/计算依据/作用 表） #}
+  <div class="basis-block">
+    <p class="basis-title">口径说明</p>
+    <div class="table-wrap">
+      <table class="basis-table">
+      <thead>
+        <tr><th>字段</th><th>数据来源</th><th>计算依据</th><th>作用</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>期初暂估</strong></td>
+          <td>上一期间的期末暂估；首个期间取<b>期初采购暂估台账</b></td>
+          <td>＝上一期的「期末暂估」（首期＝台账金额 × 尚未到票数量 ÷ 期初数量）</td>
+          <td>上月还剩多少没到票</td>
+        </tr>
+        <tr>
+          <td><strong>合同金额</strong></td>
+          <td>采购合同（收货期间优先，否则合同所属期间；按月自动承接的副本不重复计）</td>
+          <td>合同的不含税金额（文件里的「原币未税总价」；无此列的老数据＝合同数量 × 不含税单价）</td>
+          <td>与「本月暂估」对照，看合同口径与实际差多少</td>
+        </tr>
+        <tr>
+          <td><strong>本月到票</strong></td>
+          <td>本期发票核销记录</td>
+          <td>＝ 当月到货到票 ＋ 本月回冲</td>
+          <td>本月实际到票了多少</td>
+        </tr>
+        <tr>
+          <td><strong>当月到货到票</strong></td>
+          <td>本月到票里、核销<b>归属本期</b>入库的部分</td>
+          <td>核销数量 × 发票单价</td>
+          <td>当月到货当月到票：直接按票入账，不进暂估</td>
+        </tr>
+        <tr>
+          <td><strong>本月暂估</strong></td>
+          <td>归属本期的采购入库，截至本期末仍未到票</td>
+          <td>尚未到票数量 × 暂估单价</td>
+          <td>本月新增的暂估（月末要挂多少）</td>
+        </tr>
+        <tr>
+          <td><strong>本月回冲</strong></td>
+          <td>本月到票里、核销<b>归属以前期间／期初台账</b>的部分</td>
+          <td>发票金额（其中冲回的暂估部分见「本月回冲明细」）</td>
+          <td>到票后冲回以前的暂估</td>
+        </tr>
+        <tr>
+          <td><strong>暂估价差</strong></td>
+          <td>本期发票核销行</td>
+          <td>＝ 发票金额 − 暂估金额（该期核销产生的价差合计，见下方「暂估价差明细」）</td>
+          <td>交总账处理；「期末」与「期初 ＋ 本月暂估 − 本月回冲」差的正是这一列</td>
+        </tr>
+        <tr>
+          <td><strong>期末暂估</strong></td>
+          <td>截至本期末尚未到票的余额</td>
+          <td>＝ 期初 ＋ 本月暂估 − 本月核销掉的以前暂估</td>
+          <td>月末未到票余额，与暂估凭证、总账对账</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">
+    <strong>归属月份</strong>（决定一行算在哪个月）：① 发票填了「收货期间」按它；② 否则合同已到货签收的按合同「收货期间」；③ 再否则按入库流水月份。
+    <strong>四个发生额</strong>按月各算各的 —— 以后月份新增数据不会改动以前月份那一行。
+    <strong>期初／期末是余额、不可加</strong>，合计行取第一期期初、最后一期期末。
+    注：本月回冲是发票金额口径，「期末」与「期初 ＋ 本月暂估 − 本月回冲」差的正是「暂估价差」这一列（＝该期发票金额 − 对应暂估金额）。金额均为不含税。
+  </p>
+</section>
+
+<!-- 明细 1：期初暂估 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>期初暂估明细</h2></div>
+    <div class="heading-actions">
+      {# 金额方框（用户 2026-09-21）：与其它明细表的金额方框同款（34px） #}
+      <span class="pill detail-filter-pill">期初暂估 {{ flow_current.opening_accrual|floatformat:2|thousands }}</span>
+      {# 用户 2026-09-19：导出本表；「打印本表」由 base.html 注入到 .print-here（就在导出按钮右边） #}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_accrual_opening' %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>入库月份/日期</th><th>入库单号</th><th>合同号</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th>归属月份</th><th>入库日期</th><th>入库单号</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th class="num">入库数量</th><th class="num">累计到票</th><th class="num">尚未到票</th>
+          <th class="num">暂估单价</th><th class="num">暂估金额</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in details.opening %}
+        <tr>
+          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong>{% if row.contract_month %}<small>按合同收货期间</small>{% endif %}{% if row.flow_month and row.flow_month != row.receipt_month %}<small>流水 {{ row.flow_month|date:"Y-m" }}</small>{% endif %}</td>
+          <td>{{ row.document_date|date:"Y-m-d" }}</td>
+          <td><strong>{{ row.document_no|default:"—" }}</strong>{% if not row.transaction %}<small>期初台账</small>{% endif %}</td>
+          <td>{{ row.supplier|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num">{{ row.unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num"><strong>{{ row.amount|floatformat:2|thousands }}</strong></td>
+          <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="empty-cell">本期期初没有尚未到票的暂估。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">口径：{% if details.opening_from_previous %}＝上一期间（{{ details.opening_from_previous }}）期末仍未到票的明细{% else %}首个期间：期初采购暂估台账里本期之前尚未到票的行，金额＝台账金额 × 尚未到票数量 ÷ 期初数量{% endif %}。合计 ＝ 上表「期初暂估」。</p>
+</section>
+
+<!-- 明细 2：本月到票 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>本月到票明细</h2></div>
+  </div>
+  {# 用户 2026-09-19：本表单独筛选（开票期间 / 供应商 / 物料编码）；「金额徽标 / 导出Excel / 打印本表」都在筛选栏那一排 #}
+  {% include "settlement/_accrual_detail_filter.html" with f=detail_filters.invoice id_prefix="inv" %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>开票期间</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th>核销对象</th><th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>期间性质</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in details.invoice %}
+        <tr>
+          <td>{{ row.invoice.invoice_period|date:"Y-m" }}</td>
+          <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td>{{ row.receipt_month|date:"Y-m" }} · {% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"流水" }}</a>{% else %}{{ row.document_no|default:"—" }}<small>期初台账</small>{% endif %}</td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num"><strong>{{ row.invoice_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands|default:"—" }}</strong></td>
+          <td>{% if row.cross_period %}<span class="pill warning">本月回冲</span>{% else %}<span class="pill success">当月到货到票</span>{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="empty-cell">本月没有发票核销记录。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">口径：本月发票核销逐笔（＝当月到货到票 ＋ 本月回冲）；未筛选时发票金额合计 ＝ 上表「本月到票」。本表可按开票期间／供应商／物料编码单独筛选，只影响本表显示与「导出Excel」。</p>
+</section>
+
+<!-- 明细 3：当月到货到票 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>当月到货到票明细</h2></div>
+  </div>
+  {# 用户 2026-09-19：本表单独筛选（开票期间 / 供应商 / 物料编码）；「金额徽标 / 导出Excel / 打印本表」都在筛选栏那一排 #}
+  {% include "settlement/_accrual_detail_filter.html" with f=detail_filters.same_month id_prefix="sm" %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>开票期间</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th>入库单</th><th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">暂估价差</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in details.same_month %}
+        <tr>
+          <td>{{ row.invoice.invoice_period|date:"Y-m" }}</td>
+          <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td>{{ row.receipt_month|date:"Y-m" }} · {% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"流水" }}</a>{% else %}{{ row.document_no|default:"—" }}{% endif %}</td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num"><strong>{{ row.invoice_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands|default:"—" }}</strong></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="11" class="empty-cell">本月没有「当月到货到票」的核销。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">口径：本月到票里核销「<strong>归属本月</strong>的入库」的部分 —— 直接按票入账、不进暂估。未筛选时合计 ＝ 上表「当月到货到票」；本表可按开票期间／供应商／物料编码单独筛选。</p>
+</section>
+
+<!-- 明细 4：本月暂估 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>本月暂估明细</h2></div>
+  </div>
+  {# 用户 2026-09-19：本表单独筛选（归属月份 / 供应商）；「金额徽标 / 导出Excel / 打印本表」都在筛选栏那一排 #}
+  {% include "settlement/_accrual_detail_filter.html" with f=detail_filters.month_accrual id_prefix="ma" %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>归属月份</th><th>入库日期</th><th>入库单号</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th class="num">入库数量</th><th class="num">累计到票</th><th class="num">尚未到票</th>
+          <th class="num">暂估单价</th><th class="num">暂估金额</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in details.month_accrual %}
+        <tr>
+          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong>{% if row.contract_month %}<small>按合同收货期间</small>{% endif %}{% if row.flow_month and row.flow_month != row.receipt_month %}<small>流水 {{ row.flow_month|date:"Y-m" }}</small>{% endif %}</td>
+          <td>{{ row.document_date|date:"Y-m-d" }}</td>
+          <td>{% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong></a>{% else %}<strong>{{ row.document_no|default:"—" }}</strong>{% endif %}</td>
+          <td>{{ row.supplier|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num">{{ row.unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num"><strong>{{ row.amount|floatformat:2|thousands|default:"—" }}</strong></td>
+          <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="empty-cell">本月没有尚未到票的入库。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">口径：<strong>归属本月</strong>的入库、截至本月末仍未到票的行；金额＝尚未到票数量 × 暂估单价。未筛选时合计 ＝ 上表「本月暂估」（也是「期末暂估」里的本月归属部分）；本表可按归属月份／供应商单独筛选。</p>
+</section>
+
+<!-- 明细 5：本月回冲 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>本月回冲明细</h2></div>
+  </div>
+  {# 用户 2026-09-19：本表单独筛选（开票期间 / 供应商）；「金额徽标 / 导出Excel / 打印本表」都在筛选栏那一排 #}
+  {% include "settlement/_accrual_detail_filter.html" with f=detail_filters.cross id_prefix="cr" %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>开票期间</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th>冲回的入库/期初台账</th><th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">冲回暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">暂估价差</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in details.cross %}
+        <tr>
+          <td>{{ row.invoice.invoice_period|date:"Y-m" }}</td>
+          <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td>
+          <td>{{ row.material_name }}</td>
+          <td>{{ row.receipt_month|date:"Y-m" }} · {% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"流水" }}</a>{% else %}{{ row.document_no|default:"—" }}<small>期初台账</small>{% endif %}</td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num"><strong>{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</strong></td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num"><strong>{{ row.invoice_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands|default:"—" }}</strong></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="11" class="empty-cell">本月没有核销以前月份入库／期初台账的发票。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:12px;">口径：本月到票里核销「<strong>归属早于本期的入库</strong>／期初台账」的部分 —— 冲回以前暂估。未筛选时合计（发票金额）＝ 上表「本月回冲」；本表可按开票期间／供应商单独筛选。「冲回暂估金额」合计即余额滚动里扣减的那部分（与发票金额差一个价差）。</p>
+</section>
+
+<section class="section-card">
+  {# 暂估截止说明：明确「截至哪一天」，以及为什么之后的到票不会冲减本表 #}
+  <div class="accrual-cutoff">
+    <span class="pill">暂估截止 {{ cutoff_date|date:"Y-m-d" }}</span>
+    <p>{{ period }}月末（截至 {{ cutoff_date|date:"Y-m-d" }}）尚未到票的暂估余额；只冲减本期间及之前开票的发票，金额按入库暂估价格计。</p>
+  </div>
+  <div class="filter-card purchase-filter">
+    <form class="filter-grid" method="get">
+      <label>归属月份
+        <select name="receipt_month" onchange="this.form.submit()">
+          <option value="">全部月份</option>
+          {% for item in receipt_months %}<option value="{{ item.value }}" {% if request.GET.receipt_month == item.value %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>供应商<input name="supplier" value="{{ request.GET.supplier }}" placeholder="编码或名称"></label>
+      <label>物料编码<input name="material" value="{{ request.GET.material }}" placeholder="编码或名称"></label>
+      {# 这 4 张明细表各自的筛选条件也一起带上，避免筛主表时把它们冲掉 #}
+      {% for name, value in detail_filter_hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+      {# 与「采购发票匹配」同款筛选栏：筛选 / 清空 / 导出Excel 一排，「打印本表」由 base.html 注入到本行末尾 #}
+      <div class="filter-actions">
+        <button class="button secondary" type="submit">筛选</button>
+        <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">清空</a>
+        {# 金额徽标（用户 2026-09-21）：与其它明细表同款，筛选后显示筛选后合计 #}
+        <span class="pill detail-filter-pill">月末暂估金额 {{ filtered_amount|floatformat:2|thousands }}{% if filter_labels %}（筛选后）{% endif %}</span>
+        <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_accrual' %}{% if export_query %}?{{ export_query }}{% endif %}">导出Excel</a>
+      </div>
+    </form>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>归属月份</th><th>入库日期</th>{% if show_doc_no %}<th>入库单号</th>{% endif %}<th>合同号</th><th>供应商</th><th>物料编码</th><th>物料名称</th>
           <th class="num">入库数量</th><th class="num">累计到票</th><th class="num">尚未到票</th>
           <th class="num">暂估单价</th><th class="num">月末暂估金额</th><th>最近到票期间</th><th>暂估依据</th><th>状态</th>
         </tr>
@@ -60,14 +390,17 @@
       <tbody>
       {% for row in page %}
         <tr>
-          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong><small>{{ row.document_date }}</small></td>
+          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong>{% if row.contract_month %}<small>按合同收货期间</small>{% endif %}{% if row.flow_month and row.flow_month != row.receipt_month %}<small>流水 {{ row.flow_month|date:"Y-m" }}</small>{% endif %}</td>
+          <td>{{ row.document_date|date:"Y-m-d" }}</td>
+          {% if show_doc_no %}
           <td>
             {% if row.transaction %}
-              <a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong><small>流水ID {{ row.transaction.id }}</small></a>
+              <a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}"><strong>{{ row.document_no|default:"—" }}</strong></a>
             {% else %}
               <strong>{{ row.document_no|default:"—" }}</strong><small>期初采购暂估台账</small>
             {% endif %}
           </td>
+          {% endif %}
           <td>{{ row.contract_nos|default:"—" }}</td>
           <td>{{ row.supplier_name|default:row.supplier_code|default:"—" }}</td>
           <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
@@ -81,11 +414,276 @@
           <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% else %}warning{% endif %}">{{ row.status }}</span></td>
         </tr>
       {% empty %}
-        <tr><td colspan="14" class="empty-cell">截至本月末没有尚未到票的采购入库。</td></tr>
+        <tr><td colspan="{% if show_doc_no %}15{% else %}14{% endif %}" class="empty-cell">{% if filter_labels %}没有符合当前筛选条件的未到票采购入库（全部明细共 {{ total_count }} 行）。{% else %}截至本月末没有尚未到票的采购入库。{% endif %}</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
   {% include "settlement/_pagination.html" %}
+  {% if filter_labels %}
+  <p class="muted-text" style="margin-top:12px;">当前筛选：{{ filter_labels|join:"；" }} —— 命中 {{ filtered_count }} / {{ total_count }} 行；「导出Excel」导出的是筛选后的明细，点「清空」回到全部明细。</p>
+  {% endif %}
 </section>
+
+<!-- 暂估差异三块（2026-09-21 由「本月采购暂估差异」页并入；只列有暂估价差的行） -->
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">BY PERIOD</p><h2>暂估差异汇总</h2></div>
+  </div>
+  <div class="table-wrap">
+    <table class="difference-summary-table">
+      <thead>
+        <tr>
+          <th>期间</th>
+          <th class="num">本月核销数量</th>
+          <th class="num">暂估金额</th>
+          <th class="num">发票金额</th>
+          <th class="num">暂估价差</th>
+          <th class="num">跨期核销 / 待确认</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in diff_summary_rows %}
+        <tr class="{% if row.current %}row-current{% endif %}">
+          <td>
+            {% if row.current %}<strong>{{ row.period }}</strong>
+            {% else %}<a class="document-link" href="{% url 'purchase_accruals' row.period.id %}">{{ row.period }}</a>{% endif %}
+          </td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num">{{ row.cross_period_count }} / {{ row.pending_count }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="empty-cell">各期间都没有暂估价差。</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td><strong>合计</strong></td>
+          <td class="num"><strong>{{ diff_summary_total.matched_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ diff_summary_total.provisional_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ diff_summary_total.invoice_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong class="{% if diff_summary_total.difference_amount %}difference-text{% endif %}">{{ diff_summary_total.difference_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ diff_summary_total.cross_period_count }} / {{ diff_summary_total.pending_count }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {# 口径说明（用户 2026-09-21：不做表格，简短几条） #}
+  <div class="basis-block">
+    <p class="basis-title">口径说明</p>
+    <ul class="basis-notes">
+      <li><strong>只列有价差的</strong>：暂估价差 ＝ 发票金额 − 暂估金额（不含税）；无价差的核销行不显示，也不反写库存金额。</li>
+      <li><strong>期间可相加</strong>：每条核销只归属一个核算期间，合计＝各月交总账的价差合计。</li>
+      <li><strong>跨期核销</strong>＝核销的入库属于以前月份；<strong>待确认</strong>＝缺暂估价格、无法计价的行（只计入核销数量与发票金额）。</li>
+    </ul>
+    <p class="muted-text" style="margin-top:10px;">
+      本期价差合计：<strong class="{% if diff_totals.difference_amount %}difference-text{% endif %}">{{ diff_totals.difference_amount|floatformat:2|thousands }}</strong>{% if diff_pending_count %}；另有 {{ diff_pending_count }} 行缺暂估价格无法计价（待确认），未列入。{% endif %}
+    </p>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">BY SUPPLIER</p><h2>暂估价差汇总</h2></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>供应商</th><th>物料编码</th><th>物料名称</th><th class="num">核销数量</th><th class="num">暂估金额</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>待确认</th></tr></thead>
+      <tbody>
+      {% for item in diff_grouped_rows %}
+        <tr>
+          <td>{{ item.supplier|default:"—" }}</td>
+          <td><strong>{{ item.material_code }}</strong></td><td>{{ item.material_name }}</td>
+          <td class="num">{{ item.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ item.provisional_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ item.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong class="{% if item.difference_amount %}difference-text{% endif %}">{{ item.difference_amount|floatformat:2|thousands }}</strong></td>
+          <td>{% if item.pending_count %}<span class="pill danger">{{ item.pending_count }}笔</span>{% else %}—{% endif %}</td>
+        </tr>
+      {% empty %}<tr><td colspan="8" class="empty-cell">本期没有暂估价差（供应商 / 物料维度）。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">DETAIL</p><h2>暂估价差明细</h2></div>
+    <div class="heading-actions">
+      {# 导出：走原来的「采购暂估差异」导出（内容不受本页筛选影响）；「打印本表」由 base.html 注入 #}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_difference' %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>期间</th><th>供应商</th><th>物料编码</th><th>物料名称</th><th>入库月份/单号</th>
+          <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">暂估价差</th><th>期间性质</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in diff_page %}
+        <tr>
+          {# 用户 2026-09-21：不显示发票号，本列改为「期间」（发票所属期间） #}
+          <td>{{ row.invoice.invoice_period|date:"Y-m" }}</td>
+          <td>{{ row.invoice.supplier_name|default:row.invoice.supplier_code|default:"—" }}</td>
+          <td><strong>{{ row.material_code }}</strong></td><td>{{ row.material_name }}</td>
+          <td><strong>{{ row.receipt_month|date:"Y-m" }}</strong><small>{% if row.transaction %}<a class="document-link" href="{% url 'inventory_match_detail' row.transaction.period.id row.transaction.id %}">{{ row.document_no|default:"—" }}</a>{% else %}{{ row.document_no|default:"—" }} · 期初暂估{% endif %}</small></td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands|default:"—" }}</td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num">{{ row.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong class="{% if row.difference_amount %}difference-text{% endif %}">{{ row.difference_amount|floatformat:2|thousands|default:"—" }}</strong></td>
+          <td>{% if row.cross_period %}<span class="pill warning">跨期核销</span>{% else %}<span class="pill">本月入库</span>{% endif %}</td>
+          <td><span class="pill {% if row.status == '有差异' %}warning{% elif row.status == '待确认暂估价格' %}danger{% else %}success{% endif %}">{{ row.status }}</span></td>
+        </tr>
+      {% empty %}<tr><td colspan="13" class="empty-cell">本期发票核销没有产生暂估价差。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" with page=diff_page param="diff_page" %}
+</section>
+
+<!-- 回冲明细（逐笔）：2026-09-21 由「暂估回冲」页并入本页 -->
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">REVERSAL DETAIL</p>
+      <h2>回冲明细（逐笔）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        本期（{{ period }}）每张采购发票核销了哪笔入库或期初暂估：暂估金额、发票金额、价差、累计已核销与剩余未到票。
+      </p>
+    </div>
+    <div class="heading-actions">
+      {# 「打印本表」由 base.html 注入到 .print-here #}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_reversal' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </div>
+
+  {# 逐期间汇总：一个期间一行，本期高亮；多期间才有合计行 #}
+  <div class="table-wrap">
+    <table class="reversal-summary-table">
+      <thead>
+        <tr>
+          <th>期间</th>
+          <th class="num">回冲笔数</th>
+          <th class="num">核销数量</th>
+          <th class="num">暂估金额</th>
+          <th class="num">发票金额</th>
+          <th class="num">价差合计</th>
+          <th class="num">跨期回冲</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in reversal_period_rows %}
+        <tr class="{% if r.current %}row-current{% endif %}">
+          <td>
+            {% if r.current %}<strong>{{ r.period }}</strong>
+            {% else %}<a class="document-link" href="{% url 'purchase_accruals' r.period.id %}"><strong>{{ r.period }}</strong></a>{% endif %}
+          </td>
+          <td class="num">{{ r.count }} 笔</td>
+          <td class="num">{{ r.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.provisional_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.difference_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ r.cross_period_count }} 笔</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if reversal_period_rows|length > 1 %}
+      <tfoot>
+        <tr>
+          <td><strong>合计</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.count }} 笔</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.matched_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.provisional_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.invoice_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.difference_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ reversal_period_total.cross_period_count }} 笔</strong></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  <p class="muted-text" style="margin-top:8px;">
+    口径：一个期间一行、各算各的，可以相加；点期间名可切到该期间的逐笔明细。下方逐笔明细只列当前期间（{{ period }}）。
+  </p>
+
+  {% if detail_filter_active %}
+  {# 筛选栏已按用户要求删除，老链接/书签里带的筛选参数仍然生效；上方表格始终是全量口径 #}
+  <div class="message message-info">下方明细已按链接里的筛选条件过滤（{{ detail_totals.count }} 笔）。</div>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>发票日期</th><th>发票期间</th><th>核销对象</th><th>原入库单号</th>
+          <th>原入库月份</th><th>原入库日期</th><th>物料编码</th><th>物料名称</th><th>供应商</th>
+          <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">价差</th>
+          <th class="num">该单入库数量</th><th class="num">累计已核销</th><th class="num">剩余未到票</th>
+          <th>是否跨期</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in detail_rows %}
+        <tr>
+          <td>{{ r.invoice_date|date:"Y-m-d" }}</td>
+          <td>{{ r.invoice_period|date:"Y-m" }}</td>
+          <td><span class="pill">{{ r.target_type }}</span></td>
+          <td>{{ r.document_no|default:"—" }}</td>
+          <td>{{ r.receipt_month|date:"Y-m" }}</td>
+          <td>{{ r.document_date|date:"Y-m-d" }}</td>
+          <td><strong>{{ r.material_code }}</strong></td><td>{{ r.material_name }}</td>
+          <td>{{ r.supplier_name|default:"—" }}</td>
+          <td class="num">{{ r.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{% if r.provisional_unit_price %}{{ r.provisional_unit_price|floatformat:4|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{% if r.provisional_amount is not None %}{{ r.provisional_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{{ r.invoice_unit_price|floatformat:4|thousands }}</td>
+          <td class="num">{{ r.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num {% if r.difference_amount and r.difference_amount != 0 %}diff{% endif %}">{% if r.difference_amount is not None %}{{ r.difference_amount|floatformat:2|thousands }}{% else %}—{% endif %}</td>
+          <td class="num">{{ r.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.cumulative_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ r.outstanding_quantity|floatformat:3|thousands }}</td>
+          <td>{% if r.cross_period %}<span class="pill warning">跨期</span>{% else %}本期{% endif %}</td>
+          <td><span class="pill {% if r.status == '无差异' %}success{% elif r.status == '有差异' %}warning{% else %}danger{% endif %}">{{ r.status }}</span></td>
+        </tr>
+      {% empty %}<tr><td colspan="20" class="empty-cell">{% if detail_filter_active %}没有符合筛选条件的回冲记录。{% else %}本期没有采购发票核销记录。{% endif %}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<style>
+  /* 到票与暂估：当前期间高亮、合计行加底色 */
+  .purchase-flow-table .row-current { background: #eef6ff !important; }
+  .purchase-flow-table .row-current td:first-child { border-left: 3px solid #2e86c1; }
+  .purchase-flow-table tfoot td { background: #eef2f5; font-weight: 700; }
+  /* 回冲明细（逐笔，并入本页）：当前期间高亮、逐期间汇总的合计行加底色 */
+  .reversal-summary-table .row-current { background: #eef6ff !important; }
+  .reversal-summary-table .row-current td:first-child { border-left: 3px solid #2e86c1; }
+  .reversal-summary-table tfoot td { background: #eef2f5; font-weight: 700; }
+  /* 各期间暂估差异（并入本页）：当前期间高亮、合计行加底色 */
+  .difference-summary-table .row-current { background: #eef6ff !important; }
+  .difference-summary-table .row-current td:first-child { border-left: 3px solid #2e86c1; }
+  .difference-summary-table tfoot td { background: #eef2f5; font-weight: 700; }
+  /* 口径说明：三行（数据来源 / 计算依据 / 目的），紧凑排版 */
+  .accrual-basis { margin: 12px 0 0; padding-left: 18px; color: #5c6b76; font-size: 12.5px; line-height: 1.75; }
+  .accrual-basis li { margin: 0 0 2px; }
+  .accrual-basis strong { color: #45606f; }
+  /* 暂估截止说明：徽标左、说明右；一行放不下就换行（不用 overflow 裁切） */
+  .accrual-cutoff { margin: 0 0 14px; padding: 10px 12px; display: flex; flex-wrap: wrap;
+    align-items: flex-start; gap: 8px 10px; background: #f3f8fc; border: 1px solid #dbe7f0; border-radius: 10px; }
+  .accrual-cutoff .pill { flex: 0 0 auto; white-space: nowrap; }
+  .accrual-cutoff p { margin: 0; min-width: 0; flex: 1 1 320px; color: #45606f; font-size: 12.5px; line-height: 1.7; }
+</style>
 {% endblock %}

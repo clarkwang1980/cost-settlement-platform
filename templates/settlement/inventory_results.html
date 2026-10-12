@@ -2,24 +2,141 @@
 {% load workshop_tags %}
 {% block title %}库存结转 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  /* 两个表的筛选行：标签在上、控件在下、整行靠左 */
+  .ir-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;
+                 gap:8px 14px;margin:0 0 12px;}
+  .ir-filter-row label{display:grid;gap:4px;white-space:nowrap;color:#56636e;
+                       font-size:12px;font-weight:700;}
+  .ir-filter-row select,.ir-filter-row input{height:34px;min-height:34px;padding:4px 8px;}
+  .ir-filter-row input[type="text"]{min-width:170px;}
+  /* 筛选行里的按钮（筛选/清空/导出/打印）与左侧筛选项同高、底对齐 */
+  .ir-filter-row .filter-actions{align-self:flex-end;flex-wrap:wrap;align-items:center;}
+  .ir-filter-row .filter-actions .button,
+  .ir-filter-row .print-here .section-print{min-height:34px;padding:6px 12px;font-size:14px;
+                                            white-space:nowrap;}
+  .ir-filter-row .print-here{display:flex;align-items:center;}
+</style>
 <section class="page-heading">
   <div><p class="eyebrow">INVENTORY VALUATION</p><h1>库存金额结转</h1><p>采购、生产入库和全部出库按照月末加权平均价完整结转。</p></div>
   <div class="heading-actions">
-    <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_valuation' %}?{{ request.GET.urlencode }}">导出Excel</a>
     {% if period.inventory_valuations.exists %}<a class="button secondary" href="{% url 'export_period' period.id %}">导出结算工作簿</a>{% endif %}
   </div>
 </section>
-<section class="summary-strip">
-  <article><span>期初金额</span><strong>¥{{ totals.opening|floatformat:2|thousands|default:"0.00" }}</strong></article>
-  <article><span>本期入库</span><strong>¥{{ totals.receipts|floatformat:2|thousands|default:"0.00" }}</strong></article>
-  <article><span>本期出库</span><strong>¥{{ totals.issues|floatformat:2|thousands|default:"0.00" }}</strong></article>
-  <article><span>期末金额</span><strong>¥{{ totals.ending|floatformat:2|thousands|default:"0.00" }}</strong></article>
-</section>
+
 <section class="section-card">
+  <div class="section-heading">
+    <div><h2>期末库存汇总（按物料分类）</h2></div>
+  </div>
+  <form class="ir-filter-row" method="get">
+    {# 明细表的筛选条件原样带过去（两个表互不影响） #}
+    {% if detail_filters.period %}<input type="hidden" name="d_period" value="{{ detail_filters.period }}">{% endif %}
+    {% if detail_filters.material %}<input type="hidden" name="d_material" value="{{ detail_filters.material }}">{% endif %}
+    <label>期间
+      <select name="s_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == summary_filters.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+        <option value="all"{% if summary_filters.period == 'all' %} selected{% endif %}>全部期间</option>
+      </select>
+    </label>
+    <label>物料分类
+      <select name="s_category" onchange="this.form.submit()">
+        <option value="">全部分类</option>
+        {% for item in category_options %}
+        <option value="{{ item }}"{% if item == summary_filters.category %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{% if detail_filters.period %}d_period={{ detail_filters.period }}{% endif %}{% if detail_filters.material %}&d_material={{ detail_filters.material }}{% endif %}">清空</a>
+      {% comment %}导出Excel 与「打印本表」也放在这一排，跟筛选项/按钮底对齐（打印由 base.html 注入到 .print-here）{% endcomment %}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_valuation_summary' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
   <div class="table-wrap">
-    <table><thead><tr><th>物料编码</th><th>物料名称</th><th class="num">期初数量</th><th class="num">期初金额</th><th class="num">入库数量</th><th class="num">入库金额</th><th class="num">月末平均价</th><th class="num">出库数量</th><th class="num">出库金额</th><th class="num">期末数量</th><th class="num">期末金额</th><th>收敛</th></tr></thead>
-    <tbody>{% for item in page %}<tr><td><strong>{{ item.material_code }}</strong></td><td>{{ item.material_name }}</td><td class="num">{{ item.opening_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.opening_amount|floatformat:2|thousands }}</td><td class="num">{{ item.receipt_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.receipt_amount|floatformat:2|thousands }}</td><td class="num">{{ item.weighted_average_price|floatformat:6|thousands }}</td><td class="num">{{ item.issue_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.issue_amount|floatformat:2|thousands }}</td><td class="num">{{ item.ending_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.ending_amount|floatformat:2|thousands }}</td><td>{% if item.converged %}<span class="pill success">是</span>{% else %}<span class="pill danger">否</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="12" class="empty-cell">尚未执行结算。</td></tr>{% endfor %}</tbody></table>
+    <table class="sales-summary-table">
+      <thead>
+        <tr>
+          <th>期间</th><th>物料分类</th>
+          <th class="num">期初数量</th><th class="num">期初金额</th>
+          <th class="num">入库数量</th><th class="num">入库金额</th>
+          <th class="num">出库数量</th><th class="num">出库金额</th>
+          <th class="num">期末数量</th><th class="num">期末金额</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in category_rows %}
+        <tr>
+          <td>{{ row.period_label }}</td>
+          <td>{{ row.category }}</td>
+          <td class="num">{{ row.opening_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.opening_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.receipt_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.receipt_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.issue_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.issue_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.ending_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.ending_amount|floatformat:2|thousands }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="10" class="empty-cell">该期间尚未执行结算（可在上方切换期间）。</td></tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2"><strong>合计</strong></td>
+          <td class="num"><strong>{{ category_totals.opening_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.opening_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.receipt_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.receipt_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.issue_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.issue_amount|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.ending_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ category_totals.ending_amount|floatformat:2|thousands }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="muted-text">
+    默认只显示当月，选「全部期间」看历史。物料分类取自期初存货明细、库存流水与投料记录；取不到的显示「未分类」。
+    {% if unclassified_count %}当前有 {{ unclassified_count }} 个物料取不到分类。{% endif %}
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div><h2>期末库存（平台计价）</h2></div>
+  </div>
+  <form class="ir-filter-row" method="get">
+    {% if summary_filters.period %}<input type="hidden" name="s_period" value="{{ summary_filters.period }}">{% endif %}
+    {% if summary_filters.category %}<input type="hidden" name="s_category" value="{{ summary_filters.category }}">{% endif %}
+    <label>期间
+      <select name="d_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == detail_filters.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+        <option value="all"{% if detail_filters.period == 'all' %} selected{% endif %}>全部期间</option>
+      </select>
+    </label>
+    <label>物料编码
+      <input type="text" name="d_material" value="{{ detail_filters.material }}" placeholder="包含即可，如 11.01">
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{% if summary_filters.period %}s_period={{ summary_filters.period }}{% endif %}{% if summary_filters.category %}&s_category={{ summary_filters.category }}{% endif %}">清空</a>
+      {% comment %}导出Excel 与「打印本表」也放在这一排，跟筛选项/按钮底对齐（打印由 base.html 注入到 .print-here）{% endcomment %}
+      <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_valuation' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+  <div class="table-wrap">
+    <table><thead><tr><th>期间</th><th>物料编码</th><th>物料名称</th><th>物料分类</th><th class="num">期初数量</th><th class="num">期初金额</th><th class="num">入库数量</th><th class="num">入库金额</th><th class="num">月末平均价</th><th class="num">出库数量</th><th class="num">出库金额</th><th class="num">期末数量</th><th class="num">期末金额</th><th>收敛</th></tr></thead>
+    <tbody>{% for item in page %}<tr><td>{{ item.period_label }}</td><td><strong>{{ item.material_code }}</strong></td><td>{{ item.material_name }}</td><td>{{ item.material_category }}</td><td class="num">{{ item.opening_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.opening_amount|floatformat:2|thousands }}</td><td class="num">{{ item.receipt_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.receipt_amount|floatformat:2|thousands }}</td><td class="num">{{ item.weighted_average_price|floatformat:6|thousands }}</td><td class="num">{{ item.issue_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.issue_amount|floatformat:2|thousands }}</td><td class="num">{{ item.ending_quantity|floatformat:3|thousands }}</td><td class="num">{{ item.ending_amount|floatformat:2|thousands }}</td><td>{% if item.converged %}<span class="pill success">是</span>{% else %}<span class="pill danger">否</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="14" class="empty-cell">该期间没有符合条件的物料（可在上方切换期间）。</td></tr>{% endfor %}</tbody></table>
   </div>{% include "settlement/_pagination.html" %}
 </section>
 {% endblock %}
-

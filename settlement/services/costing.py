@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import os
 import uuid
 from collections import defaultdict
 from datetime import timedelta
@@ -41,6 +41,7 @@ from settlement.services.sales_uninvoiced import (
     summarize_sales_uninvoiced,
 )
 from settlement.services.workorder_costing import (
+    BULK_UPDATE_BATCH,
     FINISHED_RECEIPT_TYPES,
     calculate_work_order_costs,
     clear_baogong_receipt_prices,
@@ -59,6 +60,13 @@ CENT = Decimal("0.01")
 PRICE_PRECISION = Decimal("0.00000001")
 CONVERGENCE_TOLERANCE = Decimal("0.005")
 MAX_ITERATIONS = 50
+
+# 用户 2026-09-23 定：BOM 子项「用量」（分子÷分母）合计 **超过 100%** 时，
+# 视作配比类录入偏差 —— 按用量比例缩放到合计 100% 后再算标准成品单价
+# （等价于 标准成品单价 = Σ(用量×单价) ÷ Σ用量）。
+# 合计 ≤ 100% 的工单不缩放（只处理"超过"的情形，用户明确要求）。
+# 置 0 或 None 可关闭该规则（回到 Σ(用量×单价)）。
+BOM_QTY_NORMALIZE_OVER = Decimal("1")
 
 
 def money(value) -> Decimal:
@@ -130,13 +138,28 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         opening_amount = ZERO
         has_manual_opening = False
         receipt_qty = ZERO
+        # 参与**月末加权价**计算的入库数量：只含正常匹配的入库（不含内部流转，
+        # 内部流转虽然算期末数量，但它们的金额不计成本，不能进单价分母 —— 否则单价会被摊薄）
+        priced_receipt_qty = ZERO
         fixed_receipt_amount = ZERO
         floating_receipts = []
         issue_qty = ZERO
 
         for txn in txns:
-            # 被忽略（内部流转/无需匹配）的流水不参与月末加权平均计价
+            qty = abs(txn.quantity)
+            # 被忽略匹配的流水（**内部流转**：调拨/库存调整/库存转换/报工调整）：
+            #   **数量照算**（它们也是真实的数量移动），只是不参与金额与月末加权价计算。
+            #   用户 2026-09-30 实测 14.298：库存调整 +3.01（入库）原来被整行跳过 →
+            #   期末 869.53 ＋ 0 − 872.54 ＝ −3.01 ✗；加上调整后应为 0.00 ✓。
             if txn.match_mode == MatchingMode.IGNORED:
+                if is_opening_transaction(txn):
+                    has_manual_opening = True
+                    opening_qty += qty
+                    opening_amount += Decimal(txn.amount or ZERO)
+                elif txn.direction == InventoryTransaction.Direction.IN:
+                    receipt_qty += qty
+                else:
+                    issue_qty += qty
                 continue
             qty = abs(txn.quantity)
             if is_opening_transaction(txn):
@@ -145,6 +168,7 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
                 opening_amount += Decimal(txn.amount or ZERO)
             elif txn.direction == InventoryTransaction.Direction.IN:
                 receipt_qty += qty
+                priced_receipt_qty += qty
                 if _fixed_receipt_amount(txn):
                     fixed_receipt_amount += Decimal(txn.amount or ZERO)
                 else:
@@ -159,7 +183,7 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         prior_price = Decimal(previous_prices.get(material_code, ZERO))
         floating_qty = sum((abs(txn.quantity) for txn in floating_receipts), ZERO)
         numerator = opening_amount + fixed_receipt_amount + floating_qty * prior_price
-        denominator = opening_qty + receipt_qty
+        denominator = opening_qty + priced_receipt_qty
         weighted_price = numerator / denominator if denominator else ZERO
 
         # Returns and other unpriced receipts are valued at the same monthly average.
@@ -233,8 +257,7 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
 def _persist_valuations(period, summaries, iterations, converged):
     InventoryValuation.objects.filter(period=period).delete()
     InventoryValuation.objects.bulk_create(
-        [
-            InventoryValuation(
+        [            InventoryValuation(
                 period=period,
                 material_code=material_code,
                 material_name=data["material_name"],
@@ -251,7 +274,8 @@ def _persist_valuations(period, summaries, iterations, converged):
                 converged=converged,
             )
             for material_code, data in summaries.items()
-        ]
+        ],
+        batch_size=BULK_UPDATE_BATCH,
     )
     # 期末存货以用户上传报表为准（数量不变），单价金额由系统按月末加权价回填
     _fill_ending_prices(period, summaries)
@@ -274,14 +298,6 @@ def _fill_ending_prices(period, summaries):
 
 
 
-
-def _is_pulp_finished(code, name) -> bool:
-    """浆粕成品（浆粕/微纤/JP-）：期末独立核算，不并入通用库存期末表。"""
-    return (
-        ("浆粕" in str(name or ""))
-        or ("微纤" in str(name or ""))
-        or str(code or "").upper().startswith("JP-")
-    )
 
 def _persist_ending_by_batch(period, summaries):
     """按 物料+仓库+批次 生成期末存货（批次级）。
@@ -329,6 +345,17 @@ def _persist_ending_by_batch(period, summaries):
         period.inventory_transactions.all().order_by("txn_date", "id")
     )
 
+    # 物料 → 分类（用户 2026-09-19：期末存货行以前**不带分类**，导出里「分类名称」列是空的，
+    # 「库存金额结转」只能靠期初/流水反查分类；承接给下期时还会把空分类带过去）。
+    # 这里按 期初存货 → 本月流水 的顺序取第一个非空分类，写进期末行。
+    category_of = {}
+    for opening in OpeningInventoryBalance.objects.filter(period=period).order_by("id"):
+        if opening.material_code and (opening.category_name or "").strip():
+            category_of.setdefault(opening.material_code, opening.category_name.strip())
+    for txn in txns:
+        if txn.material_code and (txn.category_name or "").strip():
+            category_of.setdefault(txn.material_code, txn.category_name.strip())
+
     # 期初类型流水（业务类型含"期初"的入库）也作为初始批次行
     for txn in txns:
         if (
@@ -364,16 +391,17 @@ def _persist_ending_by_batch(period, summaries):
     codes = set(opening_rows) | {
         t.material_code for t in txns
     }
-    # 浆粕成品期末独立核算（浆粕期初/流水/期末模板），不并入通用期末表
-    codes = {
-        c for c in codes
-        if not _is_pulp_finished(c, summaries.get(c, {}).get("material_name", ""))
-    }
+    # 用户 2026-09-19：**浆粕（浆粕/微纤/JP-）也一并结转** ——
+    # 以前这里把浆粕成品整类排除在通用期末表之外（"浆粕成品期末独立核算"），结果是：
+    # 浆粕没有期末存货行 → 下期承接（_carry_inventory 优先读上期期末存货）拿不到它 → 库存断了。
+    # 现在浆粕与普通物料同规则：期末数量 = 期初（浆粕期初上传）+ 本月入库 − 本月出库（浆粕流水上传），
+    # 金额 = 数量 × 月末加权价（来自浆粕成本核算）。
+    # 若用户另外上传了浆粕期末，则走上面的 manual_codes 分支、以人工为准（保持原有优先级）。
     for code in sorted(codes):
         if code in manual_codes:
             continue
         # 期末数量按物料汇总：期初（各批号合计）+ 本月全部入库 − 本月全部出库
-        # （含调拨/库存转换等内部流转，成对抵消；浆粕成品已在上方排除）。
+        # （含调拨/库存转换等内部流转，成对抵消）。不做批号 FIFO 扣减，避免调拨顺序/批号错位产生假负数。
         # 不做批号 FIFO 扣减，避免调拨顺序/批号错位产生假负数。
         opening_qty = sum(
             (row["qty"] for row in opening_rows.get(code, [])),
@@ -398,7 +426,7 @@ def _persist_ending_by_batch(period, summaries):
         ending_by_code[code] = [
             {
                 "material_name": summaries[code]["material_name"] if code in summaries else "",
-                "category_name": "",
+                "category_name": category_of.get(code, ""),
                 "warehouse": None,
                 "batch_no": None,
                 "uom": "",
@@ -417,7 +445,7 @@ def _persist_ending_by_batch(period, summaries):
                     material_code=code,
                     material_name=row["material_name"],
                     ending_date=month_end,
-                    category_name=row["category_name"],
+                    category_name=row["category_name"] or category_of.get(code, ""),
                     warehouse=row["warehouse"],
                     batch_no=row["batch_no"],
                     uom=row["uom"],
@@ -427,7 +455,9 @@ def _persist_ending_by_batch(period, summaries):
                     is_system_generated=True,
                 )
             )
-    EndingInventoryBalance.objects.bulk_create(rows_to_create)
+    EndingInventoryBalance.objects.bulk_create(
+        rows_to_create, batch_size=BULK_UPDATE_BATCH
+    )
 
 
 def _add_exception(period, category, severity, message, reference=""):
@@ -707,12 +737,15 @@ def _build_reconciliations(period):
     opening_total = sum((item.total for item in period.opening_wip.all()), ZERO)
     pool_total = ZERO
     for pool in period.workshop_cost_pools.all():
+        # 与工单成本的分摊口径一致：7 项制造费用全部计入本期投入（含染料助剂、加工费）
         pool_total += (
             pool.water_power
             + pool.steam
             + pool.natural_gas
             + pool.depreciation
             + pool.consumables
+            + pool.dye_auxiliary
+            + pool.processing_fee
             + pool.wages
         )
     finished_total = (
@@ -770,7 +803,7 @@ def _build_reconciliations(period):
     ReconciliationResult.objects.create(
         period=period,
         check_code="sales_cost",
-        check_name="本月销售出库成本＝已开票成本＋未开票成本＋样品＋忽略",
+        check_name="本期销售台账成本＝已开票结转＋未开票发出商品＋样品",
         left_amount=sales["sales_cost"],
         right_amount=right,
         difference=difference,
@@ -949,7 +982,7 @@ def _restore_unpriced_receipts(period, before: dict):
         rows.append(txn)
     if rows:
         InventoryTransaction.objects.bulk_update(
-            rows, ["unit_price", "amount", "price_source"]
+            rows, ["unit_price", "amount", "price_source"], batch_size=BULK_UPDATE_BATCH
         )
     return len(rows)
 
@@ -1268,57 +1301,122 @@ def _finalize_period_state(period):
     }
 
 
-_SETTLE_LOCK = threading.Lock()
+# 结转并发控制：以数据库里的 RUNNING 批次为准（跨进程有效）。
+#
+# 以前用的是进程内 threading.Lock，有两个真问题：
+#   1) 线上 gunicorn 默认 3 个 worker，锁不跨进程 —— 两个车间可能同时结转，
+#      成本结果互相覆盖；
+#   2) 进程被强杀（gunicorn 超时 kill、关窗口）时锁不会释放 —— 界面会永远提示
+#      “上一次结转还在进行中”，自己好不了，只能重启服务。
+#
+# 现在的规则：
+#   * 有 RUNNING 批次且未超时 → 判定确实有结转在跑，提示里带上车间名和已运行时长；
+#   * 有 RUNNING 批次但已超过 SETTLE_STALE_SECONDS → 判定为进程中断留下的僵尸批次，
+#     自动标记失败后放行（自愈，不再需要人工干预）。
+SETTLE_STALE_SECONDS = int(os.getenv("SETTLE_STALE_SECONDS", "900"))
+
+
+class SettlePreconditionError(ValueError):
+    """结转的前置条件不满足 —— 属于用户操作层面的提示，不是系统故障。
+
+    用于「这个车间本期已经结转完成」「前序车间还没结转」这类情况：
+    应当立刻返回友好提示，既不要白等重算，也不该记成一条"结转失败"。
+    """
+
+
+def _assert_workshop_can_settle(period, settlement):
+    """便宜的前置校验（不重算）：已结转 / 前序车间未完成 → 直接抛可读提示。"""
+    label = WORKSHOP_LABELS.get(settlement.workshop, settlement.workshop)
+    if settlement.status == WorkshopSettlement.Status.SETTLED:
+        raise SettlePreconditionError(
+            f"{label}本期已经结转完成，无需重复结转。"
+            "如确实要重算，请点右上角「重置车间结转」后按顺序重新结转。"
+        )
+    predecessors = period.workshop_settlements.filter(
+        sequence__lt=settlement.sequence
+    ).exclude(status=WorkshopSettlement.Status.SETTLED)
+    if predecessors.exists():
+        names = "、".join(
+            WORKSHOP_LABELS.get(code, code)
+            for code in predecessors.values_list("workshop", flat=True)
+        )
+        raise SettlePreconditionError(f"请先完成前序车间：{names}。")
+
+
+def _claim_settle_run(period, *, mode="workshop", workshop=""):
+    """抢占本期结转资格，返回新建的 RUNNING 批次；抢不到就抛中文错误。"""
+    with transaction.atomic():
+        # 串行化“抢占”这个动作：两个请求同时进来，后到的必然能看到先到的批次。
+        AccountingPeriod.objects.select_for_update().get(pk=period.pk)
+        active = (
+            SettlementRun.objects.filter(
+                period=period,
+                status=SettlementRun.Status.RUNNING,
+            )
+            .order_by("-started_at", "-id")
+            .first()
+        )
+        if active is not None:
+            started = active.started_at or timezone.now()
+            elapsed = int((timezone.now() - started).total_seconds())
+            if elapsed < SETTLE_STALE_SECONDS:
+                code = (active.summary or {}).get("workshop") or ""
+                label = WORKSHOP_LABELS.get(code, code)
+                who = f"{label}的结转" if label else "上一次结转"
+                raise ValueError(
+                    f"{who}还在进行中（已运行 {elapsed} 秒，通常需要 1～2 分钟），"
+                    "请等它完成后再操作。"
+                )
+            active.status = SettlementRun.Status.FAILED
+            active.error_message = (
+                f"上一次结转运行超过 {SETTLE_STALE_SECONDS // 60} 分钟仍未完成，"
+                "判定为服务中断，已自动标记为失败，可以重新结转。"
+            )
+            active.finished_at = timezone.now()
+            active.save(update_fields=["status", "error_message", "finished_at"])
+        return SettlementRun.objects.create(
+            period=period,
+            run_id=str(uuid.uuid4()),
+            status=SettlementRun.Status.RUNNING,
+            # 抢占时就记下是哪个车间：运行中页面才能显示车间名，
+            # 万一中途中断，失败记录也能定位到车间（用户 2026-09-19 反馈）。
+            summary={"mode": mode, "workshop": workshop} if workshop else {"mode": mode},
+        )
 
 
 def settle_workshop(period, settlement_id, user=None):
-    """车间结转入口：同一时间只允许一个结转在跑（页面并发触发时给中文提示）。"""
-    if not _SETTLE_LOCK.acquire(blocking=False):
-        raise ValueError(
-            "上一次结转还在进行中（通常需要 1～2 分钟），请等它完成后再操作。"
-        )
-    try:
-        return _settle_workshop_locked(period, settlement_id, user)
-    finally:
-        _SETTLE_LOCK.release()
+    """车间结转入口：同一时间只允许一个结转在跑（跨进程、可自愈，见 _claim_settle_run）。"""
+    workshop = (
+        period.workshop_settlements.filter(id=settlement_id)
+        .values_list("workshop", flat=True)
+        .first()
+        or ""
+    )
+    run = _claim_settle_run(period, mode="workshop", workshop=workshop)
+    return _settle_workshop_locked(period, settlement_id, user, run)
 
 
-def _settle_workshop_locked(period, settlement_id, user=None):
-    # 上次结转若被中断（关闭/刷新页面），会留下“进行中”的批次：先自动标记失败，
-    # 免得界面一直显示进行中，也免得残留事务一直占着数据库写锁。
-    SettlementRun.objects.filter(
-        period=period,
-        status=SettlementRun.Status.RUNNING,
-    ).update(
-        status=SettlementRun.Status.FAILED,
-        error_message="上一次结转被中断，已自动标记为失败，可重新结转。",
-        finished_at=timezone.now(),
-    )
-    run = SettlementRun.objects.create(
-        period=period,
-        run_id=str(uuid.uuid4()),
-        status=SettlementRun.Status.RUNNING,
-        summary={"mode": "workshop"},
-    )
+def _settle_workshop_locked(period, settlement_id, user=None, run=None):
+    if run is None:
+        run = _claim_settle_run(period, mode="workshop")
     try:
         with transaction.atomic():
             period = AccountingPeriod.objects.select_for_update().get(pk=period.pk)
             if period.status == AccountingPeriod.Status.LOCKED:
                 raise ValueError("该期间已锁账，不能继续结转。")
-            carry_summary = _prepare_period(period)
+            # ⚠️ 便宜的校验必须在 _prepare_period（重算约 1～2 分钟）之前：
+            # 否则「这个车间已结转 / 前序没完成」也会白等两分钟，最后只弹一句失败
+            # （用户 2026-09-19 报的「针织结转不了」就是这个：针织已结转，再点一次白等 2 分钟才报错）。
             settlement = period.workshop_settlements.select_for_update().get(
                 id=settlement_id
             )
-            if settlement.status == WorkshopSettlement.Status.SETTLED:
-                raise ValueError(f"{WORKSHOP_LABELS.get(settlement.workshop, settlement.workshop)}已经完成结转。")
-            predecessors = period.workshop_settlements.filter(
-                sequence__lt=settlement.sequence
-            ).exclude(status=WorkshopSettlement.Status.SETTLED)
-            if predecessors.exists():
-                names = "、".join(
-                    predecessors.values_list("workshop", flat=True)
-                )
-                raise ValueError(f"请先完成前序车间：{names}。")
+            _assert_workshop_can_settle(period, settlement)
+            carry_summary = _prepare_period(period)
+            # 重算可能刷新车间行，取最新状态再校验一次，防止并发下刚被别人结转掉。
+            settlement = period.workshop_settlements.select_for_update().get(
+                id=settlement_id
+            )
+            _assert_workshop_can_settle(period, settlement)
             result = _settle_workshop_core(period, settlement, user)
             final_state = _finalize_period_state(period)
             run.status = SettlementRun.Status.SUCCESS
@@ -1341,6 +1439,11 @@ def _settle_workshop_locked(period, settlement_id, user=None):
                 ]
             )
             return run
+    except SettlePreconditionError:
+        # 用户层面的前置条件不满足（该车间已结转 / 前序未完成）：本次什么都没算，
+        # 把抢占到的批次删掉，不留下假的“结转失败”记录（用户 2026-09-19）。
+        run.delete()
+        raise
     except Exception as exc:
         run.status = SettlementRun.Status.FAILED
         run.error_message = str(exc)
@@ -1349,34 +1452,92 @@ def _settle_workshop_locked(period, settlement_id, user=None):
         raise
 
 
-def _fill_bom_prices(period: AccountingPeriod):
-    """回填BOM单价：子项单价 = 子项物料本月月末加权平均价；
-    标准成品单价 = 按工单汇总 Σ(子项用量 × 子项单价)。"""
+def bom_material_prices(period: AccountingPeriod) -> dict:
+    """BOM 子项取价表：物料编码 → 单价。
+
+    口径与投料单价 / BOM 反推**完全一致**（用户 2026-09-30 指出 BOM 表一大堆没单价）：
+      ① 该物料本月**月末加权平均价**（库存金额结转，> 0 才算数）；
+      ② 没有月末价时用**历史单价**（BOM 子项是被领用的料 → **出库价优先**、入库价兜底）。
+    两处都没有的物料不在表里（调用方按 0 处理）。
+    """
+    prices = {}
+    for row in period.inventory_valuations.values(
+        "material_code", "weighted_average_price"
+    ):
+        value = Decimal(row["weighted_average_price"] or ZERO)
+        if value > ZERO:
+            prices[row["material_code"]] = value
+    for item in period.historical_prices.all():
+        if prices.get(item.material_code):
+            continue
+        issue = Decimal(item.issue_price or ZERO)
+        receipt = Decimal(item.receipt_price or ZERO)
+        if issue > ZERO:
+            prices[item.material_code] = issue
+        elif receipt > ZERO:
+            prices[item.material_code] = receipt
+    return prices
+
+
+def _fill_bom_prices(period: AccountingPeriod, save: bool = True):
+    """回填BOM单价：子项单价 = 子项物料本月月末加权平均价（没有则历史单价兜底，见 bom_material_prices）；
+    标准成品单价 = 按工单汇总 Σ(子项用量 × 子项单价)。
+
+    用户 2026-09-23：**子项用量合计超过 100%（Σ用量 > 1）的工单**，先把用量按比例
+    缩放到合计 100%，再算标准成品单价（＝ Σ(用量×单价) ÷ Σ用量）；合计 ≤ 100% 的不动。
+    用户 2026-09-30：以前只查月末加权价，没结转到的物料一律记 0（BOM 表一大堆没单价）；
+    现在与投料单价同口径，补上「历史单价（出库价优先）」兜底。
+    save=False 时只算不写库（给 `manage.py fill_bom_prices --dry-run` 用），并返回统计。
+    """
     lines = list(period.bom_lines.all())
     if not lines:
         return
-    prices = {
-        row["material_code"]: row["weighted_average_price"]
-        for row in period.inventory_valuations.values(
-            "material_code", "weighted_average_price"
-        )
-    }
+    prices = bom_material_prices(period)
     standard_by_order = defaultdict(Decimal)
+    qty_by_order = defaultdict(Decimal)
     for line in lines:
         unit_price = Decimal(prices.get(line.sub_item_code, ZERO) or ZERO)
         line.unit_price = unit_price
         standard_by_order[line.work_order_no] += line.qty * unit_price
+        qty_by_order[line.work_order_no] += line.qty
     for line in lines:
-        line.standard_price = money(standard_by_order[line.work_order_no])
-    BomLine.objects.bulk_update(lines, ["unit_price", "standard_price"])
+        total = standard_by_order[line.work_order_no]
+        total_qty = qty_by_order[line.work_order_no]
+        # 用量合计超过 100% → 缩放到 100%（按用量比例），再算标准成品单价
+        if (
+            BOM_QTY_NORMALIZE_OVER
+            and total_qty > BOM_QTY_NORMALIZE_OVER
+        ):
+            total = total / total_qty
+        line.standard_price = money(total)
+    if save:
+        BomLine.objects.bulk_update(
+            lines, ["unit_price", "standard_price"], batch_size=BULK_UPDATE_BATCH
+        )
+    return {
+        "lines": len(lines),
+        "priced": sum(1 for line in lines if (line.unit_price or ZERO) > ZERO),
+        "unpriced": sum(1 for line in lines if not (line.unit_price or ZERO) > ZERO),
+        "unpriced_codes": len(
+            {
+                line.sub_item_code
+                for line in lines
+                if not (line.unit_price or ZERO) > ZERO
+            }
+        ),
+        "orders": len({line.work_order_no for line in lines}),
+        "orders_with_standard_price": len(
+            {
+                line.work_order_no
+                for line in lines
+                if (line.standard_price or ZERO) > ZERO
+            }
+        ),
+    }
 
 
 def run_settlement(period: AccountingPeriod, user=None):
-    run = SettlementRun.objects.create(
-        period=period,
-        run_id=str(uuid.uuid4()),
-        status=SettlementRun.Status.RUNNING,
-    )
+    run = _claim_settle_run(period, mode="full")
     try:
         with transaction.atomic():
             period = AccountingPeriod.objects.select_for_update().get(pk=period.pk)
@@ -1464,3 +1625,33 @@ def can_lock(period: AccountingPeriod):
     ).exists():
         return False, "仍有未通过的勾稽项目（已确认差异的除外）。"
     return True, ""
+def recalculate_workshop(period: AccountingPeriod, workshop: str):
+    """只重算某个车间的工单成本结果（用户 2026-09-24）。
+
+    用在「投料报工情形速查」保存人工调整之后：数据变了要立刻反映到工单成本，
+    但又不能跑整套结算（_prepare_period 要 1~2 分钟）。这里走与车间结转同一套
+    估值/计价逻辑，只针对一个车间，秒级返回。
+
+    注意：**不改动车间结转状态**——人工调整后本车间（以及会用到它半成品的下游车间）
+    仍需在「车间结转」里重新结转一次，账才闭环；页面会提示。
+    """
+    workshop = str(workshop or "").strip()
+    if not workshop:
+        return {"workshop": workshop, "orders": 0}
+    previous_prices = {}
+    workshop_filter = [workshop]
+    for _iteration in range(1, MAX_ITERATIONS + 1):
+        previous_prices, _summaries = _valuation_pass(period, previous_prices)
+        calculate_work_order_costs(period, workshop_filter, previous_prices)
+        max_change = price_baogong_receipts(period, workshop_filter)
+        if max_change <= CONVERGENCE_TOLERANCE:
+            break
+    previous_prices, _summaries = _valuation_pass(period, previous_prices)
+    calculate_work_order_costs(period, workshop_filter, previous_prices)
+    price_baogong_receipts(period, workshop_filter)
+    return {
+        "workshop": workshop,
+        "orders": period.work_order_cost_results.filter(
+            work_order__production_dept_code=workshop
+        ).count(),
+    }

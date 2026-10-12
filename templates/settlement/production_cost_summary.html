@@ -1,12 +1,84 @@
 {% extends "base.html" %}
 {% load workshop_tags %}
-{% block title %}本月生产成本与费用 · {{ period }}{% endblock %}
+{% block title %}生产成本 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  /* 两张表各自的筛选行：标签在上、控件在下、整行靠左 */
+  .pc-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;
+                 gap:8px 14px;margin:0 0 12px;}
+  .pc-filter-row label{display:grid;gap:4px;white-space:nowrap;color:#56636e;
+                       font-size:12px;font-weight:700;}
+  .pc-filter-row select{height:34px;min-height:34px;padding:4px 8px;}
+  /* 筛选行里的按钮（筛选/清空/导出/打印）与左侧筛选项同高、底对齐 */
+  .pc-filter-row .filter-actions{align-self:flex-end;flex-wrap:wrap;align-items:center;}
+  .pc-filter-row .filter-actions .button,
+  .pc-filter-row .print-here .section-print{min-height:34px;padding:6px 12px;font-size:14px;
+                                            white-space:nowrap;}
+  .pc-filter-row .print-here{display:flex;align-items:center;}
+  /* 表尾：左边放文案、右边放状态胶囊，两端对齐 */
+  .pc-footer{margin-top:12px;display:flex;flex-wrap:wrap;align-items:flex-end;
+             justify-content:space-between;gap:8px 24px;}
+  .pc-footer-notes{flex:1 1 420px;min-width:0;margin:0;}
+  .pc-footer-status{flex:0 0 auto;}
+  /* 成本矩阵：两行表头（第一行贴顶、第二行贴其下） */
+  .total-cost-table { min-width: 1200px; border-collapse: collapse; }
+  .total-cost-table th, .total-cost-table td { border: 1px solid #d5d8dc; padding: 6px 8px; white-space: nowrap; }
+  .total-cost-table thead th { background: #eaf0f8; }
+  .total-cost-table .total-col { background: #fdf0e6; font-weight: 600; }
+  .total-cost-table tr.total-row td { background: #fdf0e6; font-weight: 600; }
+  .total-cost-table .subject-cell { text-align: left; font-weight: 500; }
+  .total-cost-table thead th { position: sticky; top: 0; z-index: 3; }
+  .total-cost-table thead tr:first-child th { top: 0; height: 30px; }
+  .total-cost-table thead tr:nth-child(2) th { top: 30px; }
+  .total-cost-table thead th[rowspan] { vertical-align: top; }
+  /* 投料报工情形速查：小节标题 + 三列可人工修改 */
+  .pc-subheading{margin:14px 0 8px;font-size:13.5px;color:#1F4E78;font-weight:700;}
+  .pc-check{display:grid;gap:4px;white-space:nowrap;color:#56636e;font-size:12px;font-weight:700;}
+  .pc-check-box{display:flex;align-items:center;gap:4px;height:34px;}
+  .pc-check-box small{color:#8a97a3;font-weight:400;}
+  /* 工单号输入框与情形下拉保持一致（宽/高/内边距/字号/圆角/边框） */
+  .pc-filter-row .pc-fixed{width:190px;height:34px;min-height:34px;padding:4px 8px;
+                           font-size:14px;line-height:1.2;box-sizing:border-box;
+                           border:1px solid #cbd6dc;border-radius:4px;background:#fff;}
+  .pc-filter-row select.pc-fixed{padding-right:26px;}
+  /* 情形小结：建议列必须能换行（.summary-table td 的 nowrap 会把它压成一条看不全） */
+  .pc-case-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .pc-case-table th,.pc-case-table td{border:1px solid #e3e9ed;height:25pt;padding:7px 9px;
+                                       vertical-align:middle;text-align:left;}
+  .pc-case-table thead th{background:#eef2f5;color:#526070;border-color:#cbd6dc;font-weight:700;}
+  .pc-case-table tfoot td{background:#D9EAF7;font-weight:700;color:#1F4E78;}
+  .pc-case-table .num{text-align:right;}
+  .pc-case-table tr.pc-case-empty td{color:#9aa5af;}
+  /* 本期没有的情形：只把「工单数/材料成本」灰掉，建议处理方法照常深色显示
+     （用户 2026-09-27：之前整行都灰，②⑤ 的建议看不清） */
+  .pc-case-table tr.pc-case-empty td.pc-advice{color:#3f4d5a;}
+  .pc-advice{white-space:normal;line-height:1.6;min-width:180px;max-width:420px;}
+  .ir-table{min-width:1700px;}
+  .ir-case{white-space:nowrap;color:#1F4E78;font-weight:700;}
+  .ir-source{font-size:12px;color:#6b7883;white-space:normal;min-width:170px;max-width:260px;}
+  .ir-edit input.ir-input{width:104px;height:28px;min-height:28px;padding:2px 6px;
+                          text-align:right;font-size:12.5px;background:#fffdf5;}
+  .ir-edit input.ir-input.is-dirty{background:#fff3cd;border-color:#e0a800;}
+  tr.ir-manual td{background:#f2f8ff;}
+  tr.ir-manual td.ir-edit{background:#fffdf5;}
+  /* 保存按钮 + 旁边的提示（用户 2026-09-27：提示要贴在按钮旁边，别被挤到最右边） */
+  .ir-actions{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;
+              justify-content:flex-start;margin:12px 0 4px;}
+  .ir-hint{font-size:12.5px;color:#6b7883;line-height:1.6;flex:0 1 auto;min-width:0;
+           max-width:100%;}
+  /* 「有 N 个格子改过」这个提示空着时**不能占位**，否则会把右边的说明顶到最右边 */
+  #ir-dirty-hint{flex:0 0 auto;}
+  /* 复制过来的「工单成本明细」表：与原页同款配色（单位成本差异 红=超支 绿=低于标准） */
+  .woc-copy-table{min-width:3400px;}
+  .woc-diff-bad{color:#b3261e;font-weight:700;}
+  .woc-diff-good{color:#1b7f3b;font-weight:700;}
+  /* 单位成本差异原因（用户 2026-09-30）：|差异率| ≥30% 时给出的一句话原因 */
+  .ir-reason{font-size:12px;color:#8a5a00;min-width:180px;}
+</style>
 <section class="page-heading">
   <div>
     <p class="eyebrow">MONTHLY PRODUCTION COST</p>
-    <h1>本月生产成本与费用</h1>
-    <p>按车间查看本期材料投入、费用、完工成本和期末在制；全部金额沿用当前成本分配规则。</p>
+    <h1>生产成本</h1>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'workshop_settlements' period.id %}">进入车间结转</a>
@@ -14,89 +86,57 @@
   </div>
 </section>
 
-<section class="section-card filter-card">
-  <form method="get" class="production-cost-filter">
-    <label>查看范围
-      <select name="workshop">
-        <option value="">全部车间</option>
-        {% for workshop in workshop_choices %}
-          <option value="{{ workshop }}" {% if selected_workshop == workshop %}selected{% endif %}>{{ workshop|workshop_label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <div class="filter-actions">
-      <button class="button primary" type="submit">查看</button>
-      {% if selected_workshop %}<a class="button secondary" href="{% url 'production_cost_summary' period.id %}">恢复全部</a>{% endif %}
-    </div>
-  </form>
-</section>
-
 {% if totals.pending_workshop_count %}
 <div class="cost-notice">
-  当前范围内有 <strong>{{ totals.pending_workshop_count }}</strong> 个车间尚未完成结转。本期材料和上传费用可以查看，但完工成本、期末在制及闭合差额须在该车间结转后才是最终结果。
+  本期有 <strong>{{ totals.pending_workshop_count }}</strong> 个车间尚未完成结转。本期材料和车间费用可以查看，
+  但完工成本、期末在制与闭合差额须在该车间结转后才是最终结果。
 </div>
 {% endif %}
-
-<section class="summary-strip six">
-  <article><span>查看范围</span><strong class="small-value">{{ scope_label|workshop_label }}</strong></article>
-  <article><span>生产工单</span><strong>{{ totals.order_count }}</strong></article>
-  <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2|thousands }}</strong></article>
-  <article><span>本期材料</span><strong>¥{{ totals.current_material|floatformat:2|thousands }}</strong></article>
-  <article><span>本期费用</span><strong>¥{{ totals.current_expenses|floatformat:2|thousands }}</strong></article>
-  <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2|thousands }}</strong></article>
-</section>
-
-<section class="section-card">
-  <div class="section-heading">
-    <div>
-      <p class="eyebrow">COST ROLL-FORWARD</p>
-      <h2>生产成本闭合</h2>
-    </div>
-    {% if totals.all_calculated %}
-      <span class="pill success">全部已结转</span>
-    {% else %}
-      <span class="pill warning">尚未全部结转</span>
-    {% endif %}
-  </div>
-  <div class="cost-equation">
-    <article><span>期初在制</span><strong>¥{{ totals.opening_wip|floatformat:2|thousands }}</strong></article>
-    <b>＋</b>
-    <article><span>本期生产投入</span><strong>¥{{ totals.current_input|floatformat:2|thousands }}</strong></article>
-    <b>＝</b>
-    <article><span>完工成本</span><strong>¥{{ totals.finished_cost|floatformat:2|thousands }}</strong></article>
-    <b>＋</b>
-    <article><span>期末在制</span><strong>¥{{ totals.ending_wip|floatformat:2|thousands }}</strong></article>
-  </div>
-  <div class="cost-equation-result">
-    <span>左方待分配成本：<strong>¥{{ totals.cost_to_account|floatformat:2|thousands }}</strong></span>
-    <span>右方已分配成本：<strong>¥{{ totals.accounted_output|floatformat:2|thousands }}</strong></span>
-    <span>闭合差额：
-      {% if totals.all_calculated %}
-        <strong class="{% if totals.difference %}difference-text{% endif %}">¥{{ totals.difference|floatformat:2|thousands }}</strong>
-      {% else %}
-        <strong class="difference-text">待全部结转后确认</strong>
-      {% endif %}
-    </span>
-  </div>
-</section>
 
 <section class="section-card">
   <div class="section-heading">
     <div><p class="eyebrow">WORKSHOP SUMMARY</p><h2>车间生产成本汇总</h2></div>
-    <small class="muted-text">点击车间名称查看该车间工单明细</small>
   </div>
+  <form class="pc-filter-row" method="get">
+    {# 矩阵/速查两张表的筛选条件原样带过去（三张表互不影响） #}
+    <input type="hidden" name="m_period" value="{{ matrix_filters.period }}">
+    <input type="hidden" name="m_workshop" value="{{ matrix_filters.workshop }}">
+    {% for key, value in issue_filters.items %}{% if value %}<input type="hidden" name="i_{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+    <label>期间
+      <select name="p_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == summary_filters.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="p_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == summary_filters.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{{ matrix_hidden_qs }}">清空</a>
+      {% comment %}一个按钮导两张表；与「打印本表」一起放在这一排，跟筛选/清空底对齐（打印由 base.html 注入）{% endcomment %}
+      <a class="button secondary" href="{% url 'production_cost_export' period.id %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>车间</th><th>结转状态</th><th class="num">工单数</th>
+        <th>车间</th><th class="num">工单数</th>
         <th class="num">期初在制</th><th class="num">本期材料</th><th class="num">本期费用</th>
         <th class="num">本期生产投入</th><th class="num">完工成本</th><th class="num">期末在制</th><th class="num">闭合差额</th>
       </tr></thead>
       <tbody>
         {% for row in rows %}
         <tr>
-          <td><a class="document-link" href="?workshop={{ row.workshop|urlencode }}"><strong>{{ row.workshop|workshop_label }}</strong></a><small>完工数量 {{ row.finished_quantity|floatformat:2|thousands }} / 在制数量 {{ row.wip_quantity|floatformat:2|thousands }}</small></td>
-          <td>{% if row.is_calculated %}<span class="pill success">{{ row.status_label }}</span>{% else %}<span class="pill warning">{{ row.status_label }}</span>{% endif %}</td>
+          <td><a class="document-link" href="?p_period={{ summary_filters.period }}&p_workshop={{ row.workshop|urlencode }}{% if matrix_hidden_qs %}&{{ matrix_hidden_qs }}{% endif %}"><strong>{{ row.workshop|workshop_label }}</strong></a></td>
           <td class="num">{{ row.order_count }}</td>
           <td class="num">{{ row.opening_wip|floatformat:2|thousands }}</td>
           <td class="num">{{ row.current_material|floatformat:2|thousands }}</td>
@@ -106,24 +146,422 @@
           <td class="num">{% if row.is_calculated %}{{ row.ending_wip|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
           <td class="num">{% if row.is_calculated %}<strong class="{% if row.difference %}difference-text{% endif %}">{{ row.difference|floatformat:2|thousands }}</strong>{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
-        {% empty %}<tr><td colspan="10" class="empty-cell">本期间尚无车间费用或生产工单。</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="9" class="empty-cell">所选期间/车间没有生产工单或车间费用。</td></tr>{% endfor %}
       </tbody>
+      {% if rows %}
+      <tfoot>
+        <tr>
+          <td><strong>合计</strong></td>
+          <td class="num"><strong>{{ totals.order_count }}</strong></td>
+          <td class="num"><strong>{{ totals.opening_wip|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.current_material|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.current_expenses|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.current_input|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.finished_cost|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.ending_wip|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ totals.difference|floatformat:2|thousands }}</strong></td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
+  <p class="muted-text pc-footer-notes" style="margin:8px 0 0;">
+    口径：<br>
+    ① <b>核算期间＝这张工单的成本算在哪个月</b>，也就是本次结算的月份（本期＝{{ issue_period_label }}）；
+    <b>工单期间＝这张单的下单月份</b>（取工单明细上传的「创建时间」，也就是 ERP 建单时间）。<br>
+    ② 本表只列<b>当月发生核算成本的工单</b>（＝本期有工单成本结果的工单，与「工单成本」页同一套数据、同一个口径），
+    共 {{ issue_totals.count }} 张，其中需要人工介入的 {{ issue_attention_count }} 张（情形 ①~⑤），
+    其余 {{ issue_case_summary|length }} 行里的最后一行 <b>⑤ 正常投料生产工单</b>就是本月正常的单（不需要处理）。<br>
+    ③ 需要人工介入的情形共 4 类：<b>① 粗纱-有工单无报工</b>（粗纱本来不报工，成本按 BOM 反推进纱线材料成本，无需处理）、
+    <b>② 有投料-无报工（在产长期挂账超计划完工3个月以上）</b>、<b>③ 有投料-报工超投料量</b>、
+    <b>④ 无投料-有报工（按 BOM 反推）</b>。
+    当月（及 3 个月以内）有在产属正常，不计入；判"挂了多久"用<b>计划完工时间</b>（没有则计划开工时间）。<br>
+    <b>② 已合并原⑤「有投料-部分报工」</b>（用户 2026-09-27：情形 5 类 → 4 类）：
+    只要<b>计划完工已过 3 个月</b>，并且「<b>在产品还挂着</b>（<u>不要求本月有投料</u>）」
+    或「<b>本月投料了但没报完</b>」任一条成立，都归 ②。<br>
+    <b>④ 的「无投料」＝这张单<u>从来没有投过料</u></b>（本期投料台账、以前月份的投料＝投料进度表/工单明细的投料数量、
+    期初在产品里的材料，<b>三者全为 0</b>）；<b>以前投过料的不算「无投料-有报工」</b>，归「正常投料生产工单」。<br>
+    ④ 材料成本怎么算：有投料按实际投料×月末加权价（没月末价用历史单价：出库价优先、入库价兜底）；
+    <b>无投料、有报工</b>的按 <b>BOM 单耗 × 报工数量</b>反推（这笔材料<b>全部进完工</b>、不确认在产品）；
+    <b>报工超投料量（情形③）</b>的按 <b>BOM 差额反推</b>补足——缺口＝BOM应有−本期实领，
+    无期初结转、无补投的单<b>缺多少补多少</b>（自动补料，避免单位成本远低于标准）。<br>
+    ⑤ 上月已投料、本月既没投料也没报工、且<b>计划完工不到 3 个月</b>的工单（在产品继续挂着但不久）
+    不算异常，归「正常投料生产工单」；挂满 3 个月就进 ②。
+    <br>
+    ⑥ <b>投料单价</b>（保留 2 位小数）：<b>本期有可计价的投料</b> → 按实际投料的加权平均单价
+    Σ(本期投料数量×月末加权价)÷Σ本期投料数量；
+    <b>本期没有可计价的投料</b>（没投料、或投的料没有月末价也没有历史价）→ <b>按 BOM 表折算</b>
+    Σ(BOM 子项用量×月末加权价)÷Σ(BOM 子项用量)。
+    鼠标停在该格上，按 BOM 折算的会提示。两处都取不到价才显示 —。
+  </p>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
-    <div><p class="eyebrow">EXPENSE BREAKDOWN</p><h2>{{ scope_label|workshop_label }}本期费用构成</h2></div>
-    <strong>合计 ¥{{ totals.current_expenses|floatformat:2|thousands }}</strong>
+    <div>
+      <p class="eyebrow">COST BY SUBJECT</p>
+      {# 名称更换（用户 2026-09-27：原名太土）——原名「成本项目 × 四大块」 #}
+      <h2>成本构成表</h2>
+    </div>
   </div>
-  <div class="expense-breakdown">
-    {% for item in totals.fee_breakdown %}
-    <article><span>{{ item.label }}</span><strong>¥{{ item.amount|floatformat:2|thousands }}</strong></article>
-    {% endfor %}
+  <form class="pc-filter-row" method="get">
+    {# 车间汇总/速查两张表的筛选条件原样带过去（三张表互不影响） #}
+    <input type="hidden" name="p_period" value="{{ summary_filters.period }}">
+    <input type="hidden" name="p_workshop" value="{{ summary_filters.workshop }}">
+    {% for key, value in issue_filters.items %}{% if value %}<input type="hidden" name="i_{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+    <label>期间
+      <select name="m_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == matrix_filters.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="m_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == matrix_filters.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?{{ summary_hidden_qs }}">清空</a>
+      <a class="button secondary" href="{% url 'production_cost_matrix_export' period.id %}{{ matrix_export_qs }}">导出Excel</a>
+      {% comment %}「打印本表」与筛选/清空同一排、底对齐（由 base.html 注入到 .print-here）{% endcomment %}
+      <div class="print-here"></div>
+    </div>
+  </form>
+  {% if not total_cost.balanced %}
+  <div class="cost-notice" style="border-left-color:#c0392b;">
+    <strong>勾稽不平衡</strong>：部分车间存在 期初 ＋ 本期投入 ≠ 产成品成本 ＋ 在产品 的科目，
+    请检查结算状态与数据（详见导出 Excel）。
+  </div>
+  {% endif %}
+  <div class="table-scroll">
+    <table class="data-table total-cost-table">
+      <thead>
+        <tr>
+          <th rowspan="2">成本项目</th>
+          {% for block in total_cost.blocks %}
+            <th colspan="{{ total_cost.workshops|length|add:1 }}" style="text-align:center;">{{ block }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {% for block in total_cost.blocks %}
+            {% for ws in total_cost.workshops %}
+              <th>{{ ws.label }}</th>
+            {% endfor %}
+            <th class="total-col">合计</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in total_cost.rows %}
+        <tr>
+          <td class="subject-cell">{{ row.subject }}</td>
+          {% for cell in row.cells %}
+            <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
+              {% if cell.value is None %}--{% else %}{{ cell.value|floatformat:2|thousands }}{% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+        <tr class="total-row">
+          <td class="subject-cell">合计</td>
+          {% for cell in total_cost.total_cells %}
+            <td class="{% if cell.total %}total-col{% endif %}" style="text-align:right;">
+              {% if cell.value is None %}--{% else %}{{ cell.value|floatformat:2|thousands }}{% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {# 左：口径说明（简洁一段）；右：勾稽状态（用户在 2026-09-21 要求放到右下角） #}
+  <div class="pc-footer">
+    <p class="muted-text pc-footer-notes">
+      口径：期初＝期初在产品表按车间汇总；本期投入＝工单结算结果 − 期初；
+      产成品 / 在产品＝结算结果拆分（制造费用按该车间结构比例拆回科目）；未结算车间显示 --。
+    </p>
+    <div class="pc-footer-status">
+      {% if total_cost.balanced %}
+        <span class="pill success">勾稽平衡</span>
+      {% else %}
+        <span class="pill warning">勾稽异常</span>
+      {% endif %}
+    </div>
   </div>
 </section>
 
+{# ---------- 投料报工情形速查（用户 2026-09-24）---------- #}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">ISSUE × REPORT CHECK</p>
+      <h2>投料报工情形速查</h2>
+    </div>
+    <a class="button secondary" href="{% url 'work_order_costs' period.id %}">查看工单成本</a>
+  </div>
+
+
+  {# ---------- 表一：情形小结 ---------- #}
+  <h3 class="pc-subheading">一、情形小结</h3>
+  <div class="table-wrap" style="margin-bottom:14px;">
+    <table class="pc-case-table">
+      <thead><tr>
+        <th>情形</th><th class="num">工单数</th><th class="num">材料成本</th><th>建议处理方法（含在产品 / 产成品成本口径）</th>
+      </tr></thead>
+      <tbody>
+      {% for item in issue_case_summary %}
+        <tr{% if not item.count %} class="pc-case-empty"{% endif %}>
+          <td>{% if item.case_link %}<a class="document-link" title="点这里把下面的「工单投料报工明细」筛成这一类"
+                 onclick="try{sessionStorage.removeItem('keepScrollPos');}catch(e){}"
+                 href="?i_case={{ item.case|urlencode }}&amp;i_period={{ issue_filters.period }}&amp;i_workshop={{ issue_filters.workshop|urlencode }}&amp;i_order_no={{ issue_filters.order_no|urlencode }}&amp;i_roving={{ issue_filters.roving }}&amp;p_period={{ summary_filters.period }}&amp;p_workshop={{ summary_filters.workshop|urlencode }}&amp;m_period={{ matrix_filters.period }}&amp;m_workshop={{ matrix_filters.workshop|urlencode }}#issue-detail"><strong>{{ item.case }}</strong></a>{% else %}<strong>{{ item.case }}</strong>{% if item.overlap %}<br><small class="muted-text">（与上面 ①~⑤ 有重叠，不计入合计）</small>{% endif %}{% endif %}</td>
+          <td class="num">{{ item.count }}</td>
+          <td class="num">{% if item.count %}{{ item.material|dash_num:2 }}{% else %}—{% endif %}</td>
+          <td class="pc-advice">{{ item.advice }}{% if item.basis %}<br><span class="pc-basis">{{ item.basis|linebreaksbr }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr>
+        <td><strong>合计</strong></td>
+        <td class="num"><strong>{{ issue_totals.count }}</strong></td>
+        <td class="num"><strong>{{ issue_totals.direct_material|dash_num:2 }}</strong></td>
+        <td class="pc-advice">材料来源：实领 {{ issue_totals.from_issue|dash_num:2 }} ＋ 上期结转 {{ issue_totals.from_opening|dash_num:2 }} ＋ 计算层补投 {{ issue_totals.from_calc|dash_num:2 }}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+
+  {# ---------- 情形 × 车间（工单数）：一眼看出每类情形分别在哪些车间、各多少张 ---------- #}
+  {% if case_workshop.workshops %}
+  <div class="table-wrap" style="margin-bottom:14px;">
+    <table class="pc-case-table">
+      <thead><tr>
+        <th>情形</th>
+        {% for item in case_workshop.workshops %}<th class="num">{{ item.workshop_label }}</th>{% endfor %}
+        <th class="num">合计</th>
+      </tr></thead>
+      <tbody>
+        {% for row in case_workshop.rows %}
+        <tr{% if not row.count %} class="pc-case-empty"{% endif %}>
+          <td>{{ row.case }}</td>
+          {% for cell in row.cells %}
+          <td class="num">{% if cell.count %}{{ cell.count }}{% else %}—{% endif %}</td>
+          {% endfor %}
+          <td class="num"><strong>{{ row.count }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr>
+        <td><strong>合计</strong></td>
+        {% for cell in case_workshop.totals %}<td class="num"><strong>{{ cell.count }}</strong></td>{% endfor %}
+        <td class="num"><strong>{{ case_workshop.total }}</strong></td>
+      </tr></tfoot>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ---------- 表二：工单投料报工明细（＝工单成本明细的同一套数据，可人工改投料数量） ---------- #}
+  {# id 供「一、情形小结」里的情形链接跳转用（用户 2026-09-27：点了要跳到明细，不是回到页顶） #}
+  <h3 class="pc-subheading" id="issue-detail" style="scroll-margin-top:12px;">二、工单投料报工明细（可人工调整投料数量）</h3>
+  <form class="pc-filter-row" method="get">
+    {# 车间汇总 / 矩阵两张表的筛选条件原样带过去（三张表互不影响） #}
+    <input type="hidden" name="p_period" value="{{ summary_filters.period }}">
+    <input type="hidden" name="p_workshop" value="{{ summary_filters.workshop }}">
+    <input type="hidden" name="m_period" value="{{ matrix_filters.period }}">
+    <input type="hidden" name="m_workshop" value="{{ matrix_filters.workshop }}">
+    <label>核算期间
+      <select name="i_period" onchange="this.form.submit()">
+        <option value="">本期（{{ current_month }}）</option>
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == issue_filters.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单期间
+      <select name="i_order_period" onchange="this.form.submit()">
+        <option value="">全部（{{ order_period_options|length }} 个月）</option>
+        {% for item in order_period_options %}
+        <option value="{{ item }}"{% if item == issue_filters.order_period %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="i_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == issue_filters.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单号
+      <input class="pc-fixed" name="i_order_no" value="{{ issue_filters.order_no }}" placeholder="模糊匹配">
+    </label>
+    <label>情形
+      <select class="pc-fixed" name="i_case" onchange="this.form.submit()">
+        <option value="">全部情形</option>
+        {% for item in issue_case_choices %}
+        <option value="{{ item.value }}"{% if item.value == issue_filters.case %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="?p_period={{ summary_filters.period }}&amp;p_workshop={{ summary_filters.workshop|urlencode }}&amp;m_period={{ matrix_filters.period }}&amp;m_workshop={{ matrix_filters.workshop|urlencode }}">清空</a>
+      <a class="button secondary" href="{% url 'issue_report_export' period.id %}{{ issue_export_qs }}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+  {% if issue_filters.case %}
+  {# 从「一、情形小结」点情形名跳过来时，明确告诉你现在筛的是哪一类（用户 2026-09-27） #}
+  <div class="message message-info" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span>已按情形筛选：<strong>{{ issue_filters.case }}</strong>（共 {{ detail_totals.count }} 行）</span>
+    <a class="button secondary" style="padding:4px 10px;min-height:30px;"
+       href="?p_period={{ summary_filters.period }}&amp;p_workshop={{ summary_filters.workshop|urlencode }}&amp;i_period={{ issue_filters.period }}&amp;i_workshop={{ issue_filters.workshop|urlencode }}&amp;i_order_no={{ issue_filters.order_no|urlencode }}&amp;i_order_period={{ issue_filters.order_period }}#issue-detail">只看全部情形</a>
+  </div>
+  {% endif %}
+  {% if detail_rows %}
+  <p class="help-text">
+    共 {{ detail_totals.count }} 行（{{ issue_period_label }}：当月发生核算成本的工单；本表与「工单成本」页的「工单成本明细」同一套数据）。
+    <b>本期投料</b>一列可以直接改：格子里的灰字是系统值，填了就以你填的为准，清空＝恢复系统值。金额/数量为 0 或空白显示 —。
+  </p>
+  <form method="post" id="ir-save-form">
+    {% csrf_token %}
+    <input type="hidden" name="i_period" value="{{ issue_filters.period }}">
+    <input type="hidden" name="i_workshop" value="{{ issue_filters.workshop }}">
+    <input type="hidden" name="i_order_no" value="{{ issue_filters.order_no }}">
+    <input type="hidden" name="i_case" value="{{ issue_filters.case }}">
+    <input type="hidden" name="i_order_period" value="{{ issue_filters.order_period }}">
+    <input type="hidden" name="i_roving" value="{{ issue_filters.roving }}">
+    <div class="table-wrap">
+      <table class="woc-copy-table">
+        <thead><tr>
+      <th title="＝这张单的成本算在哪个月（本次结算的核算期间）">核算期间</th>
+      <th title="＝工单明细上传的「创建时间」（ERP 建单时间）所属月份，即这张单的下单月份">工单期间</th>
+      <th>车间</th><th>工单编号</th><th>类别</th><th>产品编码</th><th>产品名称</th>
+      <th>计划完工时间</th><th>实际完工时间</th><th>完成状态</th>
+      <th class="num">计划数量</th>
+      <th class="num">期初数量</th><th class="num">期初金额</th>
+      <th class="num">本期投料</th><th class="num">投料单价</th><th class="num">累计投料</th><th>投料状态</th>
+      <th class="num" title="＝本月报工数量合计（成本口径的完工数量）">本期完工</th>
+      <th class="num" title="＝「工单明细」上传的入库数量（ERP 跨月累计）；该工单没有工单明细时退回本月报工数量">累计完工</th>
+      <th class="num" title="＝本期完工 ÷ 计划数量 × 100">本期完工率</th>
+      <th class="num" title="＝累计完工 ÷ 计划数量 × 100；完工超过计划按实际显示（不封顶）">累计完工率</th>
+      <th>是否用粗纱</th>
+      <th class="num" title="＝本月报工数量合计（成本口径的完工数量；机织为米）">报工数量</th>
+      <th class="num" title="＝期末在产品数量。机织＝在产纱线的重量（kg）＝期初kg＋投料kg−报工米×米重×(1+损耗率7.5%)；纺纱＝投料kg−完工kg；其它车间＝计划数量−完工数量；米重缺失的机织单退回「计划−完工」（米）">在产品</th>
+      <th class="num" title="折合产量 ＝ 完工部分 ＋ 0.5×在产品（在产品的约当系数 0.5）。机织（有BOM米重）以 kg 计：完工米×米重 ＋ 0.5×在产纱线kg；其它车间用各自数量。用于分摊车间工资：工资分配率＝本工单折合产量÷车间折合产量合计">折合产量</th>
+      <th class="num">材料</th><th class="num">水电</th><th class="num">水电分配率</th>
+      <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
+      <th class="num">天然气</th><th class="num">天然气分配率</th>
+      <th class="num">折旧</th><th class="num">折旧分配率</th>
+      <th class="num">机物料</th><th class="num">机物料分配率</th>
+      <th class="num">染料助剂</th><th class="num">染料助剂分配率</th>
+      <th class="num">加工费</th><th class="num">加工费分配率</th>
+      <th class="num">工资</th><th class="num">工资分配率</th>
+      <th class="num">总成本</th><th class="num">完工成本</th><th class="num">单位成本</th><th class="num">标准单位成本</th><th class="num">单位成本差异</th><th>单位成本差异原因</th><th class="num">期末在产品数量</th><th class="num">在产品成本</th>
+    <th>情形</th></tr></thead>
+        <tbody>
+        {% for item in detail_rows %}
+      <tr{% if item.case_has_manual %} class="ir-manual"{% endif %}>
+      <td>{{ item.detail_period_label }}</td>
+      <td>{{ item.order_period_label|default:"—" }}</td>
+      <td>{{ item.work_order.production_dept_code|workshop_label }}</td>
+      <td><strong>{{ item.work_order.order_no }}</strong><small>{{ item.work_order.get_status_display }}</small><input type="hidden" name="order_no" value="{{ item.work_order.order_no }}"></td>
+      <td>{{ item.wo_category }}</td>
+      <td><strong>{{ item.product_code }}</strong></td><td>{{ item.product_name }}</td>
+      <td>{{ item.wo_planned_finish }}</td>
+      <td>{{ item.wo_actual_finish }}</td>
+      <td>{{ item.wo_completion_status }}</td>
+      <td class="num">{{ item.plan_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.opening_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.opening_amount|dash_num:2 }}</td>
+      <td class="num ir-edit"><input class="ir-input" type="text" inputmode="decimal" autocomplete="off"
+            name="adj_issue_qty_{{ item.work_order.order_no }}"
+            data-orig="{{ item.case_manual_issue_qty|group_num:2 }}"
+            value="{{ item.case_manual_issue_qty|group_num:2 }}"
+            placeholder="{{ item.case_raw_issue_qty|floatformat:2|thousands }}"></td>
+      <td class="num"{% if item.current_unit_price_from_bom %} title="按 BOM 表折算的每单位料钱：Σ(子项单价 × 子项用量占比)，用量占比＝子项用量÷Σ用量；本例 ＝ {{ item.current_unit_price|floatformat:'-4' }}（本期没有可计价投料、或材料里有按 BOM 反推补投时用这个价）"{% endif %}>{{ item.current_unit_price|dash_num:"-4" }}</td>
+      <td class="num">{{ item.accum_issue|dash_num:2 }}</td>
+      <td>{{ item.issue_status }}</td>
+      <td class="num">{{ item.current_finished|dash_num:2 }}</td>
+      <td class="num">{{ item.accum_finished|dash_num:2 }}</td>
+      <td class="num">{% if item.current_finish_rate_pct %}{{ item.current_finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{% if item.finish_rate_pct %}{{ item.finish_rate_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td>{{ item.uses_roving }}</td>
+      <td class="num">{{ item.finished_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.equivalent_qty|dash_num:2 }}</td>
+      <td class="num">{{ item.direct_material|dash_num:2 }}</td>
+      <td class="num">{{ item.water_power|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_water_power_pct %}{{ item.rate_water_power_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.steam|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_steam_pct %}{{ item.rate_steam_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.natural_gas|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_natural_gas_pct %}{{ item.rate_natural_gas_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.depreciation|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_depreciation_pct %}{{ item.rate_depreciation_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.consumables|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_consumables_pct %}{{ item.rate_consumables_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.dye_auxiliary|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_dye_auxiliary_pct %}{{ item.rate_dye_auxiliary_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.processing_fee|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_processing_fee_pct %}{{ item.rate_processing_fee_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ item.wages|dash_num:2 }}</td>
+      <td class="num">{% if item.rate_wages_pct %}{{ item.rate_wages_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
+      <td class="num"><strong>{{ item.total_cost|dash_num:2 }}</strong></td>
+      <td class="num">{{ item.finished_cost|dash_num:2 }}</td>
+      <td class="num">{{ item.finished_unit_cost|dash_num:2 }}</td>
+      <td class="num">{{ item.standard_unit_cost|dash_num:2 }}</td>
+      <td class="num {{ item.unit_cost_diff_class }}">{{ item.unit_cost_diff_pct|dash_pct:2 }}</td>
+      <td class="ir-reason" title="差异率 ≥30% 时说明真实原因（如"少投了哪种料"）；绝对差异在 30% 以内的留空">{{ item.unit_cost_diff_reason|default:"—" }}</td>
+      <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
+      <td class="num">{{ item.wip_cost|dash_num:2 }}</td>
+      <td class="ir-case" title="{{ item.case_basis }}">{{ item.case_label }}</td>
+    </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ir-actions">
+      <button class="button primary" type="submit">保存人工调整并重算</button>
+      <span class="ir-hint" id="ir-dirty-hint"></span>
+      <span class="ir-hint" id="ir-save-note">
+        清空＝恢复系统值；投料数量填了、但这张单原来没有投料记录时，金额按该车间投料均价折算。
+        保存后本车间工单成本立即重算；如该车间已结转，请在「车间结转」重新结转一次。
+      </span>
+    </div>
+  </form>
+  {% else %}
+  <p class="empty-cell">所选期间/车间/工单号/情形下没有工单。</p>
+  {% endif %}
+
+  <p class="muted-text pc-footer-notes" style="margin:8px 0 0;">
+    口径：
+    ① 本表只列<b>当月发生核算成本的工单</b>（＝本期有工单成本结果的工单，与「工单成本」页同一套数据、同一个口径）。<br>
+    ② 情形只保留 4 类需要人工介入的：<b>① 粗纱-有工单无报工</b>、
+    <b>② 有投料-无报工（在产长期挂账超计划完工3个月以上；原⑤「有投料-部分报工」已并入）</b>、
+    <b>③ 有投料-报工超投料量</b>、<b>④ 无投料-有报工</b>；
+    其余显示「— 正常」。当月（及 3 个月以内）有在产、有在制属正常，不计入。
+    判"挂了多久"用<b>计划完工时间</b>（没有则计划开工时间，都是 ERP 的日期；工单主档的创建时间是导入时间，不能用）。<br>
+    ③ <b>粗纱（BC- 开头）不列为异常</b>：它本来就不会有报工，其成本就是按 BOM 反推成下游纱线的材料成本。<br>
+    ④ 材料成本怎么算：有投料按实际投料×月末加权价（没月末价用历史单价：出库价优先、入库价兜底）；
+    <b>无投料、有报工</b>的按 <b>BOM 单耗 × 报工数量</b>反推（这笔材料<b>全部进完工</b>）；
+    <b>报工超投料量（情形③）</b>按 <b>BOM 差额反推</b>补足：缺口＝BOM应有−本期实领，
+    无期初结转、无补投的单<b>缺多少补多少</b>（自动补料）。<br>
+    ⑤ 上月已投料、本月既没投料也没报工的工单（在产品继续挂着）不算异常，因此不再单列一类。<br>
+    ⑦ <b>单位成本差异原因</b>（用户 2026-09-30）：只有当<b>单位成本差异 ≥30%（或低于 30%）</b>时才给一句话原因，
+    目的是看出<b>真实原因</b>而不是把成本补平 —— 优先报"少投了哪种料"（BOM 子项一点都没投的列出来），
+    其次才是投料不足、报工少于入库、超产摊薄、投料超 BOM、工资/制造费用偏高等。<br>
+    ⑥ <b>在产品 / 折合产量</b>：<b>在产品</b>＝期末在产品数量——机织＝<b>在产纱线的重量（kg）</b>
+    （期初kg＋投料kg−报工米×米重×(1+损耗率7.5%)），纺纱＝投料kg−完工kg，其它车间＝计划数量−完工数量；
+    <b>折合产量</b>＝完工部分＋<b>0.5</b>×在产品（在产品的约当完工系数 0.5）——机织（有 BOM 米重）<b>以 kg 计</b>
+    （完工米×米重＋0.5×在产纱线kg），其它车间用各自数量。折合产量只用于分摊车间工资：
+    <b>工资分配率 ＝ 本工单折合产量 ÷ 车间折合产量合计</b>；材料和制造费用不按折合产量拆。
+  </p>
+</section>
 {% if selected_workshop %}
 <section class="section-card">
   <div class="section-heading">
@@ -153,10 +591,77 @@
           <td class="num">{% if item.is_calculated %}{{ item.finished_cost|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
           <td class="num">{% if item.is_calculated %}{{ item.ending_wip|floatformat:2|thousands }}{% else %}<span class="muted-text">待结转</span>{% endif %}</td>
         </tr>
-        {% empty %}<tr><td colspan="12" class="empty-cell">该车间尚无生产工单。</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="12" class="empty-cell">该车间本期没有生产工单。</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // 「投料报工情形速查」的人工调整输入：标出未保存的改动、提交时确认
+  (function () {
+    var form = document.getElementById("ir-save-form");
+    if (!form) { return; }
+    var hint = document.getElementById("ir-dirty-hint");
+    var inputs = form.querySelectorAll("input.ir-input");
+
+    function dirtyCount() {
+      var n = 0;
+      Array.prototype.forEach.call(inputs, function (el) {
+        var changed = (el.value || "").trim() !== (el.dataset.orig || "").trim();
+        el.classList.toggle("is-dirty", changed);
+        if (changed) { n += 1; }
+      });
+      return n;
+    }
+
+    function refresh() {
+      var n = dirtyCount();
+      if (hint) {
+        hint.textContent = n
+          ? "有 " + n + " 个格子改过，还没保存（点左边按钮保存并重算）"
+          : "";
+        hint.style.color = n ? "#b06a00" : "";
+      }
+    }
+
+    Array.prototype.forEach.call(inputs, function (el) {
+      // 千分位：失焦时格式化，聚焦时去掉逗号（只改真的带逗号的）
+      el.addEventListener("blur", function () {
+        var raw = (el.value || "").replace(/[,，\s]/g, "");
+        if (raw === "") { el.value = ""; refresh(); return; }
+        var num = Number(raw);
+        if (isFinite(num)) {
+          el.value = num.toLocaleString("en-US", {
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
+          });
+        }
+        refresh();
+      });
+      el.addEventListener("focus", function () {
+        if ((el.value || "").indexOf(",") >= 0) { el.value = el.value.replace(/,/g, ""); }
+      });
+      el.addEventListener("input", refresh);
+    });
+
+    form.addEventListener("submit", function (event) {
+      var n = dirtyCount();
+      if (!n) {
+        event.preventDefault();
+        if (hint) { hint.textContent = "没有改动，无需保存。"; hint.style.color = "#6b7883"; }
+        return;
+      }
+      if (!window.confirm(
+            "将保存 " + n + " 个格子的修改并立即重算相关车间的工单成本。\n" +
+            "留空＝恢复系统值；确定继续吗？")) {
+        event.preventDefault();
+      }
+    });
+
+    refresh();
+  })();
+</script>
 {% endblock %}

@@ -30,6 +30,11 @@ urlpatterns = [
     path("periods/<int:period_id>/run/", views.run_period, name="run_period"),
     path("periods/<int:period_id>/rematch/", views.rematch_period, name="rematch_period"),
     path(
+        "periods/<int:period_id>/workshop-costs/",
+        views.workshop_costs,
+        name="workshop_costs",
+    ),
+    path(
         "periods/<int:period_id>/workshops/",
         views.workshop_settlements_view,
         name="workshop_settlements",
@@ -60,6 +65,11 @@ urlpatterns = [
         name="purchase_contracts",
     ),
     path(
+        "periods/<int:period_id>/purchase-receipts/",
+        views.purchase_receipts,
+        name="purchase_receipts",
+    ),
+    path(
         "periods/<int:period_id>/purchase-accruals/",
         views.purchase_accruals,
         name="purchase_accruals",
@@ -73,6 +83,16 @@ urlpatterns = [
         "periods/<int:period_id>/purchase-accrual-voucher/",
         views.purchase_accrual_voucher,
         name="purchase_accrual_voucher",
+    ),
+    path(
+        "periods/<int:period_id>/material-issue-voucher/",
+        views.material_issue_voucher,
+        name="material_issue_voucher",
+    ),
+    path(
+        "periods/<int:period_id>/finished-receipt-voucher/",
+        views.finished_receipt_voucher,
+        name="finished_receipt_voucher",
     ),
     path(
         "periods/<int:period_id>/purchase-differences/",
@@ -90,24 +110,19 @@ urlpatterns = [
         name="purchase_summary",
     ),
     path(
-        "periods/<int:period_id>/sales-matches/",
-        views.sales_matches,
-        name="sales_matches",
-    ),
-    path(
         "periods/<int:period_id>/sales-uninvoiced/",
         views.sales_uninvoiced,
         name="sales_uninvoiced",
     ),
     path(
+        "periods/<int:period_id>/sales-ledger/",
+        views.sales_ledger,
+        name="sales_ledger",
+    ),
+    path(
         "periods/<int:period_id>/sales-cost-voucher/",
         views.sales_cost_voucher,
         name="sales_cost_voucher",
-    ),
-    path(
-        "periods/<int:period_id>/work-order-matches/",
-        views.work_order_matches,
-        name="work_order_matches",
     ),
     path(
         "periods/<int:period_id>/work-orders/",
@@ -176,9 +191,29 @@ urlpatterns = [
         name="inventory_results",
     ),
     path(
+        "periods/<int:period_id>/ending-wip/",
+        views.ending_wip,
+        name="ending_wip",
+    ),
+    path(
         "periods/<int:period_id>/work-order-costs/",
         views.work_order_costs,
         name="work_order_costs",
+    ),
+    path(
+        "periods/<int:period_id>/standard-costs/",
+        views.standard_costs,
+        name="standard_costs",
+    ),
+    path(
+        "periods/<int:period_id>/standard-costs/rates/",
+        views.save_standard_cost_rates,
+        name="save_standard_cost_rates",
+    ),
+    path(
+        "periods/<int:period_id>/standard-costs/rates-redirect/",
+        views.save_standard_cost_rates_redirect,
+        name="save_standard_cost_rates_redirect",
     ),
     path(
         "periods/<int:period_id>/total-cost/",
@@ -194,6 +229,23 @@ urlpatterns = [
         "periods/<int:period_id>/production-costs/",
         views.production_cost_summary,
         name="production_cost_summary",
+    ),
+    path(
+        "periods/<int:period_id>/production-costs/export/",
+        views_total_cost.production_cost_export,
+        name="production_cost_export",
+    ),
+    # 两张表各自的「导出Excel」（用户 2026-09-27）：
+    #   ① 成本构成表（原名「成本项目×四大块」）单张工作表 ② 工单投料报工明细 单张工作表
+    path(
+        "periods/<int:period_id>/production-costs/matrix-export/",
+        views_total_cost.production_cost_matrix_export,
+        name="production_cost_matrix_export",
+    ),
+    path(
+        "periods/<int:period_id>/production-costs/issue-report-export/",
+        views.issue_report_export,
+        name="issue_report_export",
     ),
     path(
         "periods/<int:period_id>/price-table/",
@@ -245,6 +297,16 @@ urlpatterns = [
         "periods/<int:period_id>/profit-statement/",
         views_profit.profit_statement_view,
         name="profit_statement",
+    ),
+    path(
+        "periods/<int:period_id>/profit-statement/detail-export/",
+        views_profit.profit_detail_export,
+        name="profit_detail_export",
+    ),
+    path(
+        "periods/<int:period_id>/profit-statement/summary-export/",
+        views_profit.profit_summary_export,
+        name="profit_summary_export",
     ),
     path(
         "periods/<int:period_id>/profit-statement/export/",

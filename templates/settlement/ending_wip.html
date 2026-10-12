@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}期末在产品 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">ENDING WIP</p>
+    <h1>期末在产品</h1>
+    <p>{{ period }} 期末仍挂在生产里的成本：按生产工单列出在产品数量与材料 / 人工 / 制造费用，并给出车间汇总。只列还有在产品的工单。</p>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">BY WORKSHOP</p><h2>各车间期末在产品</h2></div>
+  </div>
+  <div class="table-wrap">
+    <table class="wip-summary-table">
+      <thead>
+        <tr>
+          <th>车间</th>
+          <th class="num">在产品工单数</th>
+          <th class="num">在产品数量</th>
+          <th class="num">直接材料</th>
+          <th class="num">人工费</th>
+          <th class="num">制造费用</th>
+          <th class="num">在产品成本</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in workshop_rows %}
+        <tr>
+          {# 车间名可点：跳到明细并把该车间筛出来（用户 2026-09-21） #}
+          <td>
+            {% if wip_filter.workshop == row.workshop_code %}<strong>{{ row.workshop }}</strong>
+            {% else %}<a class="document-link" href="{% url 'ending_wip' period.id %}?workshop={{ row.workshop_code }}">{{ row.workshop }}</a>{% endif %}
+          </td>
+          <td class="num">{{ row.order_count }}</td>
+          <td class="num">{{ row.wip_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.wip_material|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.wip_wages|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.wip_overhead|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ row.amount|floatformat:2|thousands }}</strong></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="empty-cell">本期没有期末在产品。</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if workshop_rows %}
+      <tfoot>
+        <tr>
+          <td><strong>合计</strong></td>
+          <td class="num"><strong>{{ total.order_count }}</strong></td>
+          <td class="num"><strong>{{ total.wip_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ total.wip_material|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ total.wip_wages|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ total.wip_overhead|floatformat:2|thousands }}</strong></td>
+          <td class="num"><strong>{{ total.amount|floatformat:2|thousands }}</strong></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  {# 口径说明（用户 2026-09-21：简短要点，不用表格） #}
+  <div class="basis-block">
+    <p class="basis-title">口径说明</p>
+    <ul class="basis-notes">
+      <li><strong>数据来源</strong>：工单结算结果的「在产品」部分；车间按工单主档的生产部门编号归一（与「车间结转」同口径）。</li>
+      <li><strong>在产品成本</strong>＝ 直接材料 ＋ 人工费 ＋ 制造费用；<strong>在产品数量</strong>＝ 计划数量 − 完工数量；只列还有在产品的工单（合计＝「总成本表」的在产品块）。</li>
+      <li><strong>起始期间</strong>＝ 该工单最早有在产品的期间；期初台账里就有的写来源期间，没有来源期间的写「期初结转」。</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>期末在产品明细（按工单）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        共 {{ row_count }} 张工单{% if wip_filter_active %}（已按下方筛选条件过滤）{% endif %}。
+      </p>
+    </div>
+  </div>
+  {# 筛选（车间 / 产品编码或名称）：只影响本表与「导出Excel」 #}
+  <div class="filter-card purchase-filter">
+    <form class="filter-grid" method="get">
+      <label>车间
+        {# 选完车间立即提交（与其它页面同款），再由下方脚本滚到明细表 #}
+        <select name="workshop" onchange="this.form.submit()">
+          <option value="">全部车间</option>
+          {% for item in workshop_options %}<option value="{{ item.value }}" {% if wip_filter.workshop == item.value %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>产品编码<input name="material" value="{{ wip_filter.material }}" placeholder="编码或名称"></label>
+      <label>工单状态
+        {# 选完状态立即提交（与车间同款） #}
+        <select name="status" onchange="this.form.submit()">
+          <option value="">全部状态</option>
+          {% for item in status_options %}<option value="{{ item }}" {% if wip_filter.status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="filter-actions">
+        <button class="button secondary" type="submit">筛选</button>
+        <a class="button secondary" href="{% url 'ending_wip' period.id %}">清空</a>
+        <a class="button secondary" href="{% url 'export_listing' period.id 'ending_wip' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+        <div class="print-here"></div>
+      </div>
+    </form>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>车间</th><th>起始期间</th><th>工单编号</th><th>工单状态</th>
+          <th>产品编码</th><th>产品名称</th>
+          <th class="num">计划数量</th><th class="num">完工数量</th><th class="num">在产品数量</th>
+          <th class="num">直接材料</th><th class="num">人工费</th><th class="num">制造费用</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in page %}
+        <tr>
+          <td>{{ row.workshop }}</td>
+          <td>{% if row.start_period == "期初结转" %}<span class="pill warning">期初结转</span>{% else %}<strong>{{ row.start_period|default:"—" }}</strong>{% endif %}</td>
+          <td><strong>{{ row.order_no }}</strong></td>
+          <td>{{ row.order_status|default:"—" }}</td>
+          <td><strong>{{ row.product_code|default:"—" }}</strong></td>
+          <td>{{ row.product_name|default:"—" }}</td>
+          <td class="num">{{ row.plan_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.finished_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.wip_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num">{{ row.wip_material|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.wip_wages|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.wip_overhead|floatformat:2|thousands }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="empty-cell">没有符合筛选条件的期末在产品。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+
+<style>
+  /* 各车间期末在产品：合计行加底色（与其它汇总表一致） */
+  .wip-summary-table tfoot td { background: #eef2f5; font-weight: 700; }
+</style>
+{% endblock %}

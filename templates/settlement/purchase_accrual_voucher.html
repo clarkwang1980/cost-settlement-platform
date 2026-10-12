@@ -9,24 +9,29 @@
     <p>本月到货本月到票直接入账；本月到货月末未到票暂估；前期暂估本月到票回冲原暂估并按票入账。金额口径不含税。</p>
   </div>
   <div class="heading-actions">
-    <form method="get" class="filter-actions" style="margin:0;">
-      <input type="hidden" name="supplier" value="{{ voucher.filter.supplier }}">
-      <input type="hidden" name="material" value="{{ voucher.filter.material }}">
-      <label class="muted-text">凭证期间
-        <select name="voucher_month" onchange="this.form.submit()">
-          {% for item in period_options %}
-          <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <noscript><button class="button secondary" type="submit">切换</button></noscript>
-    </form>
+    <a class="button secondary" href="{% url 'export_listing' period.id 'material_cost_difference' %}">导出材料成本差异明细</a>
     <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
     <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
-    <a class="button secondary" href="{% url 'purchase_reversal_report' period.id %}">暂估回冲明细</a>
+    <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'sales_cost_voucher' period.id %}">销售结转成本凭证</a>
   </div>
+</section>
+
+<section class="voucher-toolbar">
+  <form method="get">
+    <input type="hidden" name="supplier" value="{{ voucher.filter.supplier }}">
+    <input type="hidden" name="material" value="{{ voucher.filter.material }}">
+    <label>凭证期间
+      <select name="voucher_month" onchange="this.form.submit()">
+        {% for item in period_options %}
+        <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button class="button secondary" type="submit">切换</button></noscript>
+  </form>
+  <span class="voucher-toolbar-note">切换凭证期间后，下方三张附件与凭证分录按该月重新计算。</span>
 </section>
 
 {% if voucher.checks %}
@@ -83,10 +88,11 @@
     </table>
   </div>
   <p class="muted-text">
-    ① 判定＝本月到货且发票在本月已核销到该笔入库（部分到票按数量拆开）；② ＝本月到货减本月已核销数量；
-    ③ ＝本月核销到「以前月份入库」或「期初暂估台账」的部分。
+    <strong>本月到货到票</strong> 判定＝本月到货且发票在本月已核销到该笔入库（部分到票按数量拆开）；
+    <strong>本月货到票未到-暂估入账</strong> ＝本月到货减本月已核销数量；
+    <strong>前期暂估本月到票</strong> ＝本月核销到「以前月份入库」或「期初暂估台账」的部分。
     价差＝发票金额−暂估金额，进「{{ voucher.accounts.difference }}」。凭证金额不随下方附件筛选变化。
-    ② 与附件3余额表可能相差 1 分：② 按入库金额比例拆分，余额表按「未到票数量×暂估单价」计算。
+    「本月货到票未到-暂估入账」与附件3余额表可能相差 1 分：暂估按入库金额比例拆分，余额表按「未到票数量×暂估单价」计算。
   </p>
 </section>
 
@@ -257,10 +263,11 @@
   </div>
   <ul class="muted-text" style="margin:0;padding-left:20px;">
     <li><strong>数据来源</strong>：库存出入库流水（采购入库）＋ 采购合同暂估价 ＋ 采购发票核销 ＋ 期初暂估台账。</li>
-    <li><strong>① 本月到货＋本月到票</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.supplier }}—XX供应商；
-      同一入库单只到票一部分的，按数量拆开，已到票部分走①、未到票部分走②。</li>
-    <li><strong>② 本月到货＋月末未到票</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.accrued }}。</li>
-    <li><strong>③ 前期暂估＋本月到票</strong>：借 {{ voucher.accounts.accrued }}（冲回原暂估）/
+    <li><strong>本月到货到票</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.supplier }}—XX供应商；
+      同一入库单只到票一部分的，按数量拆开，已到票部分走「本月到货到票」、未到票部分走「暂估入账」。</li>
+    <li><strong>本月货到票未到-暂估入账</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.accrued }}。</li>
+    <li><strong>前期暂估本月到票-冲回暂估 / -按票入账</strong>：冲回暂估 借 {{ voucher.accounts.accrued }}（冲回原暂估）/
+      贷 {{ voucher.accounts.raw }}；按票入账 借 {{ voucher.accounts.raw }} /
       贷 {{ voucher.accounts.supplier }}—XX供应商；发票与暂估价不同时，差额进 {{ voucher.accounts.difference }}。</li>
     <li><strong>暂估单价来源</strong>：合同未税价优先，其次期初暂估台账单价 / 手工暂估价；都没有则记为「缺少暂估价格」，
       该行金额按 0 计（会漏记，见生成前检查）。</li>

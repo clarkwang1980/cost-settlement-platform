@@ -9,27 +9,31 @@
     <p>按结转类型与销售大类汇总的结转成本凭证；借方主营业务成本按销售渠道分国内/国外，贷方按销售大类。</p>
   </div>
   <div class="heading-actions">
-    <form method="get" class="filter-actions" style="margin:0;">
-      <label class="muted-text">凭证期间
-        <select name="voucher_month" onchange="this.form.submit()">
-          {% for item in voucher.months %}
-          <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}（{{ item.row_count }} 行）</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="muted-text">科目粒度
-        <select name="group" onchange="this.form.submit()">
-          <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>借方按销售渠道展开（国内/国外）</option>
-          <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每块借贷各一行）</option>
-        </select>
-      </label>
-      <noscript><button class="button secondary" type="submit">切换</button></noscript>
-    </form>
     <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
     <a class="button secondary" href="{% url 'export_listing' period.id 'sales_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
     <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">月末已出库未开票</a>
     <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
   </div>
+</section>
+
+<section class="voucher-toolbar">
+  <form method="get">
+    <label>凭证期间
+      <select name="voucher_month" onchange="this.form.submit()">
+        {% for item in voucher.months %}
+        <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}（{{ item.row_count }} 行）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>科目粒度
+      <select name="group" onchange="this.form.submit()">
+        <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>借方按销售渠道展开（国内/国外）</option>
+        <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每块借贷各一行）</option>
+      </select>
+    </label>
+    <noscript><button class="button secondary" type="submit">切换</button></noscript>
+  </form>
+  <span class="voucher-toolbar-note">切换后立即按该月重算上方凭证分录与下方附件。</span>
 </section>
 
 {% if voucher.checks %}

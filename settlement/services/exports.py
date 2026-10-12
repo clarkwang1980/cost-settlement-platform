@@ -502,7 +502,8 @@ def build_settlement_workbook(period):
         workbook,
         "月末采购暂估",
         [
-            "入库期间",
+            "归属期间",
+            "流水期间",
             "入库日期",
             "入库单号",
             "合同号",
@@ -521,6 +522,7 @@ def build_settlement_workbook(period):
         (
             (
                 row.receipt_month,
+                getattr(row, "flow_month", None),
                 row.document_date,
                 row.document_no,
                 row.contract_nos,
@@ -551,6 +553,7 @@ def build_settlement_workbook(period):
             "物料编码",
             "物料名称",
             "入库期间",
+            "归属期间",
             "入库日期",
             "入库单号",
             "核销数量",
@@ -570,6 +573,7 @@ def build_settlement_workbook(period):
                 row.material_code,
                 row.material_name,
                 row.receipt_month,
+                row.attribution_month or row.receipt_month,
                 row.document_date,
                 row.document_no,
                 row.matched_quantity,
@@ -635,44 +639,38 @@ def build_settlement_workbook(period):
         "月末已出库未开票",
         [
             "出库期间",
-            "出库日期",
-            "出库单号",
             "销售订单号",
             "客户",
+            "销售渠道",
+            "销售公司",
             "销售大类",
             "产品编码",
             "产品名称",
-            "出库数量",
-            "累计开票数量",
-            "未开票数量",
-            "出库成本",
-            "已开票成本",
-            "未开票成本",
-            "匹配发票",
-            "最近开票期间",
+            "规格型号",
+            "单位",
+            "数量",
+            "成本单价",
+            "销售成本",
             "未开票天数",
-            "状态",
+            "是否以前月份出库",
         ],
         (
             (
-                row.issue_month,
-                row.document_date,
-                row.document_no,
-                row.sales_order_no,
-                row.customer_name or row.customer_code,
+                row.out_month,
+                row.order_no,
+                row.customer_name,
+                row.channel,
+                row.company,
                 row.sales_category,
                 row.material_code,
                 row.material_name,
-                row.issue_quantity,
-                row.invoiced_quantity,
-                row.outstanding_quantity,
-                row.issue_amount,
-                row.invoiced_cost,
-                row.outstanding_cost,
-                row.invoice_nos,
-                row.latest_invoice_period,
+                row.specification,
+                row.uom,
+                row.quantity,
+                row.unit_cost,
+                row.cost_amount,
                 row.outstanding_days,
-                row.status,
+                "是" if row.prior_period else "否",
             )
             for row in uninvoiced_rows
         ),
@@ -711,6 +709,7 @@ def build_settlement_workbook(period):
     # 工单成本（与页面一致：每个制造费用列后加分配率列，每车间末尾加合计行）
     WO_HEADERS = [
         "核算期间",
+        "工单期间",
         "工单编号",
         "车间",
         "产品编码",
@@ -737,6 +736,8 @@ def build_settlement_workbook(period):
         "机物料分配率%",
         "染料助剂",
         "染料助剂分配率%",
+        "加工费",
+        "加工费分配率%",
         "工资",
         "工资分配率%",
         "工单总成本",
@@ -744,7 +745,12 @@ def build_settlement_workbook(period):
         "完工单位成本",
         "在产品成本",
     ]
-    from settlement.services.workorder_costing import MANUFACTURING_FIELDS
+    from settlement.services.workorder_costing import (
+        MANUFACTURING_FIELDS,
+        all_roving_bom_orders,
+        attach_finish_progress,
+        finish_rate_text,
+    )
     from settlement.models import BomLine
 
     wo_items = list(
@@ -755,6 +761,17 @@ def build_settlement_workbook(period):
     wo_rows = []
     wo_highlight = set()
     if wo_items:
+        # 本期完工 / 累计完工 / 完工率（用户 2026-09-24 定稿口径，与页面同一套函数）
+        attach_finish_progress(
+            wo_items, {d.order_no: d for d in period.work_order_details.all()}
+        )
+        # 工单期间（用户 2026-09-27）：与页面同一套解析（工单明细「创建时间」的下单月份）。
+        # 懒导入避免 views <-> exports 的模块级循环依赖。
+        from settlement.views import order_period_map as _order_period_map
+
+        _order_periods = _order_period_map(period)
+        for _item in wo_items:
+            _item.order_period_label = _order_periods.get(_item.work_order.order_no, "")
         # 投料进度与粗纱标志
         progress_rows = list(
             period.issue_progress.values("work_order_no").annotate(
@@ -783,6 +800,8 @@ def build_settlement_workbook(period):
             .exclude(work_order_no="")
             .values_list("work_order_no", flat=True)
         )
+        # BOM 100% 全粗纱的工单（「是否用粗纱」＝是）；循环外算一次
+        _all_roving_orders = all_roving_bom_orders(period)
         for item in wo_items:
             order_no = item.work_order.order_no
             ws = item.work_order.production_dept_code
@@ -796,36 +815,26 @@ def build_settlement_workbook(period):
                 )
             statuses = progress_status_by_order.get(order_no)
             item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
-            item.accum_finished = Decimal(item.finished_quantity or 0)
             wip_qty = Decimal(item.wip_quantity or 0)
-            item.finish_rate_pct = (
-                (item.accum_finished / (item.accum_finished + wip_qty) * Decimal("100"))
-                if (item.accum_finished + wip_qty)
-                else None
-            )
             if item.accum_finished <= Decimal("0") and wip_qty <= Decimal("0"):
                 item.completion_status = "未开工"
             elif wip_qty <= Decimal("0"):
                 item.completion_status = "已完成"
             else:
                 item.completion_status = "部分完成"
-            if ws == "tefang":
-                uses_roving = (
-                    (order_no in roving_issue_orders)
-                    or (order_no in roving_progress_orders)
-                    or BomLine.objects.filter(
-                        period=period,
-                        work_order_no=order_no,
-                        sub_item_code__in=roving_codes,
-                    ).exists()
-                )
-                item.uses_roving = "是" if uses_roving else "否"
-            else:
-                item.uses_roving = "—"
+            # 是否用粗纱（用户 2026-09-30 定稿）：BOM 100% 全粗纱才"是"，混料单"否"
+            item.uses_roving = "是" if order_no in _all_roving_orders else "否"
 
         mat_total = {}
         fee_total = {field: {} for field in MANUFACTURING_FIELDS}
         equiv_total = {}
+        # 折合产量与结算层同一口径（用户 2026-09-30：机织在产品以 kg 计、完工换成 kg）
+        from settlement.services.workorder_costing import (
+            bom_kg_per_meter,
+            equivalent_quantity,
+        )
+
+        _kg_per_m_map = bom_kg_per_meter(period)
         for item in wo_items:
             ws = item.work_order.production_dept_code
             mat_total[ws] = mat_total.get(ws, Decimal("0")) + Decimal(
@@ -835,9 +844,13 @@ def build_settlement_workbook(period):
                 fee_total[field][ws] = fee_total[field].get(ws, Decimal("0")) + Decimal(
                     getattr(item, field) or 0
                 )
-            equiv_total[ws] = equiv_total.get(ws, Decimal("0")) + Decimal(
-                item.finished_quantity or 0
-            ) + Decimal(item.wip_quantity or 0) * Decimal("0.5")
+            equiv_total[ws] = equiv_total.get(ws, Decimal("0")) + equivalent_quantity(
+                ws,
+                item.work_order.order_no,
+                item.finished_quantity,
+                item.wip_quantity,
+                _kg_per_m_map,
+            )
 
         def _rate(fee_field, ws):
             denominator = mat_total.get(ws, Decimal("0"))
@@ -849,14 +862,18 @@ def build_settlement_workbook(period):
             denominator = equiv_total.get(ws, Decimal("0"))
             if not denominator:
                 return "—"
-            equivalent = Decimal(item.finished_quantity or 0) + Decimal(
-                item.wip_quantity or 0
-            ) * Decimal("0.5")
+            equivalent = equivalent_quantity(
+                ws,
+                item.work_order.order_no,
+                item.finished_quantity,
+                item.wip_quantity,
+                _kg_per_m_map,
+            )
             v = (equivalent / denominator) * Decimal("100")
             return "—" if not v else f"{v:.2f}%"
         SUM_FIELDS = (
             "direct_material", "water_power", "steam", "natural_gas", "depreciation",
-            "consumables", "dye_auxiliary", "wages", "total_cost",
+            "consumables", "dye_auxiliary", "processing_fee", "wages", "total_cost",
             "finished_cost", "wip_cost",
         )
         subtotals = {}
@@ -872,11 +889,11 @@ def build_settlement_workbook(period):
 
         def _detail_row(item):
             ws = item.work_order.production_dept_code
-            rate_text = (
-                f"{item.finish_rate_pct:.2f}%" if item.finish_rate_pct is not None else "—"
-            )
+            rate_text = finish_rate_text(item.finish_rate_pct)
             return (
                 f"{period.month:%Y-%m}",
+                # 工单期间（用户 2026-09-27）：这张单的下单月份（工单明细的「创建时间」）
+                getattr(item, "order_period_label", "") or "—",
                 item.work_order.order_no,
                 WORKSHOP_LABELS.get(item.work_order.production_dept_code,
                                    item.work_order.production_dept_code),
@@ -904,6 +921,8 @@ def build_settlement_workbook(period):
                 _rate("consumables", ws),
                 item.dye_auxiliary,
                 _rate("dye_auxiliary", ws),
+                item.processing_fee,
+                _rate("processing_fee", ws),
                 item.wages,
                 _wage_rate(item, ws),
                 item.total_cost,
@@ -928,6 +947,8 @@ def build_settlement_workbook(period):
                 st["consumables"],
                 "",
                 st["dye_auxiliary"],
+                "",
+                st["processing_fee"],
                 "",
                 st["wages"],
                 "",
