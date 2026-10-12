@@ -63,6 +63,17 @@
             <a class="mini-button" href="{% url 'download_import_file' period.id batch.id %}">下载原始文件</a>            <form method="post" action="{% url 'delete_import_batch' period.id batch.id %}" style="display:inline" onsubmit="return confirm('确定删除批次「{{ batch.get_kind_display }}（{{ batch.original_name }}）」吗？将同时删除该批次导入的全部数据并重置本月结算结果。');">              {% csrf_token %}              <button class="mini-button danger" type="submit">删除</button>            </form>
           </td>
         </tr>
+        {% if batch.message %}
+        {# 用户 2026-09-30：导入失败/部分失败的原因原来只在鼠标悬停提示里看不到，这里直接展开显示 #}
+        <tr class="import-message-row">
+          <td colspan="8">
+            <div style="background:#fff8e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 12px;margin:4px 0 10px">
+              <strong style="color:#8a6d1f">导入提示（成功 {{ batch.row_count }} 行，未导入 {{ batch.error_count }} 行）：</strong>
+              <pre style="margin:6px 0 0;white-space:pre-wrap;font-size:12px;color:#6b5a2e;max-height:220px;overflow:auto">{{ batch.message }}</pre>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
       {% empty %}<tr><td colspan="8" class="empty-cell">本期间还没有上传过文件。</td></tr>{% endfor %}
       </tbody>
     </table>
