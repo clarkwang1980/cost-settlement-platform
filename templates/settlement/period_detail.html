@@ -202,6 +202,43 @@
 
 <section class="section-card pd-block">
   <div class="section-heading">
+    <div><p class="eyebrow">DATA SELF-CHECK</p><h2>数据自检</h2></div>
+  </div>
+  <p class="pd-next" style="margin:0 0 8px">
+    「标准成本 / 损益表 / 期末库存」算不出来，多半是下面某一块没进库或没录入。右边是本地的参考值，对不上就按提示去补。
+  </p>
+  <table class="pd-table">
+    <thead>
+      <tr><th style="width:220px">项目</th><th style="width:140px">本期实际</th>
+          <th style="width:140px">本地参考值</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>入库资料类型数</td><td class="num">{{ counts.batch_kinds }}</td><td class="num">21</td>
+          <td class="muted">少很多 → 有资料没传（对照重传包的「①上传清单」）</td></tr>
+      <tr><td>BOM 表行数</td><td class="num">{{ counts.bom_lines }}</td><td class="num">9,944</td>
+          <td class="muted">为 0 → <b>单位标准成本一定算不出来</b>（标准价靠 BOM 回填）</td></tr>
+      <tr><td>BOM 已回填标准价</td><td class="num">{{ counts.bom_priced }}</td><td class="num">9,944</td>
+          <td class="muted">等于 0 → 没跑完整结算，或历史单价没传（子项取不到价）</td></tr>
+      <tr><td>历史单价行数</td><td class="num">{{ counts.historical_prices }}</td><td class="num">3,972</td>
+          <td class="muted">为 0 → 子项单价取不到 → 标准成本为空</td></tr>
+      <tr><td>标准成本占比参数</td><td class="num">{{ counts.standard_rates }}</td><td class="num">5</td>
+          <td class="muted">为 0 → 到「标准成本」页照抄 5 个车间的占比</td></tr>
+      <tr><td>车间费用记录数</td><td class="num">{{ counts.workshop_cost_pools }}</td><td class="num">6</td>
+          <td class="muted">为 0 → 制造费用=0、单位成本整体偏低（页面录入，不是文件）</td></tr>
+      <tr><td>销售台账行数</td><td class="num">{{ counts.sales_ledger }}</td><td class="num">988</td>
+          <td class="muted">为 0 → 损益表一定没数据（损益表就是从台账来的）</td></tr>
+      <tr><td>库存流水 / 生产工单</td><td class="num">{{ counts.inventory }} / {{ counts.orders }}</td>
+          <td class="num">4,216 / 5,982</td><td class="muted">差很多 → 对应资料没导进去</td></tr>
+      <tr><td>投料记录 / 报工记录</td><td class="num">{{ counts.material_issues }} / {{ counts.work_reports }}</td>
+          <td class="num">664 / 661</td><td class="muted">差很多 → 投料/报工没导进去</td></tr>
+      <tr><td>库存计价 / 工单成本</td><td class="num">{{ counts.valuations }} / {{ counts.work_order_costs }}</td>
+          <td class="num">2,173 / 492</td><td class="muted">为 0 → 还没跑完整结算（期间页右上角那个按钮）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="section-card pd-block">
+  <div class="section-heading">
     <div><p class="eyebrow">IMPORT STATUS</p><h2>最近导入</h2></div>
     <div class="heading-actions">
       <a class="button small secondary" href="{% url 'import_batches' period.id %}">全部批次</a>
