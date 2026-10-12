@@ -52,10 +52,18 @@
           <td><span class="pill">{{ batch.get_kind_display }}</span></td>
           <td><strong>{{ batch.original_name }}</strong><small>批次ID {{ batch.id }}</small></td>
           <td class="num">{{ batch.row_count }}</td>
-          <td class="num">{{ batch.error_count }}</td>
+          <td class="num {% if batch.error_count %}danger-text{% endif %}">{{ batch.error_count }}</td>
           <td>
-            <span class="pill {% if batch.status == 'success' %}success{% elif batch.status == 'failed' %}danger{% endif %}">{{ batch.get_status_display }}</span>
-            {% if batch.message %}<small title="{{ batch.message }}">有错误信息</small>{% endif %}
+            {% if batch.row_count == 0 and batch.error_count %}
+              <span class="pill danger">全部未导入</span>
+            {% elif batch.error_count %}
+              <span class="pill warning">部分成功</span>
+              <small>{{ batch.error_count }} 行未导入</small>
+            {% elif batch.status == 'failed' %}
+              <span class="pill danger">导入失败</span>
+            {% else %}
+              <span class="pill success">导入成功</span>
+            {% endif %}
           </td>
           <td>{{ batch.uploaded_by|default:"—" }}</td>
           <td>{{ batch.created_at|date:"Y-m-d H:i" }}</td>
