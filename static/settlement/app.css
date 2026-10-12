@@ -78,7 +78,8 @@ button { cursor: pointer; }
 .nav-group-links {
   /* 按钮块：用 7 列网格 —— 所有按钮**同一个宽度**，四行的列也左右对齐，
      不会出现"这一行按钮宽、那一行按钮窄"或折行后缩进不齐（用户 2026-09-30） */
-  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(7, 118px);
+  justify-content: start;
   align-items: center; flex: 1 1 0; min-width: 0;
   gap: 5px 6px;
 }
