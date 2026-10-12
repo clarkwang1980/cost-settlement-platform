@@ -76,17 +76,17 @@ button { cursor: pointer; }
   color: var(--blue); font-size: 15px; font-weight: 800; letter-spacing: .04em;
 }
 .nav-group-links {
-  /* 按钮块：等宽按钮 + 等间距；一排排不下就整排换行（折下来的那排仍与上一排左端对齐） */
-  display: flex; flex-wrap: wrap; align-items: center;
-  flex: 1 1 0; min-width: 0;
+  /* 按钮块：用 7 列网格 —— 所有按钮**同一个宽度**，四行的列也左右对齐，
+     不会出现"这一行按钮宽、那一行按钮窄"或折行后缩进不齐（用户 2026-09-30） */
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: center; flex: 1 1 0; min-width: 0;
   gap: 5px 6px;
 }
 .nav-group a {
-  /* 用户 2026-09-30：按钮**等宽并铺满整行**（flex:1），四行的左右边界就对齐了，
-     不会再出现"长的长短的短"；宽度下限保证窄窗口也不折行 */
-  flex: 1 1 0; white-space: nowrap; text-align: center;
-  min-width: 96px; padding: 4px 8px; line-height: 1.3;
-  border: 1px solid transparent; border-radius: 8px;   /* 边框常驻，hover/选中只换颜色，不再跳动 */
+  /* 宽度由上面的 7 列网格决定 —— 所有按钮等宽、列对齐；边框常驻，hover/选中只换颜色 */
+  white-space: nowrap; text-align: center; min-width: 0;
+  padding: 4px 8px; line-height: 1.3;
+  border: 1px solid transparent; border-radius: 8px;
   background: #eef3f6;
 }
 .nav-group a:hover { color: var(--blue); background: var(--blue-soft); border-color: #c3dced; }
@@ -97,13 +97,13 @@ button { cursor: pointer; }
 /* 窄一点的窗口（笔记本 1440/1366）按钮整体收一档，保证 11 条的「成本核算」仍是一行 */
 @media (max-width: 1560px) {
   .nav-group-label { flex: 0 0 80px; font-size: 14px; }
-  .nav-group a { min-width: 90px; padding: 4px 5px; font-size: 13px; }
+  .nav-group a { padding: 4px 5px; font-size: 13px; }
   .nav-group-links { gap: 5px 3px; }
 }
 /* 1280 一档：再收一档，依然是「固定标签列 + 等宽按钮」的一行 */
 @media (max-width: 1300px) {
   .nav-group-label { flex: 0 0 76px; }
-  .nav-group a { min-width: 83px; padding: 4px 3px; font-size: 12.5px; }
+  .nav-group a { padding: 4px 3px; font-size: 12.5px; }
 }
 /* 再窄：让「期间 + 状态」独占一行，按钮拿到整行宽度，同样不折行 */
 @media (max-width: 1200px) {
@@ -113,7 +113,7 @@ button { cursor: pointer; }
 }
 /* 1024 一档：横向更省（左右留白补到按钮里），「成本核算」11 条仍然是一行 */
 @media (max-width: 1100px) {
-  .nav-group a { min-width: 76px; padding: 4px 10px; }
+  .nav-group a { padding: 4px 6px; }
   .nav-group-links { gap: 5px 2px; }
 }
 
