@@ -152,6 +152,11 @@ class ImportBatch(models.Model):
     )
     kind = models.CharField(max_length=30, choices=Kind.choices)
     file = models.FileField(upload_to="imports/%Y/%m/")
+    # 用户 2026-09-30：容器磁盘是临时的，重新部署会清空 media/ 里上传的原始文件；
+    # 这里把文件内容另存一份到数据库（持久），下载时磁盘没有就回退到库里的副本。
+    file_content = models.BinaryField(null=True, blank=True, editable=False,
+                                       verbose_name="原始文件内容（数据库副本）")
+    file_size = models.PositiveIntegerField(default=0, verbose_name="原始文件字节数")
     original_name = models.CharField(max_length=255)
     sha256 = models.CharField(max_length=64, db_index=True)
     status = models.CharField(

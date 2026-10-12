@@ -388,15 +388,28 @@ def import_batches(request, period_id):
 def download_import_file(request, period_id, batch_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     batch = get_object_or_404(ImportBatch, id=batch_id, period=period)
-    if not batch.file:
-        raise Http404("该批次没有原始文件。")
-    if not Path(batch.file.path).is_file():
-        raise Http404("原始文件已丢失。")
-    return FileResponse(
-        batch.file.open("rb"),
-        as_attachment=True,
-        filename=batch.original_name,
-    )
+    disk = ""
+    if batch.file:
+        try:
+            disk = batch.file.path
+        except Exception:  # noqa: BLE001
+            disk = ""
+    if disk and Path(disk).is_file():
+        return FileResponse(
+            batch.file.open("rb"),
+            as_attachment=True,
+            filename=batch.original_name,
+        )
+    # 磁盘上没有（容器重建被清空）→ 回退到数据库里的副本
+    if batch.file_content:
+        response = HttpResponse(
+            bytes(batch.file_content), content_type="application/octet-stream"
+        )
+        response["Content-Disposition"] = (
+            "attachment; filename*=UTF-8''" + quote(batch.original_name or "原始文件")
+        )
+        return response
+    raise Http404("原始文件已丢失（数据库里也没有副本）。")
 
 
 @login_required
@@ -11607,6 +11620,23 @@ def download_all_import_files(request, period_id):
                 except Exception:  # noqa: BLE001
                     src = ""
             if src and Path(src).is_file():
+                pass
+            elif batch.file_content:
+                # 磁盘被清空 → 用数据库副本写进包里
+                name = Path(batch.original_name or f"batch-{batch.id}").name
+                inner = f"{kind_label}/{name}"
+                index = 2
+                while inner in written:
+                    inner = f"{kind_label}/{Path(name).stem}_{index}{Path(name).suffix}"
+                    index += 1
+                written.add(inner)
+                zf.writestr(inner, bytes(batch.file_content))
+                writer.writerow([kind_label, batch.original_name, batch.row_count,
+                                 batch.error_count,
+                                 batch.created_at.strftime("%Y-%m-%d %H:%M"),
+                                 inner, "来自数据库副本"])
+                continue
+            if src and Path(src).is_file():
                 name = Path(src).name
                 inner = f"{kind_label}/{name}"
                 index = 2
@@ -11615,8 +11645,10 @@ def download_all_import_files(request, period_id):
                     index += 1
                 written.add(inner)
                 zf.write(src, inner)
+            elif batch.file_content:
+                note = "来自数据库副本"
             elif batch.file:
-                note = "原始文件已丢失"
+                note = "原始文件已丢失（数据库也没有副本）"
             else:
                 note = "页面录入，无原始文件"
             writer.writerow([kind_label, batch.original_name, batch.row_count,

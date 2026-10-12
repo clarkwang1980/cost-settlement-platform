@@ -1073,6 +1073,18 @@ def create_import_batch(*, period, kind, uploaded_file, user, replace_existing=F
         sha256=file_hash,
         uploaded_by=user,
     )
+    # 把上传文件内容另存一份到数据库（容器磁盘重建也不会丢）
+    if not batch.file_content:
+        uploaded_file.seek(0)
+        content = uploaded_file.read()
+        uploaded_file.seek(0)
+        if isinstance(content, str):
+            content = content.encode("utf-8", "replace")
+        ImportBatch.objects.filter(pk=batch.pk).update(
+            file_content=content, file_size=len(content or b"")
+        )
+        batch.file_content = content
+        batch.file_size = len(content or b"")
     return batch
 
 
