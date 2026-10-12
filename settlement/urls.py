@@ -18,6 +18,11 @@ urlpatterns = [
         name="import_batches",
     ),
     path(
+        "periods/<int:period_id>/import-batches/download-all/",
+        views.download_all_import_files,
+        name="download_all_import_files",
+    ),
+    path(
         "periods/<int:period_id>/import-batches/<int:batch_id>/download/",
         views.download_import_file,
         name="download_import_file",
