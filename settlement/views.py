@@ -11563,3 +11563,60 @@ def export_period(request, period_id):
         messages.error(request, "请先执行结算，再导出结果。")
         return redirect("period_detail", period_id=period.id)
     return settlement_excel_response(period)
+
+@login_required
+def download_all_import_files(request, period_id):
+    """把该期间上传过的原始文件打包成一个 ZIP（按资料类型分目录，附「上传文件清单.csv」）。
+
+    用户 2026-09-30：报表导出页要能直接拿到"我上传的那些文件"，
+    原来只能到「资料导入 → 全部批次」一行行下载。
+    """
+    import csv as _csv
+    import zipfile
+    from io import BytesIO, StringIO
+
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    batches = list(period.import_batches.order_by("kind", "id"))
+
+    buffer = BytesIO()
+    manifest = StringIO()
+    writer = _csv.writer(manifest)
+    writer.writerow(["资料类型", "原始文件名", "导入行数", "未导入行数",
+                     "上传时间", "包内路径", "备注"])
+    written = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for batch in batches:
+            kind_label = batch.get_kind_display()
+            inner = ""
+            note = ""
+            src = ""
+            if batch.file:
+                try:
+                    src = batch.file.path
+                except Exception:  # noqa: BLE001
+                    src = ""
+            if src and Path(src).is_file():
+                name = Path(src).name
+                inner = f"{kind_label}/{name}"
+                index = 2
+                while inner in written:
+                    inner = f"{kind_label}/{Path(name).stem}_{index}{Path(name).suffix}"
+                    index += 1
+                written.add(inner)
+                zf.write(src, inner)
+            elif batch.file:
+                note = "原始文件已丢失"
+            else:
+                note = "页面录入，无原始文件"
+            writer.writerow([kind_label, batch.original_name, batch.row_count,
+                             batch.error_count, batch.created_at.strftime("%Y-%m-%d %H:%M"),
+                             inner, note])
+        zf.writestr("上传文件清单.csv", manifest.getvalue().encode("utf-8-sig"))
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = (
+        "attachment; filename*=UTF-8''"
+        + quote(f"上传原始文件-{period.month:%Y%m}.zip")
+    )
+    return response
+
