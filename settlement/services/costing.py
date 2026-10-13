@@ -674,20 +674,35 @@ def _build_reconciliations(period):
         period.inventory_valuations.aggregate(total=Sum("issue_amount"))["total"]
         or ZERO
     )
-    # 期末金额：用户上传了期末存货则以上传报表为准，否则用系统计算值
+    # 期末金额：一律用**平台计算的期末**（期初+入库−出库）。
+    # 用户 2026-10-13：期末数是平台自己算出来的，不应以上传的期末存货表为准
+    #   （按上传表会把"ERP 期末"当账面，等式两边口径不同，必然出差异）。
+    #   上传的期末存货表改成一条**提示**对比：上传合计 vs 平台计算合计。
+    ending = money(opening + receipts - issues)
+    left = money(opening + receipts)
+    right = money(issues + ending)
+    difference = money(left - right)
+
     uploaded_ending = period.ending_inventory_balances.filter(
         is_system_generated=False
     )
     if uploaded_ending.exists():
-        ending = (
+        uploaded_total = (
             uploaded_ending.aggregate(total=Sum("amount"))["total"] or ZERO
         )
-    else:
-        # 无人工期末：期末=推算值（期初+入库−出库，与左侧同口径），勾稽恒等
-        ending = money(opening + receipts - issues)
-    left = money(opening + receipts)
-    right = money(issues + ending)
-    difference = money(left - right)
+        gap = money(uploaded_total - ending)
+        if abs(gap) > Decimal("0.10"):
+            ExceptionItem.objects.create(
+                period=period,
+                category="库存金额",
+                severity=ExceptionItem.Severity.INFO,
+                message=(
+                    f"上传的期末存货金额与平台计算期末不一致：上传 {uploaded_total:,.2f}，"
+                    f"平台计算 {ending:,.2f}，差 {gap:,.2f}（仅提示，不影响锁账；"
+                    "差异通常来自上传表与平台取价/口径不同）。"
+                ),
+                reference="期末存货表",
+            )
     ReconciliationResult.objects.create(
         period=period,
         check_code="inventory_amount",
