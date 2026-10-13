@@ -114,6 +114,26 @@ def workshop_label(code: str) -> str:
     return WORKSHOP_LABELS.get(code, code)
 
 
+def _category_fallback(period):
+    """物料分类兜底表：期初存货 → 期末存货 → 库存流水，取第一个非空分类。
+
+    用户 2026-10-13：正式环境有一批浆粕车间领料的投料记录/流水**没有分类**，
+    凭证只能归到「未分类」，和测试环境（有分类=原料）不一致。这里加兜底：
+    行上没有分类时，按物料编码去这三处找，仍找不到才归「未分类」。
+    """
+    mapping = {}
+    layers = (
+        period.opening_inventory_balances.exclude(category_name=""),
+        period.ending_inventory_balances.exclude(category_name=""),
+        period.inventory_transactions.exclude(category_name=""),
+    )
+    for layer in layers:
+        for code, category in layer.order_by("id").values_list("material_code", "category_name"):
+            if code and category and str(category).strip():
+                mapping.setdefault(code, str(category).strip())
+    return mapping
+
+
 def credit_account_base(category: str) -> str:
     """贷方一级科目：原材料（外购）／库存商品（上游车间产出）。"""
     return ACCOUNT_INHOUSE if category in INHOUSE_CATEGORIES else ACCOUNT_RAW
@@ -177,13 +197,18 @@ def _ledger_issue_rows(period, order_dept, prices):
     zero_amount_rows = 0
     zero_amount_quantity = ZERO
     no_department_rows = 0
+    fallback = _category_fallback(period)
     for issue in period.material_issues.all():
         order_no = (issue.work_order_no or "").strip()
         workshop = normalize_workshop(order_dept.get(order_no, ""))
         if not workshop:
             workshop = UNALLOCATED
             no_department_rows += 1
-        category = (issue.material_category or "").strip() or UNCLASSIFIED
+        category = (
+            (issue.material_category or "").strip()
+            or fallback.get(issue.material_code, "")
+            or UNCLASSIFIED
+        )
         quantity = Decimal(issue.actual_issue_quantity or ZERO)
         price = _price_of(prices, issue.material_code)
         if price is None:
@@ -232,6 +257,7 @@ def _flow_pick_rows(period):
     mismatch_amount = ZERO
     zero_amount_rows = 0
     zero_amount_quantity = ZERO
+    fallback = _category_fallback(period)
     txns = [
         txn
         for txn in period.inventory_transactions.all()
@@ -240,7 +266,11 @@ def _flow_pick_rows(period):
     txns.sort(key=lambda t: (t.txn_date, t.document_no or "", t.id))
     for txn in txns:
         remark = (txn.remark or "").strip()
-        category = (txn.category_name or "").strip() or UNCLASSIFIED
+        category = (
+            (txn.category_name or "").strip()
+            or fallback.get(txn.material_code, "")
+            or UNCLASSIFIED
+        )
         quantity = Decimal(txn.quantity or ZERO)
         amount = money(txn.amount)
         is_pulp_remark = PULP_REMARK_KEYWORD in remark
