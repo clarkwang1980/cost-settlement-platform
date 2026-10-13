@@ -65,8 +65,14 @@
       {% else %}
         <div class="lock-banner">已由{{ period.locked_by }}于{{ period.locked_at|date:"Y-m-d H:i" }}锁账</div>
         {% if user.is_superuser %}
-          <form method="post" action="{% url 'reopen_period' period.id %}">
-            {% csrf_token %}<button class="button danger" type="submit">管理员重开期间</button>
+          <form method="post" action="{% url 'reopen_period' period.id %}"
+                onsubmit="return confirm('重开期间会重置车间结转、删除结算记录，并让后续期间的承接失效。确定要重开吗？');">
+            {% csrf_token %}
+            <input type="password" name="password" required autocomplete="current-password"
+                   placeholder="输入登录密码确认"
+                   style="height:32px;min-height:32px;padding:4px 8px;font-size:13px;
+                          border:1px solid #d4d9e2;border-radius:6px;background:#fff;margin-right:6px;">
+            <button class="button danger" type="submit">管理员重开期间</button>
           </form>
         {% endif %}
       {% endif %}

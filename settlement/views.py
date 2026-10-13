@@ -7920,6 +7920,15 @@ def reopen_period(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
     if not request.user.is_superuser:
         return HttpResponseBadRequest("只有系统管理员可以重开期间。")
+    # 用户 2026-10-13：重开期间是不可逆操作（会重置车间结转、删除结算记录），
+    #   必须输入**登录密码**确认，密码不对就不重开。
+    password = (request.POST.get("password") or "").strip()
+    if not password:
+        messages.error(request, "重开期间需要输入登录密码确认，本次未重开。")
+        return redirect("period_detail", period_id=period.id)
+    if not request.user.check_password(password):
+        messages.error(request, "密码不正确，本次未重开。")
+        return redirect("period_detail", period_id=period.id)
     try:
         invalidated = invalidate_downstream_periods(period)
         period.status = AccountingPeriod.Status.OPEN
