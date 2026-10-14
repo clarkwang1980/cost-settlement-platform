@@ -11,6 +11,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from settlement.models import (
+    HistoricalPrice,
     AccountingPeriod,
     BomLine,
     EndingInventoryBalance,
@@ -1491,6 +1492,22 @@ def bom_material_prices(period: AccountingPeriod) -> dict:
             prices[item.material_code] = issue
         elif receipt > ZERO:
             prices[item.material_code] = receipt
+    # 用户 2026-10-14：历史单价**一次上传、后续期间自动沿用**（不要求每月重传）。
+    #   本期表里没有的物料，按期间倒序到以前各期的历史单价里找（最近一期优先）。
+    previous = (
+        HistoricalPrice.objects.filter(period__month__lt=period.month)
+        .order_by("-period__month", "id")
+    )
+    for item in previous:
+        code = item.material_code
+        if not code or prices.get(code):
+            continue
+        issue = Decimal(item.issue_price or ZERO)
+        receipt = Decimal(item.receipt_price or ZERO)
+        if issue > ZERO:
+            prices[code] = issue
+        elif receipt > ZERO:
+            prices[code] = receipt
     return prices
 
 

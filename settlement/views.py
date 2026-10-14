@@ -321,7 +321,14 @@ def period_detail(request, period_id):
         # 数据自检（用户 2026-09-30）：标准成本/损益表算不出来的常见原因都在这里
         "bom_lines": period.bom_lines.count(),
         "bom_priced": period.bom_lines.exclude(standard_price=None).count(),
-        "historical_prices": period.historical_prices.count(),
+        "historical_prices": period.historical_prices.count()
+        + HistoricalPrice.objects.filter(
+            period__month__lt=period.month
+        ).exclude(
+            material_code__in=period.historical_prices.values_list(
+                "material_code", flat=True
+            )
+        ).values("material_code").distinct().count(),
         "standard_rates": period.standard_cost_rates.count(),
         "workshop_cost_pools": period.workshop_cost_pools.count(),
         "sales_ledger": period.sales_ledger_lines.count(),
