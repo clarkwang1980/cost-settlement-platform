@@ -11774,6 +11774,7 @@ def download_all_import_files(request, period_id):
 # 用户 2026-10-14：做一个"中石化仪征化纤订单执行情况"页面（汇总给领导看、明细给业务查）。
 #   数据来源：客户订单(CustomerOrder，可导入/录入) + 销售台账(发货) + 销售发票(开票) + 客户收款。
 DEFAULT_ORDER_CUSTOMER = "中国石化仪征化纤"
+BUILD_STAMP = "2026-10-14 17:40"  # 部署标记（用于确认线上版本）
 ZERO = Decimal("0")
 
 
