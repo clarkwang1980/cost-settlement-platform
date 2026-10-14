@@ -3859,6 +3859,25 @@ def workshop_costs(request, period_id):
                 messages.success(request, "车间费用没有变化，未做改动。")
             return redirect("workshop_costs", period_id=period.id)
 
+    # 兜底（用户 2026-10-14）：各期间的金额**直接从费用池取**再回填一遍，
+    #   避免任何间接取数（结转记录等）导致汇总表显示 0。
+    for group in groups:
+        pools = {
+            pool.workshop: pool
+            for pool in group["period"].workshop_cost_pools.all()
+        }
+        for row in group["rows"]:
+            pool = pools.get(row["workshop"])
+            subtotal = ZERO_CNY
+            for cell in row["cells"]:
+                value = _cost_money(
+                    getattr(pool, cell["field"], ZERO_CNY) if pool else ZERO_CNY
+                )
+                cell["value"] = value
+                cell["input_value"] = "{:,.2f}".format(value)
+                subtotal += value
+            row["total"] = _cost_money(subtotal)
+
     # 「车间费用汇总表（按车间）」自己的筛选（用户 2026-09-27）：期间 + 车间。
     # 只影响这张汇总表与它的「导出Excel」，不影响上面的录入表（录入表固定=当前期间）。
     summary_filter = {
