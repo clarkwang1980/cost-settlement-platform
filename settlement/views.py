@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 from calendar import monthrange
 from collections import defaultdict
@@ -58,7 +59,8 @@ from settlement.models import (
     SettlementRun,
     StandardCostRate,
     WorkshopCostPool,
-)
+    CustomerOrder,
+    CustomerReceipt,)
 from settlement.services.costing import (
     BOM_QTY_NORMALIZE_OVER,
     SETTLE_STALE_SECONDS,
@@ -11672,3 +11674,247 @@ def download_all_import_files(request, period_id):
     )
     return response
 
+# ---------------------------------------------------------------- 客户订单执行
+# 用户 2026-10-14：做一个"中石化仪征化纤订单执行情况"页面（汇总给领导看、明细给业务查）。
+#   数据来源：客户订单(CustomerOrder，可导入/录入) + 销售台账(发货) + 销售发票(开票) + 客户收款。
+DEFAULT_ORDER_CUSTOMER = "中国石化仪征化纤"
+ZERO = Decimal("0")
+
+
+def _order_execution_data(request, period):
+    """组装「客户订单执行」页面的全部数据。"""
+    from datetime import date, timedelta
+
+    customer = (request.GET.get("customer") or DEFAULT_ORDER_CUSTOMER).strip()
+    as_of_raw = (request.GET.get("as_of") or "").strip()
+    if as_of_raw:
+        try:
+            y, m, d = [int(x) for x in as_of_raw.split("-")]
+            as_of = date(y, m, d)
+        except Exception:
+            as_of = date(period.month.year, period.month.month, 1)
+            as_of = (as_of.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    else:
+        nxt = (period.month.replace(day=28) + timedelta(days=4)).replace(day=1)
+        as_of = nxt - timedelta(days=1)
+
+    cents = lambda v: (Decimal(v or 0) / Decimal("10000")).quantize(Decimal("0.01"))
+
+    orders = list(CustomerOrder.objects.filter(customer_name__icontains=customer)
+                  .order_by("order_no"))
+    shipments = list(SalesLedgerLine.objects.filter(
+        customer_name__icontains=customer, out_month__lte=as_of))
+    invoices = list(SalesInvoiceLine.objects.filter(
+        customer_name__icontains=customer, invoice_date__lte=as_of))
+    receipts = list(CustomerReceipt.objects.filter(
+        customer_name__icontains=customer, receipt_date__lte=as_of))
+
+    order_qty = sum((o.quantity or ZERO) for o in orders)
+    order_amt = sum((o.amount or ZERO) for o in orders)
+    ship_qty = sum((s.quantity or ZERO) for s in shipments)
+    ship_amt = sum((s.terminal_amount or ZERO) for s in shipments)
+    lb_amt = sum((s.lb_amount or ZERO) for s in shipments)
+    invoiced_amt = sum((i.amount_excl_tax or ZERO) for i in invoices)
+    # 开票兜底：销售发票里没有该客户时，用台账里"已开票"行的终端金额
+    ledger_invoiced = sum(
+        (s.terminal_amount or ZERO) for s in shipments
+        if getattr(s, "invoice_status", "") == "invoiced"
+    )
+    if ledger_invoiced > invoiced_amt:
+        invoiced_amt = ledger_invoiced
+    receipt_amt = sum((r.amount or ZERO) for r in receipts)
+
+    def cat_of(text):
+        text = text or ""
+        for key, label in (("阻燃", "阻燃"), ("全涤", "全涤"), ("芳纶", "阻燃"),
+                           ("纱线", "纱线"), ("面料", "面料")):
+            if key in text:
+                return label
+        return "其他"
+
+    # 按产品大类
+    by_cat = {}
+    for o in orders:
+        key = (o.product_category or cat_of(o.product_name)).strip() or "其他"
+        d = by_cat.setdefault(key, {"order_qty": ZERO, "ship_qty": ZERO})
+        d["order_qty"] += o.quantity or ZERO
+    for s in shipments:
+        key = cat_of(s.material_name) if not s.order_no else None
+        if key is None:
+            key = next((c for c in by_cat if c in ((s.material_name or "") + (s.sales_category or ""))), None)
+        key = key or cat_of(s.material_name)
+        d = by_cat.setdefault(key, {"order_qty": ZERO, "ship_qty": ZERO})
+        d["ship_qty"] += s.quantity or ZERO
+    cat_rows = []
+    for key, d in sorted(by_cat.items(), key=lambda kv: -kv[1]["order_qty"]):
+        oq, sq = d["order_qty"], d["ship_qty"]
+        if oq < 1 and sq < 1:
+            continue  # 订单量和发货量都近乎 0 的大类不显示（避免出现 0/0 的空行）
+        cat_rows.append({
+            "category": key, "order_qty": oq, "ship_qty": sq,
+            "left_qty": oq - sq,
+            "rate": (sq / oq * 100) if oq else ZERO,
+        })
+
+    # 按订单
+    ship_by_order, inv_by_order, rec_by_order = {}, {}, {}
+    for s in shipments:
+        k = (s.order_no or "").strip()
+        d = ship_by_order.setdefault(k, [ZERO, ZERO])
+        d[0] += s.quantity or ZERO
+        d[1] += s.terminal_amount or ZERO
+    for i in invoices:
+        k = (i.sales_order_no or "").strip()
+        inv_by_order[k] = inv_by_order.get(k, ZERO) + (i.amount_excl_tax or ZERO)
+    for r in receipts:
+        k = (r.order_no or "").strip()
+        rec_by_order[k] = rec_by_order.get(k, ZERO) + (r.amount or ZERO)
+
+    order_rows = []
+    for o in orders:
+        k = (o.order_no or "").strip()
+        sq, sa = ship_by_order.get(k, [ZERO, ZERO])
+        inv = inv_by_order.get(k, ZERO)
+        rec = rec_by_order.get(k, ZERO)
+        left = (o.quantity or ZERO) - sq
+        rate = (sq / o.quantity * 100) if o.quantity else ZERO
+        if left <= 0:
+            status, tone = "已发完", "ok"
+        elif o.due_date and as_of > o.due_date:
+            status, tone = "超期未发完", "bad"
+        elif rate < 40:
+            status, tone = "偏慢", "warn"
+        else:
+            status, tone = "执行中", "ok"
+        if left <= 0 and (o.amount or ZERO) > rec:
+            status, tone = "已发完·待收款", "warn"
+        order_rows.append({
+            "order": o, "ship_qty": sq, "left_qty": left, "rate": rate,
+            "invoiced": inv, "received": rec,
+            "unreceived": (o.amount or ZERO) - rec, "status": status, "tone": tone,
+        })
+
+    no_order_ship = ship_by_order.get("", [ZERO, ZERO])
+    summary = {
+        "order_qty": order_qty, "ship_qty": ship_qty, "left_qty": order_qty - ship_qty,
+        "rate": (ship_qty / order_qty * 100) if order_qty else ZERO,
+        "order_amt": order_amt, "ship_amt": ship_amt, "lb_amt": lb_amt,
+        "invoiced_amt": invoiced_amt, "receipt_amt": receipt_amt,
+        "unreceived": order_amt - receipt_amt,
+        "uninvoiced": ship_amt - invoiced_amt,
+        "invoice_rate": (invoiced_amt / ship_amt * 100) if ship_amt else ZERO,
+        "receipt_rate": (receipt_amt / order_amt * 100) if order_amt else ZERO,
+        "no_order_qty": no_order_ship[0], "no_order_amt": no_order_ship[1],
+        "wan": lambda v: (Decimal(v or 0) / Decimal("10000")).quantize(Decimal("0.01")),
+    }
+
+    customers = {}
+    for name in SalesLedgerLine.objects.values_list("customer_name", flat=True):
+        if name:
+            customers[name] = customers.get(name, 0) + 1
+    for name in CustomerOrder.objects.values_list("customer_name", flat=True):
+        if name:
+            customers[name] = customers.get(name, 0) + 1
+    top_customers = [n for n, _c in sorted(customers.items(), key=lambda kv: -kv[1])[:60]]
+
+    return {
+        "period": period, "customer": customer, "as_of": as_of,
+        "summary": summary, "cat_rows": cat_rows, "order_rows": order_rows,
+        "shipments": shipments[:2000], "invoices": invoices[:2000], "receipts": receipts[:2000],
+        "top_customers": top_customers,
+        "has_orders": bool(orders),
+    }
+
+
+@login_required
+def order_execution(request, period_id):
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    return render(request, "settlement/order_execution.html", _order_execution_data(request, period))
+
+
+@login_required
+def order_execution_export(request, period_id):
+    """导出：汇总 / 订单明细 / 发货明细 / 开票收款 四个 sheet。"""
+    from urllib.parse import quote
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    ctx = _order_execution_data(request, period)
+    s, wan = ctx["summary"], ctx["summary"]["wan"]
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "汇总"
+    bold = Font(bold=True)
+    rows = [
+        [f"{period.month:%Y年%m月} {ctx['customer']} 订单执行情况汇总"],
+        [f"数据截至 {ctx['as_of']:%Y-%m-%d}；数量单位：万米，金额单位：万元"],
+        [],
+        ["一、订单与发货进度", "数量（万米）", "备注"],
+        ["订单总量", wan(s["order_qty"])],
+        ["已发货", wan(s["ship_qty"])],
+        ["其中：用兰邦库存发货", wan(s["lb_amt"])],
+        ["待发货", wan(s["left_qty"])],
+        ["执行率", f"{s['rate']:.2f}%"],
+        [],
+        ["按产品大类", "订单量", "已发货", "待发货", "执行率"],
+    ]
+    for c in ctx["cat_rows"]:
+        rows.append([c["category"], wan(c["order_qty"]), wan(c["ship_qty"]),
+                     wan(c["left_qty"]), f"{c['rate']:.2f}%"])
+    rows += [
+        [],
+        ["二、订单回款情况", "金额（万元）", "备注"],
+        ["订单应收款", wan(s["order_amt"])],
+        ["已发货金额", wan(s["ship_amt"])],
+        ["实际开票金额", wan(s["invoiced_amt"])],
+        ["已收款金额", wan(s["receipt_amt"])],
+        ["未收款", wan(s["unreceived"])],
+        ["已发货未开票", wan(s["uninvoiced"])],
+        ["开票率", f"{s['invoice_rate']:.2f}%"],
+        ["收款率", f"{s['receipt_rate']:.2f}%"],
+    ]
+    for r in rows:
+        ws.append(r)
+    for cell in ws["A"]:
+        if cell.value and str(cell.value).startswith(("一、", "二、", "按产品")):
+            cell.font = bold
+    ws["A1"].font = Font(bold=True, size=13)
+
+    ws2 = wb.create_sheet("订单明细")
+    ws2.append(["订单号", "合同号", "签订年", "品名", "规格", "产品大类", "订单数量",
+                "已发货", "待发货", "执行率", "订单金额", "已开票", "已收款", "未收款", "状态"])
+    for r in ctx["order_rows"]:
+        o = r["order"]
+        ws2.append([o.order_no, o.contract_no, o.sign_year, o.product_name, o.specification,
+                    o.product_category, o.quantity, r["ship_qty"], r["left_qty"],
+                    f"{r['rate']:.2f}%", o.amount, r["invoiced"], r["received"],
+                    r["unreceived"], r["status"]])
+
+    ws3 = wb.create_sheet("发货明细")
+    ws3.append(["订单号", "出库月", "客户", "品名", "规格", "数量", "单位",
+                "终端金额", "兰邦金额", "开票状态"])
+    for x in ctx["shipments"]:
+        ws3.append([x.order_no, x.out_month, x.customer_name, x.material_name, x.specification,
+                    x.quantity, x.uom, x.terminal_amount, x.lb_amount,
+                    x.get_invoice_status_display()])
+
+    ws4 = wb.create_sheet("开票收款")
+    ws4.append(["类型", "单号", "日期", "客户", "订单号", "金额"])
+    for i in ctx["invoices"]:
+        ws4.append(["发票", i.invoice_no, i.invoice_date, i.customer_name,
+                    i.sales_order_no, i.amount_excl_tax])
+    for r in ctx["receipts"]:
+        ws4.append(["收款", "", r.receipt_date, r.customer_name, r.order_no, r.amount])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = f"{period.month:%Y%m}_{ctx['customer']}_订单执行.xlsx"
+    resp = HttpResponse(
+        buf.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(name)
+    return resp

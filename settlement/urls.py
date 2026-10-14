@@ -318,4 +318,8 @@ urlpatterns = [
         views_profit.profit_statement_export,
         name="profit_statement_export",
     ),
+    path("periods/<int:period_id>/order-execution/", views.order_execution,
+         name="order_execution"),
+    path("periods/<int:period_id>/order-execution/export/",
+         views.order_execution_export, name="order_execution_export"),
 ]

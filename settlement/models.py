@@ -1784,3 +1784,66 @@ class WorkOrderManualAdjustment(models.Model):
 
     def __str__(self):
         return f"{self.period} {self.order_no} 人工调整"
+
+
+class CustomerOrder(models.Model):
+    """客户订单（用户 2026-10-14）：「客户订单执行」页面用的订单主档。
+
+    平台原有数据里只有**发货（销售台账）**和**开票（销售发票）**，没有"客户订了多少"，
+    所以订单量、应收款、交期、待发货要靠这张表。来源：Excel 导入或页面录入。
+    """
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="customer_orders", verbose_name="期间",
+    )
+    customer_name = models.CharField(max_length=255, db_index=True, verbose_name="客户名称")
+    order_no = models.CharField(max_length=100, db_index=True, verbose_name="订单号")
+    contract_no = models.CharField(max_length=100, blank=True, verbose_name="合同号")
+    sign_year = models.PositiveIntegerField(null=True, blank=True, verbose_name="签订年份")
+    product_name = models.CharField(max_length=255, blank=True, verbose_name="品名")
+    specification = models.CharField(max_length=255, blank=True, verbose_name="规格")
+    product_category = models.CharField(max_length=120, blank=True, verbose_name="产品大类")
+    quantity = models.DecimalField(max_digits=20, decimal_places=6, default=0,
+                                   verbose_name="订单数量")
+    uom = models.CharField(max_length=20, blank=True, default="米", verbose_name="单位")
+    unit_price = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True,
+                                     verbose_name="单价")
+    amount = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True,
+                                 verbose_name="订单金额")
+    due_date = models.DateField(null=True, blank=True, verbose_name="交期")
+    remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "客户订单"
+        verbose_name_plural = "客户订单"
+        ordering = ["order_no", "id"]
+
+    def __str__(self):
+        return f"{self.customer_name} {self.order_no}"
+
+
+class CustomerReceipt(models.Model):
+    """客户收款（用户 2026-10-14）：回款情况用的收款记录。"""
+
+    period = models.ForeignKey(
+        AccountingPeriod, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="customer_receipts", verbose_name="期间",
+    )
+    customer_name = models.CharField(max_length=255, db_index=True, verbose_name="客户名称")
+    contract_no = models.CharField(max_length=100, blank=True, verbose_name="合同号")
+    order_no = models.CharField(max_length=100, blank=True, verbose_name="订单号")
+    receipt_date = models.DateField(null=True, blank=True, verbose_name="收款日期")
+    amount = models.DecimalField(max_digits=20, decimal_places=2, default=0,
+                                 verbose_name="收款金额")
+    remark = models.CharField(max_length=500, blank=True, verbose_name="备注")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "客户收款"
+        verbose_name_plural = "客户收款"
+        ordering = ["receipt_date", "id"]
+
+    def __str__(self):
+        return f"{self.customer_name} {self.receipt_date} {self.amount}"
