@@ -11748,8 +11748,9 @@ def _order_execution_data(request, period):
     cat_rows = []
     for key, d in sorted(by_cat.items(), key=lambda kv: -kv[1]["order_qty"]):
         oq, sq = d["order_qty"], d["ship_qty"]
-        if oq < 1 and sq < 1:
-            continue  # 订单量和发货量都近乎 0 的大类不显示（避免出现 0/0 的空行）
+        if oq <= 0:
+            # 只显示"有订单"的产品大类；没有订单的发货统一放在下面的提示行里
+            continue
         cat_rows.append({
             "category": key, "order_qty": oq, "ship_qty": sq,
             "left_qty": max(ZERO, oq - sq),
