@@ -693,14 +693,35 @@ def _build_reconciliations(period):
         )
         gap = money(uploaded_total - ending)
         if abs(gap) > Decimal("0.10"):
+            # 逐物料核对：列出差额最大的几个物料，方便对账（用户 2026-10-14）
+            uploaded_map = {
+                b.material_code: Decimal(b.amount or ZERO) for b in uploaded_ending
+            }
+            calc_map = {
+                v.material_code: Decimal(v.ending_amount or ZERO)
+                for v in period.inventory_valuations.all()
+            }
+            diffs = []
+            for code in set(uploaded_map) | set(calc_map):
+                up = uploaded_map.get(code, ZERO)
+                calc = calc_map.get(code, ZERO)
+                delta = up - calc
+                if abs(delta) > Decimal("1"):
+                    diffs.append((abs(delta), code, up, calc, delta))
+            diffs.sort(reverse=True)
+            detail = "；".join(
+                f"{code} 上传{up:,.2f}／平台{calc:,.2f}（差{delta:+,.2f}）"
+                for _a, code, up, calc, delta in diffs[:5]
+            )
+            detail = f"差额最大的物料：{detail}" if detail else ""
             ExceptionItem.objects.create(
                 period=period,
                 category="库存金额",
                 severity=ExceptionItem.Severity.INFO,
                 message=(
-                    f"上传的期末存货金额与平台计算期末不一致：上传 {uploaded_total:,.2f}，"
-                    f"平台计算 {ending:,.2f}，差 {gap:,.2f}（仅提示，不影响锁账；"
-                    "差异通常来自上传表与平台取价/口径不同）。"
+                    f"上传的期末存货与平台计算期末不一致：上传 {uploaded_total:,.2f}，"
+                    f"平台计算 {ending:,.2f}，差 {gap:,.2f}（共 {len(diffs)} 个物料对不上）。"
+                    f"{detail}（仅提示，不影响锁账）"
                 ),
                 reference="期末存货表",
             )
