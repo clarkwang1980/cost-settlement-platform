@@ -124,6 +124,10 @@
     <div>
       <p class="eyebrow">SUMMARY</p>
       <h2>车间费用汇总表（按车间）</h2>
+<p class="muted-text" style="margin:6px 0 0;color:#b26a00;">
+  数据自检：{{ summary_note|default:"—" }}
+  {% if not summary_rows %}（如果这里写着"库里没有费用记录"，说明是**数据没进库**，不是页面没显示）{% endif %}
+</p>
       <p class="muted-text" style="margin:6px 0 0;">
         共 {{ summary_rows|length }} 个车间{% if summary_filter.active %}（已按下方筛选条件过滤）{% endif %}。
       </p>

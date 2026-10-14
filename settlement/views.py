@@ -3866,6 +3866,7 @@ def workshop_costs(request, period_id):
             pool.workshop: pool
             for pool in group["period"].workshop_cost_pools.all()
         }
+        group["pool_count"] = len(pools)
         for row in group["rows"]:
             pool = pools.get(row["workshop"])
             subtotal = ZERO_CNY
@@ -3907,6 +3908,16 @@ def workshop_costs(request, period_id):
         _all_rows, summary_footer = _workshop_cost_summary(
             summary_groups, workshop=summary_filter["workshop"]
         )
+    # 诊断（用户 2026-10-14）：明确告诉页面"这段期间在数据库里到底有没有费用记录"
+    _diag = []
+    for group in summary_groups:
+        n = group.get("pool_count", 0)
+        if n:
+            _diag.append(f"{group['period_label']}：库里有 {n} 条费用记录")
+        else:
+            _diag.append(f"{group['period_label']}：库里没有费用记录")
+    summary_note = "；".join(_diag)
+
     summary_period_options = [
         {"value": group["period_label"], "label": group["period_label"]}
         for group in sorted(groups, key=lambda g: g["period_label"], reverse=True)
@@ -3927,6 +3938,7 @@ def workshop_costs(request, period_id):
         request,
         "settlement/workshop_costs.html",
         {
+        "summary_note": summary_note,
         "groups": groups,
             "period": period,
             "entry_group": entry_group,
