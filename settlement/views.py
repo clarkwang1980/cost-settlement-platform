@@ -3895,6 +3895,7 @@ def workshop_costs(request, period_id):
         request,
         "settlement/workshop_costs.html",
         {
+        "groups": groups,
             "period": period,
             "entry_group": entry_group,
             "columns": WORKSHOP_COST_COLUMNS,
