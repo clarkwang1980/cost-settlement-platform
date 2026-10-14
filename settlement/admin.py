@@ -1,3 +1,4 @@
+from settlement.models import CustomerOrder, CustomerReceipt
 from django.contrib import admin
 
 from settlement import models
