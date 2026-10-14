@@ -1,3 +1,4 @@
+from django.views.decorators.cache import never_cache
 # -*- coding: utf-8 -*-
 """损益表页面与导出（独立模块，避免改动 views.py）。
 
@@ -278,6 +279,7 @@ def _detail_filter(request, data, period) -> dict:
 
 
 @login_required
+@never_cache
 def profit_statement_view(request, period_id):
     period = get_object_or_404(AccountingPeriod, pk=period_id)
     months = ledger_months(period)

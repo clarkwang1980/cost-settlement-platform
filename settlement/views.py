@@ -27,6 +27,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from django.utils import timezone
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
 from settlement.forms import (
@@ -3704,6 +3705,7 @@ def _workshop_cost_write(period, groups_rows, posted_period, user):
 
 
 @login_required
+@never_cache
 def workshop_costs(request, period_id):
     """车间费用：直接在页面表格里填各车间费用（不再需要上传文件），按期间分块列出所有月份。
 
