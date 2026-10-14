@@ -21,7 +21,7 @@ import re
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
-from settlement.models import ProfitStatementExpense
+from settlement.models import SalesLedgerLine, ProfitStatementExpense, AccountingPeriod
 from settlement.services.sales_ledger import fill_sales_ledger_costs
 
 ZERO = Decimal("0")
@@ -220,13 +220,37 @@ def expense_entries(period) -> dict:
     }
 
 
+def _scope_periods(period) -> list:
+    """损益表的取数范围：**截至本期的所有期间**（升序）。
+
+    用户 2026-10-14：进入新月份（8 月）后，损益表的汇总/明细也要能看到以前期间（7 月），
+    否则新月份页面全是空的。范围＝ month <= 本期 的所有期间。
+    """
+    return list(
+        AccountingPeriod.objects.filter(month__lte=period.month).order_by("month")
+    )
+
+
+def _merged_expenses(period) -> dict:
+    """按月费用录入：把范围内各期间的录入按月份合并（后面的期间覆盖前面的）。"""
+    merged = {}
+    for item in _scope_periods(period):
+        try:
+            merged.update(expense_entries(item) or {})
+        except Exception:  # noqa: BLE001
+            continue
+    return merged
+
+
 def ledger_months(period) -> list:
     """台账里出现过的【出库月份】（月首日期，升序）——费用按月录入的依据。"""
-    months = {
-        value.replace(day=1)
-        for value in period.sales_ledger_lines.values_list("out_month", flat=True)
-        if value
-    }
+    months = set()
+    for item in _scope_periods(period):
+        for value in item.sales_ledger_lines.values_list("out_month", flat=True):
+            if value:
+                months.add(value.replace(day=1))
+    # 本期月份一定要有，哪怕本期还没有销售台账（否则新月份无法录入按月费用）
+    months.add(period.month.replace(day=1))
     return sorted(months)
 
 
@@ -284,9 +308,13 @@ def build_profit_statement(period, expenses=None) -> dict:
     """组装损益表：返回 {headers, rows, totals, months(按月录入信息), 若干提示标志}。"""
     backfilled = ensure_ledger_costs(period)
     if expenses is None:
-        expenses = expense_entries(period)
+        expenses = _merged_expenses(period)
     models = expense_models(period)
-    lines = list(period.sales_ledger_lines.order_by("row_no"))
+    scope = _scope_periods(period)
+    lines = list(
+        SalesLedgerLine.objects.filter(period__in=scope)
+        .order_by("period__month", "row_no")
+    )
 
     revenues = [_dec(line.terminal_amount) for line in lines]
     month_of_row = [
@@ -381,6 +409,11 @@ def build_profit_statement(period, expenses=None) -> dict:
     totals["gross_margin"] = _pct(sums["gross"], sums["revenue"])
     totals["net_margin"] = _pct(sums["net_profit"], sums["revenue"])
 
+    # 用户 2026-10-14：本期月份一定要出现（哪怕本期还没有销售台账），
+    #   否则进入新月份后「按月费用录入」整张表都不显示，用户没法录当月的费用。
+    month_stats.setdefault(
+        period.month.replace(day=1), {"row_count": 0, "revenue": ZERO}
+    )
     months = []
     for month in sorted(month_stats):
         stats = month_stats[month]
