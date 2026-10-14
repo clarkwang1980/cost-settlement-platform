@@ -11752,7 +11752,7 @@ def _order_execution_data(request, period):
             continue  # 订单量和发货量都近乎 0 的大类不显示（避免出现 0/0 的空行）
         cat_rows.append({
             "category": key, "order_qty": oq, "ship_qty": sq,
-            "left_qty": oq - sq,
+            "left_qty": max(ZERO, oq - sq),
             "rate": (sq / oq * 100) if oq else ZERO,
         })
 
@@ -11776,7 +11776,7 @@ def _order_execution_data(request, period):
         sq, sa = ship_by_order.get(k, [ZERO, ZERO])
         inv = inv_by_order.get(k, ZERO)
         rec = rec_by_order.get(k, ZERO)
-        left = (o.quantity or ZERO) - sq
+        left = max(ZERO, (o.quantity or ZERO) - sq)
         rate = (sq / o.quantity * 100) if o.quantity else ZERO
         if left <= 0:
             status, tone = "已发完", "ok"
@@ -11796,7 +11796,8 @@ def _order_execution_data(request, period):
 
     no_order_ship = ship_by_order.get("", [ZERO, ZERO])
     summary = {
-        "order_qty": order_qty, "ship_qty": ship_qty, "left_qty": order_qty - ship_qty,
+        "order_qty": order_qty, "ship_qty": ship_qty,
+        "left_qty": max(ZERO, order_qty - ship_qty),
         "rate": (ship_qty / order_qty * 100) if order_qty else ZERO,
         "order_amt": order_amt, "ship_amt": ship_amt, "lb_amt": lb_amt,
         "invoiced_amt": invoiced_amt, "receipt_amt": receipt_amt,

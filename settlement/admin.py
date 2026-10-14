@@ -70,3 +70,18 @@ for model in (
 admin.site.site_header = "月度成本结算平台管理"
 admin.site.site_title = "成本结算管理"
 admin.site.index_title = "基础数据与规则维护"
+
+
+@admin.register(CustomerOrder)
+class CustomerOrderAdmin(admin.ModelAdmin):
+    list_display = ("customer_name", "order_no", "contract_no", "sign_year",
+                    "product_name", "product_category", "quantity", "amount", "due_date")
+    list_filter = ("product_category", "sign_year")
+    search_fields = ("customer_name", "order_no", "contract_no", "product_name")
+
+
+@admin.register(CustomerReceipt)
+class CustomerReceiptAdmin(admin.ModelAdmin):
+    list_display = ("customer_name", "receipt_date", "contract_no", "order_no", "amount")
+    list_filter = ("customer_name",)
+    search_fields = ("customer_name", "contract_no", "order_no")
