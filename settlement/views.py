@@ -3733,6 +3733,50 @@ def workshop_costs(request, period_id):
     current_locked = period.status == AccountingPeriod.Status.LOCKED
     can_save = not current_locked
 
+    if request.method == "POST" and request.POST.get("action") == "copy_previous":
+        # 用户 2026-10-14：车间费用每月都要重录，加「照抄上月」降低重复劳动。
+        if current_locked:
+            messages.error(request, "该期间已锁账，不能修改车间费用。")
+        else:
+            previous = (
+                AccountingPeriod.objects.filter(month__lt=period.month)
+                .order_by("-month")
+                .first()
+            )
+            src = (
+                list(WorkshopCostPool.objects.filter(period=previous))
+                if previous else []
+            )
+            if not src:
+                messages.warning(
+                    request,
+                    f"上一个期间（{previous.month:%Y-%m}）没有车间费用可照抄。"
+                    if previous else "没有上一个期间。",
+                )
+            else:
+                fields = ["water_power", "steam", "natural_gas", "depreciation",
+                          "consumables", "dye_auxiliary", "wages", "processing_fee"]
+                copied = 0
+                batch = _manual_workshop_cost_batch(period, request.user)
+                for row in src:
+                    target, _created = WorkshopCostPool.objects.get_or_create(
+                        period=period, workshop=row.workshop,
+                        defaults={"batch": batch},
+                    )
+                    if target.batch_id is None:
+                        target.batch = batch
+                    for name in fields:
+                        setattr(target, name, getattr(row, name))
+                    target.remark = row.remark
+                    target.save()
+                    copied += 1
+                messages.success(
+                    request,
+                    f"已照抄 {previous.month:%Y-%m} 的车间费用（{copied} 个车间），"
+                    "请按本月实际修改后点「保存车间费用」。",
+                )
+        return redirect("workshop_costs", period_id=period.id)
+
     if request.method == "POST":
         if current_locked:
             messages.error(request, "该期间已锁账，不能修改车间费用。")
