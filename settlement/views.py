@@ -3872,9 +3872,22 @@ def workshop_costs(request, period_id):
             group for group in groups
             if group["period_label"] == summary_filter["period"]
         ]
-    summary_rows, summary_footer = _workshop_cost_summary(
-        summary_groups, workshop=summary_filter["workshop"]
-    )
+    if summary_filter["period"]:
+        summary_rows, summary_footer = _workshop_cost_summary(
+            summary_groups, workshop=summary_filter["workshop"]
+        )
+    else:
+        # 用户 2026-10-14：汇总表默认**按月分行**显示历史（7 月一块、8 月一块…），
+        #   末尾再给一行"各期间合计"，既能看到历史、也能看累计。
+        summary_rows = []
+        for group in summary_groups:
+            part, _foot = _workshop_cost_summary(
+                [group], workshop=summary_filter["workshop"]
+            )
+            summary_rows.extend(part)
+        _all_rows, summary_footer = _workshop_cost_summary(
+            summary_groups, workshop=summary_filter["workshop"]
+        )
     summary_period_options = [
         {"value": group["period_label"], "label": group["period_label"]}
         for group in sorted(groups, key=lambda g: g["period_label"], reverse=True)

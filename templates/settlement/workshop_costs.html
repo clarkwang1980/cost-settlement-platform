@@ -51,7 +51,7 @@
         <p class="eyebrow">ENTRY</p>
         <h2>各车间费用（{{ entry_group.period_label }}，单位：元）</h2>
         <p class="muted-text" style="margin:6px 0 0;">
-          行顺序＝车间结转顺序；<strong>以前月份显示在上方（只读）</strong>，本期在下方可直接填；合计列随输入实时更新。
+          行顺序＝车间结转顺序（费用按车间顺序参与分配）；合计列随输入实时更新。
         </p>
       </div>
       {% comment %}导出Excel 与「打印本表」同一排（打印本表由 base.html 注入到 .print-here）{% endcomment %}
@@ -78,47 +78,37 @@
           </tr>
         </thead>
         <tbody>
-          {% for group in groups %}
+          {% with group=entry_group %}
           {% for row in group.rows %}
-          <tr data-period="{{ group.period_id }}" data-ws="{{ row.workshop }}"
-              {% if group.period_id != period.id %}class="other-period"{% endif %}>
+          <tr data-period="{{ group.period_id }}" data-ws="{{ row.workshop }}">
             <td class="seq">{{ row.sequence }}</td>
             <td class="period-cell">{{ group.period_label }}</td>
             <td><strong>{{ row.label }}</strong></td>
             {% for cell in row.cells %}
             <td class="num">
-              {% if group.period_id == period.id %}
               <input class="cost-input" type="text" inputmode="decimal"
                      name="{{ cell.name }}" data-field="{{ cell.field }}"
                      value="{{ cell.input_value }}"
                      {% if group.locked %}disabled{% endif %}>
-              {% else %}
-              <span class="plain-num">{{ cell.input_value|default:"0.00" }}</span>
-              {% endif %}
             </td>
             {% endfor %}
             <td class="num row-total" data-row-total="{{ row.row_total_key }}">{{ row.total|floatformat:2|thousands }}</td>
-            <td>
-              {% if group.period_id == period.id %}
-              <input class="cost-input cost-remark" type="text" name="{{ row.remark_name }}"
-                     value="{{ row.remark_value }}" {% if group.locked %}disabled{% endif %}>
-              {% else %}
-              {{ row.remark_value }}
-              {% endif %}
-            </td>
+            <td><input class="cost-input cost-remark" type="text" name="{{ row.remark_name }}"
+                       value="{{ row.remark_value }}" {% if group.locked %}disabled{% endif %}></td>
           </tr>
           {% endfor %}
           <tr class="period-subtotal">
             <td></td>
             <td class="period-cell">{{ group.period_label }}</td>
-            <td>{% if group.period_id == period.id %}本期小计{% else %}小计{% endif %}</td>
+            <td>小计</td>
             {% for item in group.column_totals %}
             <td class="num" data-group-col="{{ group.period_id }}" data-field="{{ item.field }}">{{ item.text }}</td>
             {% endfor %}
             <td class="num">{{ group.subtotal|floatformat:2|thousands }}</td>
             <td>{% if group.locked %}已锁账{% endif %}</td>
           </tr>
-          {% endfor %}        </tbody>
+          {% endwith %}
+        </tbody>
       </table>
     </div>
     {% if can_save %}
