@@ -304,5 +304,74 @@
     })();
   </script>
 {% block extra_js %}{% endblock %}
+
+<script id="thousand-sep-global">
+// 全局：数字输入框边输边加千分号（用户 2026-10-15："以后只要输入都要加分节号"）
+// 说明：只处理数字/小数点/负号；保存时后端会自动去掉逗号，所以可以放心带逗号提交。
+(function () {
+  var SELECTOR = 'input.expense-input, input.cost-input, input[inputmode="decimal"],' +
+                 'input.js-thousands';
+  function isNumeric(text) {
+    return /^-?\d{0,3}(,?\d{3})*(\.\d*)?$/.test(text) || /^-?\d*(\.\d*)?$/.test(text);
+  }
+  function format(text) {
+    var raw = (text || '').replace(/[，,]/g, '').trim();
+    if (raw === '' || raw === '-' || raw === '.' || raw === '-.') { return text; }
+    if (!/^-?\d*(\.\d*)?$/.test(raw)) { return text; }
+    var negative = raw.charAt(0) === '-';
+    if (negative) { raw = raw.slice(1); }
+    var parts = raw.split('.');
+    var intPart = parts[0];
+    var grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    var out = grouped + (parts.length > 1 ? '.' + parts[1] : '');
+    return (negative ? '-' : '') + out;
+  }
+  function caretPosition(value, caret) {
+    // 光标前有多少个数字 → 格式化后放到同样多数字之后
+    var digits = (value.slice(0, caret).match(/\d/g) || []).length;
+    var seen = 0;
+    for (var i = 0; i < value.length; i++) {
+      if (/\d/.test(value.charAt(i))) { seen++; }
+      if (seen === digits) { return i + 1; }
+    }
+    return value.length;
+  }
+  function attach(el) {
+    if (el.dataset.thousandBound === '1') { return; }
+    el.dataset.thousandBound = '1';
+    el.addEventListener('input', function () {
+      if (!isNumeric(el.value)) { return; }
+      var before = el.value;
+      var caret = el.selectionStart;
+      var after = format(before);
+      if (after === before) { return; }
+      el.value = after;
+      try { el.setSelectionRange(caretPosition(after, caret), caretPosition(after, caret)); }
+      catch (e) { /* 某些输入类型不支持，忽略 */ }
+    });
+    // 失焦再补一次，避免中间态（如 "12." ）
+    el.addEventListener('blur', function () {
+      var after = format(el.value);
+      if (after !== el.value) { el.value = after; }
+    });
+  }
+  function scan(root) {
+    (root || document).querySelectorAll(SELECTOR).forEach(attach);
+  }
+  document.addEventListener('DOMContentLoaded', function () { scan(document); });
+  if (document.readyState !== 'loading') { scan(document); }
+  // 动态出现的输入框（页签切换、异步刷新）也能挂上
+  var mo = new MutationObserver(function (muts) {
+    muts.forEach(function (m) {
+      m.addedNodes && m.addedNodes.forEach(function (n) {
+        if (n.nodeType === 1) { scan(n); }
+      });
+    });
+  });
+  document.addEventListener('DOMContentLoaded', function () {
+    mo.observe(document.body, { childList: true, subtree: true });
+  });
+})();
+</script>
 </body>
 </html>
