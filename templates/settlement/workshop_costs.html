@@ -167,6 +167,11 @@
         </tr>
       </thead>
       <tbody>
+            <tr class="oe-diag-row" style="background:#fff8e1;">
+              <td colspan="12" style="text-align:left;color:#b26a00;font-size:12.5px;">
+                本页数据自检：{{ summary_note|default:"—" }}｜若看到"库里没有费用记录"，说明该期间费用没进库
+              </td>
+            </tr>
         {% for row in summary_rows %}
         <tr>
           <td class="seq">{{ row.sequence }}</td>
