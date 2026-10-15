@@ -1504,6 +1504,20 @@ def bom_material_prices(period: AccountingPeriod) -> dict:
         value = Decimal(row["weighted_average_price"] or ZERO)
         if value > ZERO:
             prices[row["material_code"]] = value
+    # 用户 2026-10-15：本月**没进货/没新增**的物料，要**沿用上月（及更早）的月末加权价**。
+    #   例：R52.285 在 7 月有月末价、8 月没进货 → 8 月也必须取得到
+    #   （否则 BOM 子项缺价、标准成本算不出）。
+    previous_values = (
+        InventoryValuation.objects.filter(period__month__lt=period.month)
+        .order_by("-period__month", "id")
+        .values_list("material_code", "weighted_average_price")
+    )
+    for code, price in previous_values:
+        if not code or prices.get(code):
+            continue
+        value = Decimal(price or ZERO)
+        if value > ZERO:
+            prices[code] = value
     for item in period.historical_prices.all():
         if prices.get(item.material_code):
             continue
