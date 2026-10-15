@@ -5776,7 +5776,32 @@ def production_cost_summary(request, period_id):
     # 注意：这一行是**标注类**，与 ①~⑤ 有重叠，不计入合计、也不进"需要人工介入"的计数。
     # ⑥ BOM 子项缺单价的工单（用户 2026-09-30）：作为**第 6 种情形**常驻一行
     #（和其它情形一样是蓝色链接、可点击筛选；已经是独立情形，不再与 ①~⑤ 重叠 → 计入合计）。
-    _unpriced_rows = [r for r in issue_rows if r.get("unpriced_codes")]
+    # 用户 2026-10-15：以前这里统计的是"所有工单"里有 BOM 缺价的（不分月份，动辄上百个），
+    #   用户要看的是**当月工单**缺单价 → 只保留本期有投料/报工/在产/完工的工单。
+    _ACTIVE_KEYS = ("direct_material", "finished_cost", "wip_cost", "report_quantity",
+                    "issue_quantity", "material_issue", "report_qty")
+
+    def _active_this_period(row):
+        """本期是否"有动"（投料/报工/在产/完工 > 0）。
+
+        安全设计：如果这些字段一个都认不出来（数据结构变了），就**保持原行为**（保留该行），
+        避免误杀成 0；认得出时才按"当月有动"过滤。
+        """
+        present = [k for k in _ACTIVE_KEYS if k in row]
+        if not present:
+            return True
+        for key in present:
+            try:
+                if Decimal(row.get(key) or 0) > 0:
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    _unpriced_rows = [
+        r for r in issue_rows
+        if r.get("unpriced_codes") and _active_this_period(r)
+    ]
     _unpriced_codes = []
     for _r in _unpriced_rows:
         for _code in _r["unpriced_codes"]:
@@ -5792,7 +5817,8 @@ def production_cost_summary(request, period_id):
             "material": _unpriced_material if _unpriced_rows else None,
             "advice": CASE_SUGGESTIONS.get(CASE_NO_PRICE, ""),
             "basis": (
-                "缺单价的物料（%d 个）：%s" % (len(_unpriced_codes), "、".join(_unpriced_codes))
+                "本月有投料/报工/在产的工单里，缺单价的物料（%d 个）：%s"
+                % (len(_unpriced_codes), "、".join(_unpriced_codes))
                 if _unpriced_codes
                 else CASE_COST_BASIS.get(CASE_NO_PRICE, "")
             ),
