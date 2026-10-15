@@ -2,6 +2,59 @@
 {% load workshop_tags %}
 {% block title %}资料导入 · {{ period }}{% endblock %}
 {% block content %}
+<style>
+  .ul-check{border:1px solid #e6eaf2;border-radius:10px;background:#fff;margin-bottom:16px;overflow:hidden;}
+  .ul-check h2{margin:0;padding:11px 16px;font-size:14px;background:#f7f9fc;border-bottom:1px solid #eef1f6;color:#1f2937;}
+  .ul-check .ul-sum{padding:8px 16px;font-size:12.5px;color:#5b667a;background:#fbfcfe;border-bottom:1px solid #f1f3f8;}
+  .ul-check table{width:100%;border-collapse:collapse;font-size:13px;}
+  .ul-check th,.ul-check td{padding:7px 12px;border-bottom:1px solid #f1f3f8;text-align:left;vertical-align:top;}
+  .ul-check th{background:#fafbfd;color:#5b667a;font-weight:500;font-size:12.5px;white-space:nowrap;}
+  .ul-check tr:last-child td{border-bottom:none;}
+  .ul-tag{display:inline-block;padding:1px 8px;border-radius:9px;font-size:12px;white-space:nowrap;}
+  .ul-tag.ok{background:#e8f5e9;color:#2e7d32;}
+  .ul-tag.warn{background:#fff8e1;color:#b26a00;}
+  .ul-tag.bad{background:#ffebee;color:#c62828;}
+  .ul-tag.muted{background:#f1f3f8;color:#8a93a3;}
+  .ul-note{color:#5b667a;font-size:12.5px;line-height:1.6;}
+</style>
+<section class="ul-check" id="ul-checklist">
+  <h2>本月资料清单（{{ period.month|date:"Y年m月" }}）</h2>
+  <div class="ul-sum">
+    共 {{ checklist|length }} 项需要关注：<b>必传 {{ check_must }} 项</b>，其中
+    <b style="color:#c62828;">未上传 {{ check_missing }} 项</b>；本次已导入成功
+    <b style="color:#2e7d32;">{{ check_ok }} 项</b>。
+    红色=未上传、黄色=部分成功、绿色=导入成功。
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:150px;">资料类型</th>
+        <th style="width:86px;">要求</th>
+        <th style="width:170px;">是否已上传 / 结果</th>
+        <th style="width:110px;">导入行数</th>
+        <th>这张表的作用</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in checklist %}
+      <tr>
+        <td><b>{{ item.name }}</b></td>
+        <td>
+          {% if item.level == "必传" %}<span class="ul-tag bad">必传</span>
+          {% elif item.level == "可选" %}<span class="ul-tag muted">可选</span>
+          {% elif item.level == "新增才传" %}<span class="ul-tag muted">新增才传</span>
+          {% else %}<span class="ul-tag muted">不用传</span>{% endif %}
+        </td>
+        <td><span class="ul-tag {{ item.tone }}">{{ item.state }}</span></td>
+        <td>
+          {% if item.row_count is not None %}{{ item.row_count }}{% if item.error_count %}（未导入 {{ item.error_count }}）{% endif %}{% else %}—{% endif %}
+        </td>
+        <td class="ul-note">{{ item.note }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 <section class="page-heading">
   <div><p class="eyebrow">DATA IMPORT</p><h1>上传月结资料</h1><p>支持CSV、XLSX和XLSM；原始文件会完整保留。</p></div>
 </section>

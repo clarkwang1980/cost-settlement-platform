@@ -422,6 +422,84 @@ def download_import_file(request, period_id, batch_id):
     raise Http404("原始文件已丢失（数据库里也没有副本）。")
 
 
+#: 每月必传资料 + 作用说明（用户 2026-10-14：上传页要有"本月资料清单"）
+MONTHLY_UPLOAD_CHECKLIST = [
+    ("inventory", "必传", "本期全部出入库明细。只要数量，金额按月末加权平均价自动计算；整个结算的基础。"),
+    ("sales_ledger", "必传", "本期销售出库与开票。销售成本结转、损益表、发出商品都靠它。"),
+    ("work_order", "必传", "本期生产工单（含上月未完工）。车间结转与工单成本的依据。"),
+    ("material_issue", "必传", "本期车间投料/领料。材料成本的依据。"),
+    ("work_report", "必传", "本期完工报工。完工入库结转的数量依据。"),
+    ("issue_progress", "必传", "投料进度表。投料与工单的对应关系。"),
+    ("work_order_detail", "必传", "工单用料明细。BOM 反推投料与标准成本的依据。"),
+    ("bom", "必传", "BOM 表。单位标准成本、BOM 标准价回填的依据。"),
+    ("pulp_ledger", "必传", "浆粕车间流水（原料+成品通用）。不传，浆粕车间无法结转。"),
+    ("purchase_invoice", "必传", "本期采购发票。核销采购入库与暂估，决定入库单价。"),
+    ("purchase_contract", "必传", "本期采购合同。采购入库取价依据。"),
+    ("pulp_ending", "可选", "浆粕期末成品。不传按平台计算值，会与上传值做核对。"),
+    ("ending_inventory", "可选", "期末存货快照。只作核对参考（平台自己算期末）。"),
+    ("historical_price", "新增才传", "历史单价。上传一次后各期自动沿用，只有新增物料才需补。"),
+    ("sales_invoice", "不用传", "销售发票。开票信息已含在销售台账里。"),
+]
+
+
+def _monthly_checklist(period):
+    """本月资料清单：必传项 + 是否已上传 + 导入结果。"""
+    latest = {}
+    for batch in period.import_batches.order_by("-id"):
+        latest.setdefault(batch.kind, batch)
+    kinds = dict(ImportBatch.Kind.choices)
+    rows = []
+    for kind, level, note in MONTHLY_UPLOAD_CHECKLIST:
+        batch = latest.get(kind)
+        if batch is None:
+            if level == "必传":
+                state, tone = "未上传", "bad"
+            elif level == "可选":
+                state, tone = "未传（可不传）", "muted"
+            else:
+                state, tone = "—", "muted"
+            row_count = error_count = None
+        elif batch.status == ImportBatch.Status.FAILED:
+            state, tone = "导入失败", "bad"
+            row_count, error_count = batch.row_count, batch.error_count
+        elif (batch.error_count or 0) > 0:
+            state = "部分成功（%d 行未导入）" % batch.error_count
+            tone, row_count, error_count = "warn", batch.row_count, batch.error_count
+        else:
+            state, tone, row_count, error_count = "导入成功", "ok", batch.row_count, 0
+        rows.append({
+            "name": kinds.get(kind, kind), "level": level, "note": note,
+            "state": state, "tone": tone, "row_count": row_count,
+            "error_count": error_count, "uploaded_at": getattr(batch, "created_at", None),
+        })
+    return rows
+
+
+def _render_upload_page(request, period, form):
+    """渲染资料导入页（上传后也回到这里，不跳页）。"""
+    checklist = _monthly_checklist(period)
+    return render(
+        request,
+        "settlement/upload.html",
+        {
+            "period": period,
+            "form": form,
+            "checklist": checklist,
+            "check_must": sum(1 for c in checklist if c["level"] == "必传"),
+            "check_missing": sum(
+                1 for c in checklist
+                if c["level"] == "必传" and c["state"] == "未上传"
+            ),
+            "check_ok": sum(1 for c in checklist if c["tone"] == "ok"),
+            "template_kinds": [
+                k for k in ImportBatch.Kind.choices
+                if not k[0].startswith("pulp_") and k[0] != "workshop_cost"
+            ],
+            "carry": carry_forward_context(period),
+        },
+    )
+
+
 @login_required
 def upload_file(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
@@ -442,7 +520,7 @@ def upload_file(request, period_id):
                     f"{batch.get_kind_display()}导入成功：{batch.row_count}行，"
                     f"{batch.error_count}行未导入。",
                 )
-                return redirect("period_detail", period_id=period.id)
+                return _render_upload_page(request, period, form)
             except Exception as exc:
                 # 处理中途异常（如解析/整批校验失败）：以数据库真实状态为准，清掉回滚后残留的
                 # PENDING 批次，避免占住文件哈希导致无法重传（process_batch 的保存已随事务回滚）
@@ -456,19 +534,7 @@ def upload_file(request, period_id):
                 messages.error(request, str(exc))
     else:
         form = UploadForm()
-    return render(
-        request,
-        "settlement/upload.html",
-        {
-            "period": period,
-            "form": form,
-            "template_kinds": [
-                k for k in ImportBatch.Kind.choices
-                if not k[0].startswith("pulp_") and k[0] != "workshop_cost"
-            ],
-            "carry": carry_forward_context(period),
-        },
-    )
+    return _render_upload_page(request, period, form)
 
 
 @login_required
