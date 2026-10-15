@@ -37,6 +37,29 @@
   .price-table th:nth-child(3), .price-table td:nth-child(3) { left: 15.5rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
   .price-table th:nth-child(4), .price-table td:nth-child(4) { left: 31.5rem; width: 4rem; }
   .price-table tbody tr:nth-child(even) td:nth-child(-n+4) { background: #fbfcfd; }
+
+  /* 用户 2026-10-15：筛选方框（物料编码 / 类别）与整条工具栏**统一格式** */
+  .pt-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+  .pt-filter label { display: flex; flex-direction: column; gap: 6px; }
+  .pt-filter label > span { font-size: 12.5px; color: #5b667a; }
+  .pt-filter input[type="text"],
+  .pt-filter input[type="month"],
+  .pt-filter select {
+    height: 36px;
+    min-width: 190px;
+    padding: 0 10px;
+    font-size: 14px;
+    line-height: 34px;
+    border: 1px solid #d8dde8;
+    border-radius: 8px;
+    background: #fff;
+    box-sizing: border-box;
+  }
+  .pt-filter .button { height: 36px; display: inline-flex; align-items: center; }
+  /* 用户 2026-10-15：入库单价 / 出库单价 单元格宽度保持一致（美观） */
+  .price-table th.num,
+  .price-table td.num { width: 104px; min-width: 104px; text-align: right; white-space: nowrap; }
+  .price-table th.period-head { text-align: center; }
 </style>
 
 <section class="section-card">
@@ -54,17 +77,15 @@
       <li><b>出库单价 ＝ 出库金额 ÷ 出库数量</b>，即该月<b>月末加权平均价</b>（全月同一个价）。</li>
       <li>该月有进出的物料，<b>上传过「历史单价」的以上传价为准</b>（与工单材料成本取价一致）。</li>
       <li>只有当月确有入库／出库的月份才有值；没有进出的月份留空。</li>
-      <li>仓库间调拨／库存调整／库存转换／报工调整属<b>内部流转</b>：算期末数量，但<b>不计入单价</b>（它们没有成本金额）。</li>
+      <li><b>取价顺序</b>（与投料、BOM、标准成本口径完全一致）：
+        ① 本月<b>月末加权平均价</b>；
+        ② 本月没有进出的，<b>沿用上月（及更早）的月末加权价</b>；
+        ③ 以上都没有的，用<b>历史单价</b>（当月上传的优先，其次沿用以前各期上传的）。
+        也就是说：<b>当月有新增物料或新核算出单价 → 记到本表；没有新增 → 沿用上月单价</b>。</li>
     </ul>
   </div>
 
   <form class="pt-filter" method="get">
-    <label><span>期间（从）</span>
-      <input type="month" name="p_from" value="{{ filters.p_from }}">
-    </label>
-    <label><span>期间（到）</span>
-      <input type="month" name="p_to" value="{{ filters.p_to }}">
-    </label>
     <label><span>物料编码</span>
       <input type="text" name="code" value="{{ filters.code }}" placeholder="包含即可">
     </label>
@@ -79,7 +100,7 @@
     <button class="button secondary" type="submit">筛选</button>
     <a class="button secondary" href="{% url 'price_table' period.id %}">清空</a>
     <a class="button secondary"
-       href="{% url 'price_table' period.id %}?export=1&amp;code={{ filters.code }}&amp;p_from={{ filters.p_from }}&amp;p_to={{ filters.p_to }}&amp;category={{ filters.category }}">导出Excel</a>
+       href="{% url 'price_table' period.id %}?export=1&amp;code={{ filters.code }}&amp;category={{ filters.category }}">导出Excel</a>
     {# 「打印本表」的落点：必须是一个**空容器**，base.html 把按钮追加进来（挂在链接上会套进链接里、叠在一起） #}
     <span class="print-here"></span>
   </form>
