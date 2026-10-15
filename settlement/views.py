@@ -5776,9 +5776,10 @@ def production_cost_summary(request, period_id):
     # 注意：这一行是**标注类**，与 ①~⑤ 有重叠，不计入合计、也不进"需要人工介入"的计数。
     # ⑥ BOM 子项缺单价的工单（用户 2026-09-30）：作为**第 6 种情形**常驻一行
     #（和其它情形一样是蓝色链接、可点击筛选；已经是独立情形，不再与 ①~⑤ 重叠 → 计入合计）。
-    # 用户 2026-10-15：用户要的是"**当月工单**里缺单价的"，不是所有历史工单。
-    #   稳妥做法：直接拿本期台账（投料记录 / 报工记录 / 期初在产品）里的工单号，
-    #   组成"当月有动的工单"集合，再和缺价工单取交集——不依赖行里字段名。
+    # 用户 2026-10-15：两处修正
+    #  ① 只统计**当月有动**的工单（本期投料/报工/期初在产品台账反查）
+    #  ② 缺价用**实时取价表**判断 —— 以前读 BOM 行里已回填的 unit_price，
+    #     而它只有在"完整结算"之后才回填 → 新月份没结算时会把**全部 BOM 行**都算成缺价。
     active_orders = set()
     try:
         active_orders |= {
@@ -5806,20 +5807,50 @@ def production_cost_summary(request, period_id):
                 return str(value).strip()
         return ""
 
-    if active_orders:
+    # 实时取价表：月末加权价 → 历史单价（含跨期沿用）
+    try:
+        live_prices = bom_material_prices(period)
+    except Exception:  # noqa: BLE001
+        live_prices = None
+
+    # 工单 → 真正取不到价的子项物料
+    bom_unpriced = {}
+    if live_prices is not None:
+        for ln in period.bom_lines.all().only("work_order_no", "sub_item_code"):
+            code = (ln.sub_item_code or "").strip()
+            if not code:
+                continue
+            try:
+                priced = Decimal(live_prices.get(code) or 0) > 0
+            except Exception:  # noqa: BLE001
+                priced = False
+            if not priced:
+                bom_unpriced.setdefault((ln.work_order_no or "").strip(), set()).add(code)
+
+    if live_prices is not None:
         _unpriced_rows = [
             r for r in issue_rows
-            if r.get("unpriced_codes") and _order_no_of(r) in active_orders
+            if _order_no_of(r) in bom_unpriced
+            and (not active_orders or _order_no_of(r) in active_orders)
         ]
     else:
-        # 台账里没有工单号（数据异常）→ 保持原行为，避免误杀成 0
-        _unpriced_rows = [r for r in issue_rows if r.get("unpriced_codes")]
+        _unpriced_rows = [
+            r for r in issue_rows
+            if r.get("unpriced_codes")
+            and (not active_orders or _order_no_of(r) in active_orders)
+        ]
 
     _unpriced_codes = []
-    for _r in _unpriced_rows:
-        for _code in _r["unpriced_codes"]:
-            if _code not in _unpriced_codes:
-                _unpriced_codes.append(_code)
+    if live_prices is not None:
+        for _r in _unpriced_rows:
+            for _code in sorted(bom_unpriced.get(_order_no_of(_r), ())):
+                if _code not in _unpriced_codes:
+                    _unpriced_codes.append(_code)
+    else:
+        for _r in _unpriced_rows:
+            for _code in _r.get("unpriced_codes") or ():
+                if _code not in _unpriced_codes:
+                    _unpriced_codes.append(_code)
     _unpriced_material = sum(
         (Decimal(r.get("direct_material") or 0) for r in _unpriced_rows), Decimal("0")
     )
