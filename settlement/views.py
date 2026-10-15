@@ -61,7 +61,8 @@ from settlement.models import (
     StandardCostRate,
     WorkshopCostPool,
     CustomerOrder,
-    CustomerReceipt,)
+    CustomerReceipt,
+    WorkOrder,)
 from settlement.services.costing import (
     BOM_QTY_NORMALIZE_OVER,
     SETTLE_STALE_SECONDS,
@@ -422,6 +423,9 @@ def download_import_file(request, period_id, batch_id):
     raise Http404("原始文件已丢失（数据库里也没有副本）。")
 
 
+#: 手工补建的工单号（每月都必须在当期工单主档里，否则车间结转会失败）
+MANUAL_WORK_ORDER_CODES = ("31.295-20260320", "PULP202607", "R1")
+
 #: 每月必传资料 + 作用说明（用户 2026-10-14：上传页要有"本月资料清单"）
 MONTHLY_UPLOAD_CHECKLIST = [
     ("inventory", "必传", "本期全部出入库明细。只要数量，金额按月末加权平均价自动计算；整个结算的基础。"),
@@ -471,6 +475,28 @@ def _monthly_checklist(period):
             "name": kinds.get(kind, kind), "level": level, "note": note,
             "state": state, "tone": tone, "row_count": row_count,
             "error_count": error_count, "uploaded_at": getattr(batch, "created_at", None),
+        })
+    # 固定项：3 个手工补建工单必须出现在当期工单主档（用户 2026-10-15）
+    #   平台不会自动把它们带到下月，缺了车间结转会报"工单主档中不存在"。
+    codes = list(MANUAL_WORK_ORDER_CODES)
+    if codes:
+        have = set(
+            WorkOrder.objects.filter(period=period, order_no__in=codes)
+            .values_list("order_no", flat=True)
+        )
+        missing = [c for c in codes if c not in have]
+        rows.append({
+            "name": "补充工单（手工补建）",
+            "level": "必传",
+            "note": "这 3 个工单是手工补建的（%s）。平台不会自动带到下个月，"
+                    "缺了「车间结转」会报『工单主档中不存在』。用「补充工单.xlsx」重新上传即可。"
+                    % "、".join(codes),
+            "state": ("已上传 %d/%d" % (len(codes) - len(missing), len(codes)))
+                     if not missing else ("缺失 %d 个：%s" % (len(missing), "、".join(missing))),
+            "tone": "ok" if not missing else "bad",
+            "row_count": len(codes) - len(missing),
+            "error_count": len(missing),
+            "uploaded_at": None,
         })
     return rows
 
