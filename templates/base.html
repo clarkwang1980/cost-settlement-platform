@@ -72,7 +72,6 @@
             <a href="{% url 'sales_ledger' period.id %}">销售台账</a>
             <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
             <a href="{% url 'voucher_center' period.id %}">凭证中心</a>
-            {% if period %}<a href="{% url 'order_execution' period.id %}"{% if 'order-exec' in nav_active %} class="active"{% endif %}>订单执行</a>{% endif %}
             <a href="{% url 'profit_statement' period.id %}">损益表</a>
             <a href="{% url 'price_table' period.id %}">单价表</a>
             <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>

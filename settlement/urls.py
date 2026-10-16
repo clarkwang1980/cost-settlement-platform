@@ -318,8 +318,10 @@ urlpatterns = [
         views_profit.profit_statement_export,
         name="profit_statement_export",
     ),
-    path("periods/<int:period_id>/order-execution/", views.order_execution,
-         name="order_execution"),
-    path("periods/<int:period_id>/order-execution/export/",
-         views.order_execution_export, name="order_execution_export"),
+    # 用户 2026-10-15：订单执行页面暂时下线（恢复时去掉下面注释即可）
+    # path("periods/<int:period_id>/order-execution/", views.order_execution,
+    # name="order_execution"),
+    # 用户 2026-10-15：订单执行导出接口一并下线（恢复时去掉注释）
+    # path("periods/<int:period_id>/order-execution/export/",
+    # views.order_execution_export, name="order_execution_export"),
 ]
