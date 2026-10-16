@@ -5800,6 +5800,22 @@ def production_cost_summary(request, period_id):
     except Exception:  # noqa: BLE001
         active_orders = set()
 
+    # 本月确有投料 / 报工 的工单（更贴近"当月核算"）
+    current_orders = set()
+    try:
+        current_orders |= {
+            str(x).strip()
+            for x in MaterialIssue.objects.filter(period=period)
+            .values_list("work_order_no", flat=True) if x
+        }
+        current_orders |= {
+            str(x).strip()
+            for x in WorkReport.objects.filter(period=period)
+            .values_list("work_order_no", flat=True) if x
+        }
+    except Exception:  # noqa: BLE001
+        current_orders = set()
+
     def _order_no_of(row):
         for key in ("work_order_no", "order_no", "work_order", "mo_no"):
             value = row.get(key)
@@ -5827,11 +5843,13 @@ def production_cost_summary(request, period_id):
             if not priced:
                 bom_unpriced.setdefault((ln.work_order_no or "").strip(), set()).add(code)
 
+    # 用户 2026-10-15：口径＝**本月确有投料或报工**的工单（上一版把"只有期初在产品"的
+    #   历史单也算进来了，数字偏大）。期初在产品只是结转过来的余额，不算"当月核算"。
     if live_prices is not None:
         _unpriced_rows = [
             r for r in issue_rows
             if _order_no_of(r) in bom_unpriced
-            and (not active_orders or _order_no_of(r) in active_orders)
+            and (not current_orders or _order_no_of(r) in current_orders)
         ]
     else:
         _unpriced_rows = [
@@ -5861,8 +5879,10 @@ def production_cost_summary(request, period_id):
             "material": _unpriced_material if _unpriced_rows else None,
             "advice": CASE_SUGGESTIONS.get(CASE_NO_PRICE, ""),
             "basis": (
-                "本月有投料/报工/在产的工单里，缺单价的物料（%d 个）：%s"
-                % (len(_unpriced_codes), "、".join(_unpriced_codes))
+                # 用户 2026-10-15：这里不再罗列物料编码（太占地方），只给数量；
+                #   缺的是哪些物料看下方的 BOM 明细表即可。
+                "本月有投料/报工的工单里，缺单价的物料共 %d 个（明细见下方 BOM 明细表）"
+                % len(_unpriced_codes)
                 if _unpriced_codes
                 else CASE_COST_BASIS.get(CASE_NO_PRICE, "")
             ),
