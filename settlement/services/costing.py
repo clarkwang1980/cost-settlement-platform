@@ -709,20 +709,31 @@ def _build_reconciliations(period):
                 if abs(delta) > Decimal("1"):
                     diffs.append((abs(delta), code, up, calc, delta))
             diffs.sort(reverse=True)
+            # 用户 2026-10-16：提示分两类，避免每月都把"未上传期末的物料（如浆粕车间）"
+            #   当成对不上的差异。
+            auto_only = [d for d in diffs if d[1] not in uploaded_map]   # 平台有、上传没有
+            both = [d for d in diffs if d[1] in uploaded_map]            # 两边都有但金额不同
+            auto_total = sum((d[4] for d in auto_only), ZERO)
+            both_total = sum((d[4] for d in both), ZERO)
             detail = "；".join(
                 f"{code} 上传{up:,.2f}／平台{calc:,.2f}（差{delta:+,.2f}）"
-                for _a, code, up, calc, delta in diffs[:5]
+                for _a, code, up, calc, delta in both[:5]
             )
-            detail = f"差额最大的物料：{detail}" if detail else ""
+            parts = [
+                f"上传的期末存货与平台计算期末差 {gap:,.2f}：",
+                f"①【你上传里没有、平台按「期初＋入库−出库」自动算的物料】"
+                f"{len(auto_only)} 个、合计 {abs(auto_total):,.2f}"
+                f"（例：未上传期末的浆粕车间，属正常，不影响锁账）",
+                f"②【两边都有但对不上的物料】{len(both)} 个、合计 {abs(both_total):,.2f}",
+            ]
+            if detail:
+                parts.append(f"差额最大的：{detail}")
+            parts.append("（仅提示，不影响锁账）")
             ExceptionItem.objects.create(
                 period=period,
                 category="库存金额",
                 severity=ExceptionItem.Severity.INFO,
-                message=(
-                    f"上传的期末存货与平台计算期末不一致：上传 {uploaded_total:,.2f}，"
-                    f"平台计算 {ending:,.2f}，差 {gap:,.2f}（共 {len(diffs)} 个物料对不上）。"
-                    f"{detail}（仅提示，不影响锁账）"
-                ),
+                message="".join(parts),
                 reference="期末存货表",
             )
     ReconciliationResult.objects.create(
