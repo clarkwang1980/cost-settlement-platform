@@ -347,9 +347,9 @@ def _material_by_order(
         roving_prices = roving_plan.get("roving_prices", {})
         for order_no, auto_list in roving_plan.get("auto_issues", {}).items():
             for material_code, _name, qty, _uom in auto_list:
+                # 用户 2026-10-16：**一切以单价表为准**——单价表没有价就是 0
+                #   （该物料会被"只看缺单价"筛出来补价），不再用粗纱链自己算的价。
                 material_price = Decimal(prices.get(material_code, ZERO) or ZERO)
-                if not material_price:
-                    material_price = Decimal(roving_prices.get(material_code, ZERO) or ZERO)
                 amounts[order_no] += Decimal(qty) * material_price
     _backfill_material_by_bom(
         period, prices, amounts, adjustments, backfilled_out=backfilled_out
