@@ -328,7 +328,7 @@
     <div class="filter-actions">
       <button class="button secondary" type="submit">筛选</button>
       <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空</a>
-      <a class="button secondary" href="{% url 'export_listing' bom_export_period_id 'standard_cost_bom' %}?{% if b_filter.workshop %}b_workshop={{ b_filter.workshop|urlencode }}{% endif %}{% if b_filter.order_no %}{% if b_filter.workshop %}&amp;{% endif %}b_order_no={{ b_filter.order_no|urlencode }}{% endif %}">导出Excel</a>
+      <a class="button secondary" href="{% url 'export_listing' bom_export_period_id 'standard_cost_bom' %}?{% if b_filter.workshop %}b_workshop={{ b_filter.workshop|urlencode }}{% endif %}{% if b_filter.order_no %}{% if b_filter.workshop %}&amp;{% endif %}b_order_no={{ b_filter.order_no|urlencode }}{% endif %}{% if b_filter.missing %}&amp;b_missing=1{% endif %}">导出Excel</a>
       <div class="print-here"></div>
     </div>
   </form>
