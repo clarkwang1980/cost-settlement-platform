@@ -415,7 +415,7 @@ def download_import_file(request, period_id, batch_id):
     # 磁盘上没有（容器重建被清空）→ 回退到数据库里的副本
     if batch.file_content:
         response = HttpResponse(
-            bytes(batch.file_content), content_type="application/octet-stream"
+        bytes(batch.file_content), content_type="application/octet-stream"
         )
         response["Content-Disposition"] = (
             "attachment; filename*=UTF-8''" + quote(batch.original_name or "原始文件")
@@ -7229,9 +7229,8 @@ def build_bom_detail_table(
     attach_bom_cell_texts 按需挂上——页面只给当前页做，导出才给全部行做（近万行不做无用功）。
     """
     detail_rows = build_standard_cost_bom_rows(
-        period, rows=rows, workshop_filter=workshop_filter, order_filter=order_filter
-    ,
-            missing_only=missing_only)
+        period, rows=rows, workshop_filter=workshop_filter, order_filter=order_filter,
+    )
     columns = bom_columns(period, ledger=ledger)
     previous = None
     group_no = 0
@@ -11703,7 +11702,6 @@ def export_listing(request, period_id, kind):
     response = HttpResponse(
         stream.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        missing_only=str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
     )
     response["Content-Disposition"] = (
         f"attachment; filename*=UTF-8''{quote(filename)}"
