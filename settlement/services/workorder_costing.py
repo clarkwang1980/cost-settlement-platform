@@ -2801,6 +2801,17 @@ def annotate_work_order_cost_rows(period, results, openings=None):
         issue_qty_by_pair[(row["work_order_no"], row["material_code"])] += Decimal(
             row["actual_issue_quantity"] or 0
         )
+    # 投料台账跨期累计（用户 2026-10-16）：本期及以前各期 actual_issue_quantity 合计
+    accum_issue_all = defaultdict(Decimal)
+    for _pa in AccountingPeriod.objects.filter(month__lte=period.month):
+        for _row in (
+            _pa.material_issues.exclude(work_order_no="")
+            .values("work_order_no", "actual_issue_quantity")
+        ):
+            accum_issue_all[_row["work_order_no"]] += Decimal(
+                _row["actual_issue_quantity"] or 0
+            )
+
     for item in results:
         order_no = item.work_order.order_no
         ws = item.work_order.production_dept_code
@@ -2808,15 +2819,9 @@ def annotate_work_order_cost_rows(period, results, openings=None):
         opening = openings.get(order_no)
         item.opening_quantity = Decimal(opening.quantity if opening else Decimal("0"))
         item.opening_amount = Decimal(opening.total if opening else Decimal("0"))
-        # 累计投料：投料进度表优先，无则用实际投料记录合计
-        if order_no in progress_qty_by_order:
-            item.accum_issue = progress_qty_by_order[order_no]
-        else:
-            item.accum_issue = Decimal(
-                period.material_issues.filter(work_order_no=order_no)
-                .aggregate(total=Sum("actual_issue_quantity"))["total"]
-                or 0
-            )
+        # 累计投料：**投料台账跨期累计**（本期＋以前各期，用户 2026-10-16）
+        #   不再用投料进度表（常没同步），也不再用"仅本期"的合计
+        item.accum_issue = accum_issue_all.get(order_no, Decimal(0))
         # 投料状态：进度表该工单各行状态去重
         statuses = progress_status_by_order.get(order_no)
         item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
