@@ -1175,6 +1175,9 @@ def build_issue_report_rows(
     默认不列入；需要看时把 `include_roving_only=True` 打开（页面上的勾选框）。
     """
     prices = _issue_prices(period)
+    # 用户 2026-10-16：⑥ 判定同样以单价表为准（含沿用上月）
+    from settlement.services.costing import bom_material_prices as _bmp6
+    prices = {**_bmp6(period), **prices}
     adjustments = load_manual_adjustments(period)
     # 与核算层同一套物料编码容错（2026-09-30）：投料记 18.660、价源里是 18.66 时也要取到价，
     # 否则页面上的「实领金额 / 缺口率」会和结算层的材料成本对不上（18.441-1358059 就是这种情况）。
