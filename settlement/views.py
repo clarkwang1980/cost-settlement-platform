@@ -10439,16 +10439,8 @@ def _listing_rows(request, period, kind):
             item.opening_quantity = Decimal(opening.quantity if opening else Decimal("0"))
             item.opening_amount = Decimal(opening.total if opening else Decimal("0"))
             # 用户 2026-10-16：累计投料＝**投料台账跨期累计**（本期＋以前各期），
-            #   不再用投料进度表——它常常没同步，会出现"累计 < 本期"的矛盾。
-            item.accum_issue = accum_issue_by_order.get(order_no)
-            if item.accum_issue is None and order_no in progress_qty_by_order:
-                item.accum_issue = progress_qty_by_order[order_no]
-            else:
-                item.accum_issue = Decimal(
-                    period.material_issues.filter(work_order_no=order_no)
-                    .aggregate(total=Sum("actual_issue_quantity"))["total"]
-                    or 0
-                )
+            #   不再用投料进度表（它常没同步，会出现"累计 < 本期"的矛盾）。
+            item.accum_issue = accum_issue_by_order.get(order_no, Decimal(0))
             statuses = progress_status_by_order.get(order_no)
             item.issue_status = "、".join(sorted(statuses)) if statuses else "—"
             # 本期完工 / 累计完工 / 完工率（用户 2026-09-24 定稿口径，与页面同一套函数）
