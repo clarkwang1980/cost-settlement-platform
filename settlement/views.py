@@ -6643,7 +6643,27 @@ def attach_standard_unit_costs(period, items):
             _parts.append("多投 %s" % "、".join(
                 "%s %s%s" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
             ))
-        item.issue_diff_text = "；".join(_parts) if _parts else "一致"
+        if _parts:
+            item.issue_diff_text = "；".join(_parts)
+        else:
+            # 没有任何可比对的差异时，别一律写"一致"（会把"没投料"说成一致 ✗）
+            _has_issue = any(
+                issued_by_pair.get((order_no, _c), Decimal("0")) > 0
+                for _c in {ln.sub_item_code for ln in period.bom_lines.filter(
+                    work_order_no=order_no)}
+            )
+            _cmp = 0
+            for _ln in period.bom_lines.filter(work_order_no=order_no):
+                if not str(_ln.sub_item_code or "").upper().startswith("BC-"):
+                    _cmp += 1
+            if not _has_issue and finish_qty > 0:
+                item.issue_diff_text = "未投料（有报工，材料按 BOM 反推）"
+            elif _cmp == 0:
+                item.issue_diff_text = "不适用（BOM 只有粗纱/无可比子项）"
+            elif finish_qty <= 0:
+                item.issue_diff_text = "无完工（未报工，无法比对）"
+            else:
+                item.issue_diff_text = "一致"
         item.unit_cost_diff_reason = unit_cost_diff_reason(
             item, unit_material, missing_codes,
             short_items=short_items, over_items=over_items,
