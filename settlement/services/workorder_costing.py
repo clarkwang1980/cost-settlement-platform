@@ -1126,10 +1126,20 @@ def unit_cost_diff_reason(
     if over_items:
         return "投料超 BOM：%s" % _items(over_items)
     if need > ZERO and material > need * Decimal("1.01"):
-        amount = _fmt(material - need)
-        if not has_issue_ledger:
-            return "投料超 BOM：多 %s（本单没有投料台账，料来自期初结转/计算层补投）" % amount
-        return "投料超 BOM：多 %s（超投的料不在 BOM 子项内）" % amount
+        # 用户 2026-10-16：**金额高 ≠ 投料超 BOM**。先看数量：
+        #   有漏投/少投的物料时，真实原因是"少投"；数量相符时才说"单价高"。
+        if missing_codes or short_items:
+            body = "少投料"
+            if missing_codes:
+                shown = "、".join(
+                    "%s（%s）" % (code, (name or "")[:12]) for code, name in missing_codes[:2]
+                )
+                more = "等 %d 种" % len(missing_codes) if len(missing_codes) > 2 else ""
+                body += "：%s%s" % (shown, more)
+            if short_items:
+                body += "；%s" % _items(short_items)
+            return body + "（材料单价偏高也会抬高单位成本）"
+        return "材料单价高于标准（投料量与 BOM 相符）" 
     if wip <= ZERO and plan > finish > ZERO:
         return "在产品清零：尾料全进完工"
     if unit_material > ZERO and finish > ZERO and material / finish > unit_material * Decimal("1.1"):
