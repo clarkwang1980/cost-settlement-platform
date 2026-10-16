@@ -372,5 +372,24 @@
   });
 })();
 </script>
+
+<script id="keep-scroll-global">
+// 用户 2026-10-16：筛选/切换后保持原滚动位置，不再跳到页面顶端。
+(function () {
+  var KEY = 'dsh_scroll:' + location.pathname + location.search.replace(/[?&](page|b_page|i_page)=\d+/g, '');
+  function save() { try { sessionStorage.setItem(KEY, String(window.scrollY || 0)); } catch (e) {} }
+  document.addEventListener('submit', save, true);
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a');
+    if (a && !a.target && a.getAttribute('href') && a.getAttribute('href').indexOf('#') !== 0) { save(); }
+  }, true);
+  window.addEventListener('beforeunload', save);
+  window.addEventListener('load', function () {
+    var y = 0;
+    try { y = parseInt(sessionStorage.getItem(KEY) || '0', 10) || 0; } catch (e) {}
+    if (y > 0) { window.scrollTo(0, y); }
+  });
+})();
+</script>
 </body>
 </html>
