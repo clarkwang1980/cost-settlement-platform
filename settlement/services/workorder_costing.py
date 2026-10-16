@@ -661,8 +661,8 @@ def _roving_output_qty(period: AccountingPeriod, order_no: str):
 def build_roving_plan(period: AccountingPeriod, prices=None, adjustments=None):
     """粗纱链计算层计划（仅计算，不写任何库存流水/投料记录）：
 
-    1) BC-开头粗纱工单：无报工记录且无"报工"入库流水的，
-       计算层视为完工（完工数量=计划数量），并按BOM自动补原料投料；
+    1) BC-开头粗纱工单：**用户 2026-10-16：不再"视为完工"**（完工数量一律＝实际报工，
+       不拿计划数量当完工）；没有报工就不算完工。材料仍按 BOM 自动补原料投料（反推只用于材料）；
     2) 有BOM粗纱子项、未实际投该粗纱且已有报工数量的下游工单：
        计算层补粗纱投料（数量=BOM单耗×报工数量）。
     3) 粗纱计算单价 = 粗纱工单BOM原料成本÷计划数量（供下游补投粗纱计价）。
@@ -722,7 +722,9 @@ def build_roving_plan(period: AccountingPeriod, prices=None, adjustments=None):
         )
         if output_qty <= ZERO:
             continue
-        plan["finished"][wo.order_no] = output_qty
+        # 用户 2026-10-16：不再把反推产出量当完工数量——完工数量一律=实际报工；
+        # 反推只用于材料成本 / 粗纱单价（roving_prices 不变，供下游补投计价）。
+        # plan["finished"][wo.order_no] = output_qty
         material_cost = ZERO
         # 这单自己已经实际投过料 → **不再按 BOM 补投**，否则会和台账重复计一遍料
         # （用户 2026-09-30 实测 BC-16.0419ST-20260754：台账 3,314kg＝57,445.01，
