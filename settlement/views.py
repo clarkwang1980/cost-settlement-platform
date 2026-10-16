@@ -6664,6 +6664,14 @@ def attach_standard_unit_costs(period, items):
                 item.issue_diff_text = "无完工（未报工，无法比对）"
             else:
                 item.issue_diff_text = "一致"
+        # 用户 2026-10-16：情形③（有投料-报工超投料量）也会**按报工量 × BOM 反推补足**材料，
+        #   在"投料差异"里说明，避免"实际投料不够却看不到"。
+        try:
+            _case = getattr(item, "case", "") or ""
+            if ("报工超投料量" in _case) and getattr(item, "issue_diff_text", ""):
+                item.issue_diff_text = "%s（材料按报工量×BOM 反推补足）" % item.issue_diff_text
+        except Exception:  # noqa: BLE001
+            pass
         item.unit_cost_diff_reason = unit_cost_diff_reason(
             item, unit_material, missing_codes,
             short_items=short_items, over_items=over_items,
