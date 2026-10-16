@@ -1707,6 +1707,10 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
     # 人工调整（投料/报工）：读一次，传给下面每个取数口（用户 2026-09-24）
     adjustments = load_manual_adjustments(period)
     # 粗纱链计算层计划（仅计算不落库：自动完工/补投/粗纱计算单价）
+    # 用户 2026-10-16：**一切以单价表为准**——核算用的价 = 单价表取价
+    #   （本月月末价 → 沿用上月/更早 → 本月历史单价 → 跨期历史单价）
+    from settlement.services.costing import bom_material_prices as _bmp
+    prices = {**_bmp(period), **prices}
     roving_plan = build_roving_plan(period, prices, adjustments)
     # 材料是"BOM 反推补进来"的工单：结算层把反推额全部算给本期完工（口径见下方拆分）
     backfilled_orders = set()
