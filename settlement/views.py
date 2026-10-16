@@ -5530,7 +5530,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("单位成本", "finished_unit_cost", "num"),
     ("标准单位成本", "standard_unit_cost", "num"),
     ("单位成本差异率%", "unit_cost_diff_pct_text", "text"),
-    ("投料差异(实际vsBOM)", "issue_diff_text", "text"),
+    ("投料差异", "issue_diff_text", "text"),
     ("单位成本差异原因", "unit_cost_diff_reason", "text"),
     ("期末在产品数量", "wip_quantity", "num"),
     ("在产品成本", "wip_cost", "num"),
@@ -6637,11 +6637,11 @@ def attach_standard_unit_costs(period, items):
             _parts.append("漏投 %s" % "、".join(c for c, _n in missing_codes[:3]))
         if short_items:
             _parts.append("少投 %s" % "、".join(
-                "%s %s%s" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in short_items[:3]
+                "%s（%s%s）" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in short_items[:3]
             ))
         if over_items:
             _parts.append("多投 %s" % "、".join(
-                "%s %s%s" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
+                "%s（%s%s）" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
             ))
         if _parts:
             item.issue_diff_text = "；".join(_parts)
