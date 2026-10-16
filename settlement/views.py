@@ -5508,7 +5508,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("报工数量", "finished_quantity", "num"),
     ("在产品", "wip_quantity", "num"),
     ("折合产量", "equivalent_qty", "num"),
-    ("材料", "direct_material", "num"),
+    ("实际材料", "direct_material", "num"),
     ("水电", "water_power", "num"),
     ("水电分配率%", "rate_water_power_pct", "num"),
     ("蒸汽", "steam", "num"),
@@ -5530,6 +5530,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("单位成本", "finished_unit_cost", "num"),
     ("标准单位成本", "standard_unit_cost", "num"),
     ("单位成本差异率%", "unit_cost_diff_pct_text", "text"),
+    ("投料差异(实际vsBOM)", "issue_diff_text", "text"),
     ("单位成本差异原因", "unit_cost_diff_reason", "text"),
     ("期末在产品数量", "wip_quantity", "num"),
     ("在产品成本", "wip_cost", "num"),
@@ -6629,6 +6630,20 @@ def attach_standard_unit_costs(period, items):
                     over_items.append((code, line.sub_item_name, -diff_qty, uom))
             short_items.sort(key=lambda x: -x[2])
             over_items.sort(key=lambda x: -x[2])
+        # 用户 2026-10-16：**投料差异**单独一列、永远显示（不依赖差异率是否 ≥30%），
+        #   否则"报工超投料→按 BOM 反推"会把少投的料补平，页面上看不出来。
+        _parts = []
+        if missing_codes:
+            _parts.append("漏投 %s" % "、".join(c for c, _n in missing_codes[:3]))
+        if short_items:
+            _parts.append("少投 %s" % "、".join(
+                "%s %s%s" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in short_items[:3]
+            ))
+        if over_items:
+            _parts.append("多投 %s" % "、".join(
+                "%s %s%s" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
+            ))
+        item.issue_diff_text = "；".join(_parts) if _parts else "一致"
         item.unit_cost_diff_reason = unit_cost_diff_reason(
             item, unit_material, missing_codes,
             short_items=short_items, over_items=over_items,
