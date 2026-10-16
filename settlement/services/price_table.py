@@ -169,14 +169,14 @@ def build_price_matrix(period, months=None, code_filter=""):
                     in_price = Decimal(hp.receipt_price)
                 if out_price is not None and hp.issue_price is not None:
                     out_price = Decimal(hp.issue_price)
-            # 用户 2026-10-16：本月没有进出的 → 沿用上月单价（没有新增就沿用）
-            if in_price is None and last_in is not None:
+            # 用户 2026-10-16：本月没有进出（价为空或 0）→ 沿用上月单价
+            if (in_price is None or Decimal(in_price) == ZERO) and last_in is not None:
                 in_price = last_in
-            if out_price is None and last_out is not None:
+            if (out_price is None or Decimal(out_price) == ZERO) and last_out is not None:
                 out_price = last_out
-            if in_price is not None:
+            if in_price is not None and Decimal(in_price) != ZERO:
                 last_in = in_price
-            if out_price is not None:
+            if out_price is not None and Decimal(out_price) != ZERO:
                 last_out = out_price
             if in_price is not None:
                 in_prices[month] = in_price
