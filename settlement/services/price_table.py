@@ -146,6 +146,9 @@ def build_price_matrix(period, months=None, code_filter=""):
     for code in codes:
         in_prices = {}
         out_prices = {}
+        # 用户 2026-10-16：当月没有进出的，**沿用上月单价**（没有新增就沿用上月）
+        last_in = None
+        last_out = None
         for month in wanted_months:
             v = valuations.get((month, code))
             hp = historical.get((month, code))
@@ -166,6 +169,15 @@ def build_price_matrix(period, months=None, code_filter=""):
                     in_price = Decimal(hp.receipt_price)
                 if out_price is not None and hp.issue_price is not None:
                     out_price = Decimal(hp.issue_price)
+            # 用户 2026-10-16：本月没有进出的 → 沿用上月单价（没有新增就沿用）
+            if in_price is None and last_in is not None:
+                in_price = last_in
+            if out_price is None and last_out is not None:
+                out_price = last_out
+            if in_price is not None:
+                last_in = in_price
+            if out_price is not None:
+                last_out = out_price
             if in_price is not None:
                 in_prices[month] = in_price
             if out_price is not None:
