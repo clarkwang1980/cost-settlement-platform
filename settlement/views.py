@@ -6632,13 +6632,22 @@ def attach_standard_unit_costs(period, items):
             over_items.sort(key=lambda x: -x[2])
         # 用户 2026-10-16：**投料差异**单独一列、永远显示（不依赖差异率是否 ≥30%），
         #   否则"报工超投料→按 BOM 反推"会把少投的料补平，页面上看不出来。
+        # 用户 2026-10-16：**互斥**——一点没投的只写「漏投」，投了不够的只写「少投」，
+        #   同一个物料不再同时出现在两类里；数字统一用（）包起来。
+        _miss_codes = {c for c, _n in missing_codes}
         _parts = []
-        if missing_codes:
-            _parts.append("漏投 %s" % "、".join(c for c, _n in missing_codes[:3]))
         if short_items:
-            _parts.append("少投 %s" % "、".join(
-                "%s（%s%s）" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in short_items[:3]
-            ))
+            _miss_txt = []
+            _short_txt = []
+            for c, _n, q, u in short_items[:4]:
+                if c in _miss_codes:
+                    _miss_txt.append("漏投 %s（%s%s）" % (c, ("%g" % float(q)), u or ""))
+                else:
+                    _short_txt.append("少投 %s（%s%s）" % (c, ("%g" % float(q)), u or ""))
+            if _miss_txt:
+                _parts.append("、".join(_miss_txt))
+            if _short_txt:
+                _parts.append("、".join(_short_txt))
         if over_items:
             _parts.append("多投 %s" % "、".join(
                 "%s（%s%s）" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
