@@ -73,7 +73,8 @@ from settlement.services.costing import (
     run_settlement,
     settle_workshop as settle_one_workshop,
     update_workshop_sequences,
-)
+
+    bom_material_prices,)
 from settlement.services.exports import (
     build_listing_workbook,
     build_settlement_workbook,
@@ -7217,7 +7218,9 @@ def bom_columns(period, ledger=False):
 
 
 def build_bom_detail_table(
-    period, rows=None, workshop_filter="", order_filter="", ledger=False
+    period, rows=None, workshop_filter="", order_filter="", ledger=False,
+    missing_only=False,
+
 ):
     """「BOM 明细」的列 + 行（取数、列定义、序列/序号、折算一次算好，页面与导出共用）。
 
@@ -7227,7 +7230,8 @@ def build_bom_detail_table(
     """
     detail_rows = build_standard_cost_bom_rows(
         period, rows=rows, workshop_filter=workshop_filter, order_filter=order_filter
-    )
+    ,
+            missing_only=missing_only)
     columns = bom_columns(period, ledger=ledger)
     previous = None
     group_no = 0
@@ -7277,7 +7281,8 @@ def attach_bom_cell_texts(rows, columns):
 
 
 def build_standard_cost_bom_rows(
-    period, rows=None, workshop_filter="", order_filter="", head=None
+    period, rows=None, workshop_filter="", order_filter="", head=None,
+    missing_only=False
 ):
     """标准成本「BOM 明细」行（页面与导出共用，用户 2026-09-23）。
 
@@ -7316,10 +7321,38 @@ def build_standard_cost_bom_rows(
         return []
     qty_total = bom_qty_total_by_order(period)
     share = bom_share_resolver(period)
+    # 用户 2026-10-15：勾选"只看缺单价（当月核算工单）"时——
+    #   只保留 ①子项取不到价 且 ②该工单本月确有投料/报工 的 BOM 行，方便一次导出补价。
+    missing_prices = bom_material_prices(period) if missing_only else {}
+    current_orders = set()
+    if missing_only:
+        try:
+            current_orders |= {
+                str(x).strip()
+                for x in MaterialIssue.objects.filter(period=period)
+                .values_list("work_order_no", flat=True) if x
+            }
+            current_orders |= {
+                str(x).strip()
+                for x in WorkReport.objects.filter(period=period)
+                .values_list("work_order_no", flat=True) if x
+            }
+        except Exception:  # noqa: BLE001
+            current_orders = set()
     result = []
     for line in period.bom_lines.all():
         if line.work_order_no not in order_set:
             continue
+        if missing_only:
+            code = (line.sub_item_code or "").strip()
+            try:
+                priced = Decimal(missing_prices.get(code) or 0) > 0
+            except Exception:  # noqa: BLE001
+                priced = False
+            if priced:
+                continue
+            if current_orders and (line.work_order_no or "").strip() not in current_orders:
+                continue
         row = bom_row_from_line(line, qty_total, share)
         head_row = head.get(row["order_no"]) or {}
         row["workshop_label"] = head_row.get("workshop_label", "")
@@ -7494,6 +7527,7 @@ def standard_costs(request, period_id):
         bom_period,
         workshop_filter=b_workshop_filter,
         order_filter=b_order_filter,
+        missing_only=str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
     )
     bom_page = Paginator(bom_table_rows, BOM_DETAIL_PAGE_SIZE).get_page(
         request.GET.get("b_page")
@@ -7546,6 +7580,7 @@ def standard_costs(request, period_id):
             "bom_period_options": _work_order_cost_period_options(url_period),
             "bom_export_period_id": bom_period.id,
             "b_filter": {
+                "missing": str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
                 "period": str(request.GET.get("b_period", "")).strip(),
                 "workshop": b_workshop_filter,
                 "order_no": b_order_filter,
@@ -11668,6 +11703,7 @@ def export_listing(request, period_id, kind):
     response = HttpResponse(
         stream.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        missing_only=str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
     )
     response["Content-Disposition"] = (
         f"attachment; filename*=UTF-8''{quote(filename)}"

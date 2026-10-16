@@ -64,6 +64,7 @@
     {% if b_filter.period %}<input type="hidden" name="b_period" value="{{ b_filter.period }}">{% endif %}
     {% if b_filter.workshop %}<input type="hidden" name="b_workshop" value="{{ b_filter.workshop }}">{% endif %}
     {% if b_filter.order_no %}<input type="hidden" name="b_order_no" value="{{ b_filter.order_no }}">{% endif %}
+      {% if b_filter.missing %}<input type="hidden" name="b_missing" value="1">{% endif %}
     <label>期间
       <select name="c_month" onchange="this.form.submit()">
         <option value="">全部</option>
@@ -215,6 +216,7 @@
       {% if b_filter.period %}<input type="hidden" name="b_period" value="{{ b_filter.period }}">{% endif %}
       {% if b_filter.workshop %}<input type="hidden" name="b_workshop" value="{{ b_filter.workshop }}">{% endif %}
       {% if b_filter.order_no %}<input type="hidden" name="b_order_no" value="{{ b_filter.order_no }}">{% endif %}
+      {% if b_filter.missing %}<input type="hidden" name="b_missing" value="1">{% endif %}
       <button class="button secondary" type="submit">筛选</button>
       <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空</a>
       <a class="button secondary" href="{% url 'export_listing' export_period_id 'standard_cost' %}?{% if w_filter.workshop %}w_workshop={{ w_filter.workshop|urlencode }}{% endif %}{% if w_filter.order_no %}{% if w_filter.workshop %}&amp;{% endif %}order_no={{ w_filter.order_no|urlencode }}{% endif %}{% if w_filter.product %}{% if w_filter.workshop or w_filter.order_no %}&amp;{% endif %}product={{ w_filter.product|urlencode }}{% endif %}">导出Excel</a>
@@ -317,6 +319,12 @@
     <label>工单编号
       <input name="b_order_no" value="{{ b_filter.order_no }}" placeholder="模糊匹配">
     </label>
+    {# 用户 2026-10-15：一键筛出"当月核算工单里 BOM 子项没有单价"的行，方便补单价 #}
+    <label style="display:flex;flex-direction:row;align-items:center;gap:6px;">
+      <input type="checkbox" name="b_missing" value="1"{% if b_filter.missing %} checked{% endif %}
+             onchange="this.form.submit()">
+      <span>只看缺单价（当月核算工单）</span>
+    </label>
     <div class="filter-actions">
       <button class="button secondary" type="submit">筛选</button>
       <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空</a>
@@ -349,7 +357,6 @@
     <strong>口径说明（BOM 明细）：</strong>
     <span>① 范围：<b>本期全部 BOM 行</b>（＝上传的 BOM 文件全部行，不再只限有结算结果的工单）；按本表自己的<b>期间 / 车间 / 工单编号</b>筛选（默认本期、全部车间）。本表共 {{ bom_row_count }} 行、{{ bom_order_count }} 张工单，页面每页 {{ bom_page_size }} 行（「导出Excel」是全部行）。</span>
     <span>② 列：<b>你上传的 BOM 文件列原样同序</b>（序列＝行号、序号＝同一工单一个号）；系统列（用量、用量(转100%)、转换后子项用量:分子、单价、金额、标准成品单价）追加在最右边。车间筛选按工单主档的生产部门过滤，列里不重复显示。</span>
-    <span>③ 金额 ＝ 子项用量 × 子项单价；子项单价＝该子项物料本月月末加权平均价，结算后自动回填。同一工单各行金额的合计＝该工单的「标准成品单价」；没有结算结果的工单，单价/金额/标准成品单价显示 —。</span>
     <span>④ 子项用量 ＝ 子项用量:分子 ÷ 子项用量:分母（数量保留两位小数）；「用量(转100%)」＝<b>该子项用量 ÷ 该工单 Σ用量</b>；「转换后子项用量:分子」＝<b>该子项标准用量 ÷ 该工单 Σ标准用量</b>（用户 2026-09-30：分子用标准用量）——两列都<b>一律折算</b>，各子项合计＝100%（例 39.034H1-HF20250734-3：标准用量 1450.17/25.83/82、合计 1558 → 0.93 / 0.02 / 0.05）。</span>
   </p>
 </section>
