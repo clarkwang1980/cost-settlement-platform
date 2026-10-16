@@ -130,8 +130,8 @@
       <td title="{{ row.name }}">{{ row.name }}</td>
       <td>{{ row.uom }}</td>
       {% for rq, ra, rp, iq, ia, ip in row.cells %}
-      <td class="num" title="入库：数量 {{ rq|floatformat:2|thousands }}　金额 {{ ra|floatformat:2|thousands }}">{{ rp|floatformat:4|thousands }}</td>
-      <td class="num" title="出库：数量 {{ iq|floatformat:2|thousands }}　金额 {{ ia|floatformat:2|thousands }}">{{ ip|floatformat:4|thousands }}</td>
+      <td class="num" title="入库：数量 {{ rq|floatformat:2|thousands }}　金额 {{ ra|floatformat:2|thousands }}">{{ rp|floatformat:2|thousands }}</td>
+      <td class="num" title="出库：数量 {{ iq|floatformat:2|thousands }}　金额 {{ ia|floatformat:2|thousands }}">{{ ip|floatformat:2|thousands }}</td>
       {% endfor %}
     </tr>
     {% empty %}

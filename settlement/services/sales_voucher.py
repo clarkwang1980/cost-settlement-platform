@@ -473,6 +473,12 @@ def build_sales_cost_statistics(period, month_count: int = 6) -> dict:
 
     # 期初余额：从最早有数据的月份滚动到统计起始月之前
     all_months = sorted({value for value, _carry in by_out} | {value for value, _carry in by_invoice})
+    # 用户 2026-10-15：统计表原来只从**当前期间**起往后 6 个月（8 月页看不到 7 月），
+    #   改成：从"最早有数据的月份"开始排到当前期间之后 month_count-1 个月（含历史各月）。
+    if all_months and all_months[0] < axis[0]:
+        span = ((axis[-1].year - all_months[0].year) * 12
+                + (axis[-1].month - all_months[0].month) + 1)
+        axis = [month_add(all_months[0], i) for i in range(max(span, month_count))]
     balance = ZERO
     if all_months:
         cursor = all_months[0]
