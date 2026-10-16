@@ -1236,14 +1236,18 @@ def build_issue_report_rows(
     #   ① 投料进度表（ERP 的累计投料进度）
     #   ② 工单明细上传的「投料数量」（ERP 侧该工单的投料量）
     #   ③ 期初在产品的材料金额（下面 opening_material）——以前投过、还在产的证据
+    # 用户 2026-10-16：累计投料＝**投料台账跨期累计**（本期＋以前各期），
+    #   不再用「投料进度表」——它常没同步（会出现"累计 123 < 本期 998.87"的矛盾），
+    #   而且判「从来没有投过料」也依赖它，会把情形 ①②④ 算错。
     accum_issue = defaultdict(Decimal)
-    for row in (
-        period.issue_progress.exclude(work_order_no="")
-        .values("work_order_no", "actual_issue_quantity")
-    ):
-        accum_issue[row["work_order_no"]] += Decimal(
-            row["actual_issue_quantity"] or ZERO
-        )
+    for _ap in AccountingPeriod.objects.filter(month__lte=period.month):
+        for row in (
+            _ap.material_issues.exclude(work_order_no="")
+            .values("work_order_no", "actual_issue_quantity")
+        ):
+            accum_issue[row["work_order_no"]] += Decimal(
+                row["actual_issue_quantity"] or ZERO
+            )
     detail_issue_qty = {
         d.order_no: Decimal(d.issue_quantity or ZERO)
         for d in period.work_order_details.all()
