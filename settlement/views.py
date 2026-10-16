@@ -10894,10 +10894,9 @@ def _listing_rows(request, period, kind):
         # 用户 2026-09-30：范围＝本期全部 BOM 行；列＝上传文件原样 + 系统列在右；导出不受分页影响。
         _bom_columns, _bom_rows = build_bom_detail_table(
             period,
-            workshop_filter=(request.GET.get("b_workshop",
-            missing_only=str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
-        ) or "").strip(),
+            workshop_filter=(request.GET.get("b_workshop") or "").strip(),
             order_filter=(request.GET.get("b_order_no") or "").strip(),
+            missing_only=str(request.GET.get("b_missing", "")).strip() in ("1", "on", "true"),
         )
         attach_bom_cells(_bom_rows, _bom_columns)
         sheets.append((
