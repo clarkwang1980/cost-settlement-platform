@@ -10353,6 +10353,17 @@ def _listing_rows(request, period, kind):
             .exclude(work_order_no="")
             .values_list("work_order_no", flat=True)
         )
+        # 投料台账跨期累计（用户 2026-10-16）：本期及以前各期的投料数量合计
+        accum_issue_by_order = defaultdict(Decimal)
+        for _p in AccountingPeriod.objects.filter(month__lte=period.month):
+            for _row in (
+                _p.material_issues.exclude(work_order_no="")
+                .values("work_order_no", "actual_issue_quantity")
+            ):
+                accum_issue_by_order[_row["work_order_no"]] += Decimal(
+                    _row["actual_issue_quantity"] or 0
+                )
+
         # 工单明细（用户上传）：类别/计划完工/实际完工/完成状态
         work_order_details = {
             d.order_no: d
@@ -10423,7 +10434,10 @@ def _listing_rows(request, period, kind):
             opening = opening_map.get(order_no)
             item.opening_quantity = Decimal(opening.quantity if opening else Decimal("0"))
             item.opening_amount = Decimal(opening.total if opening else Decimal("0"))
-            if order_no in progress_qty_by_order:
+            # 用户 2026-10-16：累计投料＝**投料台账跨期累计**（本期＋以前各期），
+            #   不再用投料进度表——它常常没同步，会出现"累计 < 本期"的矛盾。
+            item.accum_issue = accum_issue_by_order.get(order_no)
+            if item.accum_issue is None and order_no in progress_qty_by_order:
                 item.accum_issue = progress_qty_by_order[order_no]
             else:
                 item.accum_issue = Decimal(
