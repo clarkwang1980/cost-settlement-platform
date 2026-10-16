@@ -7953,6 +7953,21 @@ def prepare_price_table_data(period, n=6):
                 if hp.issue_price is not None:
                     ip = Decimal(hp.issue_price)
             cells.append((rq, ra, rp, iq, ia, ip))
+        # 用户 2026-10-16：单价表也**沿用上月**——当月没有价（空或 0）时，取最近一个有值的月份
+        _last_in = None
+        _last_out = None
+        _fixed = []
+        for _rq, _ra, _rp, _iq, _ia, _ip in cells:
+            if (_rp is None or Decimal(_rp) == Decimal("0")) and _last_in is not None:
+                _rp = _last_in
+            if (_ip is None or Decimal(_ip) == Decimal("0")) and _last_out is not None:
+                _ip = _last_out
+            if _rp is not None and Decimal(_rp) != Decimal("0"):
+                _last_in = _rp
+            if _ip is not None and Decimal(_ip) != Decimal("0"):
+                _last_out = _ip
+            _fixed.append((_rq, _ra, _rp, _iq, _ia, _ip))
+        cells = _fixed
         rows.append({
             "category": cat,
             "category_name": (
