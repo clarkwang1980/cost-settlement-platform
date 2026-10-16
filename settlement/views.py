@@ -6595,6 +6595,10 @@ def attach_standard_unit_costs(period, items):
                 item.unit_cost_diff_pct = (
                     diff / unit_cost * Decimal("100")
                 )
+                item.unit_cost_diff_pct_text = (
+                    f"{item.unit_cost_diff_pct:.2f}%"
+                    if item.unit_cost_diff_pct is not None else "—"
+                )
             item.unit_cost_diff_class = (
                 "woc-diff-bad" if diff > 0 else "woc-diff-good" if diff < 0 else ""
             )
