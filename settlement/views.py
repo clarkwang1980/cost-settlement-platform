@@ -8153,6 +8153,21 @@ def price_table_view(request, period_id):
                 if hp.issue_price is not None:
                     ip = Decimal(hp.issue_price)
             cells.append((rq, ra, rp, iq, ia, ip))
+        # 用户 2026-10-16（口径说明里早就写了）：当月没有价（空或 0）→ **沿用上月（及更早）**单价
+        _last_in = None
+        _last_out = None
+        _fixed = []
+        for _rq, _ra, _rp, _iq, _ia, _ip in cells:
+            if _rp is not None and Decimal(_rp) != Decimal("0"):
+                _last_in = _rp
+            elif _last_in is not None:
+                _rp = _last_in
+            if _ip is not None and Decimal(_ip) != Decimal("0"):
+                _last_out = _ip
+            elif _last_out is not None:
+                _ip = _last_out
+            _fixed.append((_rq, _ra, _rp, _iq, _ia, _ip))
+        cells = _fixed
         rows.append({
             "category": cat,
             "category_name": (
