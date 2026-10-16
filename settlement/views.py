@@ -5529,7 +5529,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("完工成本", "finished_cost", "num"),
     ("单位成本", "finished_unit_cost", "num"),
     ("标准单位成本", "standard_unit_cost", "num"),
-    ("单位成本差异", "unit_cost_diff_pct", "num"),
+    ("单位成本差异率%", "unit_cost_diff_pct_text", "text"),
     ("单位成本差异原因", "unit_cost_diff_reason", "text"),
     ("期末在产品数量", "wip_quantity", "num"),
     ("在产品成本", "wip_cost", "num"),
