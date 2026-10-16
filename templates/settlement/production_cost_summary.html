@@ -517,7 +517,7 @@
       <td class="num">{{ item.standard_unit_cost|dash_num:2 }}</td>
       <td class="num {{ item.unit_cost_diff_class }}">{{ item.unit_cost_diff_pct|dash_pct:2 }}</td>
       <td class="ir-reason" title="差异率 ≥30% 时说明真实原因（如"少投了哪种料"）；绝对差异在 30% 以内的留空">{{ item.unit_cost_diff_reason|default:"—" }}</td>
-      <td class="ir-issue-diff">{{ item.issue_diff_text }}{% if "报工超投料量" in item.case %}（材料按报工量×BOM 反推补足）{% endif %}</td>
+      <td class="ir-issue-diff">{{ item.issue_diff_text }}{% if "报工超投料量" in item.case_label %}（材料按报工量×BOM 反推补足）{% endif %}</td>
       <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
       <td class="num">{{ item.wip_cost|dash_num:2 }}</td>
       <td class="ir-case" title="{{ item.case_basis }}">{{ item.case_label }}</td>
