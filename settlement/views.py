@@ -7230,7 +7230,8 @@ def build_bom_detail_table(
     """
     detail_rows = build_standard_cost_bom_rows(
         period, rows=rows, workshop_filter=workshop_filter, order_filter=order_filter,
-    )
+            missing_only=missing_only,
+        )
     columns = bom_columns(period, ledger=ledger)
     previous = None
     group_no = 0
