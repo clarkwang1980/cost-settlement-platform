@@ -5509,6 +5509,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("在产品", "wip_quantity", "num"),
     ("折合产量", "equivalent_qty", "num"),
     ("实际材料", "direct_material", "num"),
+    ("反推材料", "backfill_material", "num"),
     ("水电", "water_power", "num"),
     ("水电分配率%", "rate_water_power_pct", "num"),
     ("蒸汽", "steam", "num"),

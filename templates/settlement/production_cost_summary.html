@@ -453,7 +453,7 @@
       <th class="num" title="＝本月报工数量合计（成本口径的完工数量；机织为米）">报工数量</th>
       <th class="num" title="＝期末在产品数量。机织＝在产纱线的重量（kg）＝期初kg＋投料kg−报工米×米重×(1+损耗率7.5%)；纺纱＝投料kg−完工kg；其它车间＝计划数量−完工数量；米重缺失的机织单退回「计划−完工」（米）">在产品</th>
       <th class="num" title="折合产量 ＝ 完工部分 ＋ 0.5×在产品（在产品的约当系数 0.5）。机织（有BOM米重）以 kg 计：完工米×米重 ＋ 0.5×在产纱线kg；其它车间用各自数量。用于分摊车间工资：工资分配率＝本工单折合产量÷车间折合产量合计">折合产量</th>
-      <th class="num">实际材料</th><th class="num">水电</th><th class="num">水电分配率</th>
+      <th class="num">实际材料</th><th class="num">反推材料</th><th class="num">水电</th><th class="num">水电分配率</th>
       <th class="num">蒸汽</th><th class="num">蒸汽分配率</th>
       <th class="num">天然气</th><th class="num">天然气分配率</th>
       <th class="num">折旧</th><th class="num">折旧分配率</th>
@@ -495,6 +495,7 @@
       <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
       <td class="num">{{ item.equivalent_qty|dash_num:2 }}</td>
       <td class="num">{{ item.direct_material|dash_num:2 }}</td>
+      <td class="num">{{ item.backfill_material|dash_num:2 }}</td>
       <td class="num">{{ item.water_power|dash_num:2 }}</td>
       <td class="num">{% if item.rate_water_power_pct %}{{ item.rate_water_power_pct|floatformat:2|thousands }}%{% else %}—{% endif %}</td>
       <td class="num">{{ item.steam|dash_num:2 }}</td>
@@ -517,7 +518,7 @@
       <td class="num">{{ item.standard_unit_cost|dash_num:2 }}</td>
       <td class="num {{ item.unit_cost_diff_class }}">{{ item.unit_cost_diff_pct|dash_pct:2 }}</td>
       <td class="ir-reason" title="差异率 ≥30% 时说明真实原因（如"少投了哪种料"）；绝对差异在 30% 以内的留空">{{ item.unit_cost_diff_reason|default:"—" }}</td>
-      <td class="ir-issue-diff">{{ item.issue_diff_text }}{% if "报工超投料量" in item.case_label %}（材料按报工量×BOM 反推补足）{% endif %}</td>
+      <td class="ir-issue-diff">{{ item.issue_diff_text }}{% if "报工超投料量" in item.case_label or "无投料-有报工" in item.case_label %}(材料按BOM反推){% endif %}</td>
       <td class="num">{{ item.wip_quantity|dash_num:2 }}</td>
       <td class="num">{{ item.wip_cost|dash_num:2 }}</td>
       <td class="ir-case" title="{{ item.case_basis }}">{{ item.case_label }}</td>
