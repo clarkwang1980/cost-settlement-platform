@@ -6631,6 +6631,20 @@ def attach_standard_unit_costs(period, items):
                     over_items.append((code, line.sub_item_name, -diff_qty, uom))
             short_items.sort(key=lambda x: -x[2])
             over_items.sort(key=lambda x: -x[2])
+        # 用户 2026-10-16：**反推材料成本** = 材料成本 − 实际投料金额（>0 才有反推）
+        _actual_issue_amt = Decimal(0)
+        try:
+            _pmap2 = bom_material_prices(period)
+        except Exception:  # noqa: BLE001
+            _pmap2 = {}
+        for (_o2, _c2), _q2 in issued_by_pair.items():
+            if _o2 != order_no:
+                continue
+            _pr2 = _pmap2.get(_c2) or Decimal(0)
+            _actual_issue_amt += Decimal(_q2 or 0) * Decimal(_pr2)
+        _mat2 = Decimal(getattr(item, "direct_material", 0) or 0)
+        item.actual_issue_material = _actual_issue_amt
+        item.backfill_material = (_mat2 - _actual_issue_amt) if _mat2 > _actual_issue_amt else Decimal(0)
         # 用户 2026-10-16：**投料差异**单独一列、永远显示（不依赖差异率是否 ≥30%），
         #   否则"报工超投料→按 BOM 反推"会把少投的料补平，页面上看不出来。
         # 用户 2026-10-16：**互斥**——一点没投的只写「漏投」，投了不够的只写「少投」，
@@ -10487,11 +10501,11 @@ def _listing_rows(request, period, kind):
                 material_price.setdefault(hp.material_code, Decimal(hp.issue_price))
             elif hp.receipt_price is not None:
                 material_price.setdefault(hp.material_code, Decimal(hp.receipt_price))
-        issue_qty_by_pair = defaultdict(Decimal)
+        issued_by_pair = defaultdict(Decimal)
         for row in period.material_issues.exclude(work_order_no="").exclude(material_code="").values(
             "work_order_no", "material_code", "actual_issue_quantity"
         ):
-            issue_qty_by_pair[(row["work_order_no"], row["material_code"])] += Decimal(
+            issued_by_pair[(row["work_order_no"], row["material_code"])] += Decimal(
                 row["actual_issue_quantity"] or 0
             )
         _CATEGORY_KEYWORDS2 = (
@@ -10539,7 +10553,7 @@ def _listing_rows(request, period, kind):
                 issue_unit_price as _issue_unit_price,
             )
 
-            _price = _issue_unit_price(issue_qty_by_pair, material_price, order_no)
+            _price = _issue_unit_price(issued_by_pair, material_price, order_no)
             item.current_unit_price_from_bom = False
             if _price is None:
                 _price = _bom_unit_price(
