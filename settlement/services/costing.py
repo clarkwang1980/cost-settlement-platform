@@ -311,7 +311,7 @@ def _persist_valuations(period, summaries, iterations, converged):
     InventoryValuation.objects.bulk_create(
         [            InventoryValuation(
                 period=period,
-                material_code=material_code,
+                material_code=data.get("material_code") or material_code,
                 material_name=data["material_name"],
                 opening_quantity=data["opening_quantity"],
                 opening_amount=data["opening_amount"],
