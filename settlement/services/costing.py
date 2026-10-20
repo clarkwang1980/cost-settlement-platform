@@ -71,19 +71,11 @@ BOM_QTY_NORMALIZE_OVER = Decimal("1")
 
 
 
-def normalize_material_code(code):
-    """数字编码按数值归一：14.350 → 14.35（避免同一物料被拆成两个）。"""
-    value = (code or "").strip()
-    if not value:
-        return value
-    if re.fullmatch(r"\d+(\.\d+)?", value):
-        try:
-            norm = str(Decimal(value).normalize())
-            return norm
-        except Exception:  # noqa: BLE001
-            return value
-    return value
 
+
+def normalize_material_code(code):
+    """编码**原样保留**（不转数字，避免 14.350 变 14.35）。"""
+    return (code or "").strip()
 
 def money(value) -> Decimal:
     return Decimal(value or ZERO).quantize(CENT, rounding=ROUND_HALF_UP)
