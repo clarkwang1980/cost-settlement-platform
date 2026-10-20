@@ -12357,3 +12357,26 @@ def fix_opening_carry(request, period_id):
     deleted, _d = OpeningInventoryBalance.objects.filter(period=period).delete()
     return JsonResponse({"period": str(period.month)[:7], "deleted": deleted})
 
+
+
+@login_required
+def unify_material_code(request, period_id):
+    """运维用：把不规范编码（如 14.35）统一改为规范编码（14.350）。"""
+    from django.http import JsonResponse
+
+    from settlement.models import (
+        AccountingPeriod, InventoryTransaction, InventoryValuation,
+        OpeningInventoryBalance,
+    )
+
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    pairs = [(a, b) for a, b in (request.GET.get("pairs") or "").split(",") if a and b] if False else []
+    raw_pairs = (request.GET.get("pairs") or "").strip()
+    result = {}
+    for item in [x for x in raw_pairs.split(",") if ":" in x]:
+        bad, good = item.split(":", 1)
+        n1 = InventoryTransaction.objects.filter(period=period, material_code=bad).update(material_code=good)
+        n2 = InventoryValuation.objects.filter(period=period, material_code=bad).update(material_code=good)
+        n3 = OpeningInventoryBalance.objects.filter(period=period, material_code=bad).update(material_code=good)
+        result[f"{bad}->{good}"] = [n1, n2, n3]
+    return JsonResponse({"period": str(period.month)[:7], "result": result})
