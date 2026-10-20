@@ -279,12 +279,22 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         _key = normalize_material_code(_code)
         if _key in _merged:
             _cur = _merged[_key]
-            for _f in (
-                "opening_quantity", "opening_amount", "receipt_quantity",
-                "receipt_amount", "issue_quantity", "issue_amount",
-                "ending_quantity", "ending_amount",
-            ):
+            # 期初是"同一批库存的两种写法"，**只取一次**（不能相加 ✗）；入库/出库正常相加
+            for _f in ("receipt_quantity", "receipt_amount", "issue_quantity", "issue_amount"):
                 _cur[_f] = (_cur.get(_f) or ZERO) + (_data.get(_f) or ZERO)
+            for _f in ("opening_quantity", "opening_amount"):
+                if (_data.get(_f) or ZERO) > (_cur.get(_f) or ZERO):
+                    _cur[_f] = _data.get(_f) or ZERO
+            _cur["ending_quantity"] = (
+                (_cur.get("opening_quantity") or ZERO)
+                + (_cur.get("receipt_quantity") or ZERO)
+                - (_cur.get("issue_quantity") or ZERO)
+            )
+            _cur["ending_amount"] = (
+                (_cur.get("opening_amount") or ZERO)
+                + (_cur.get("receipt_amount") or ZERO)
+                - (_cur.get("issue_amount") or ZERO)
+            )
             _q = (_cur.get("opening_quantity") or ZERO) + (_cur.get("receipt_quantity") or ZERO)
             _a = (_cur.get("opening_amount") or ZERO) + (_cur.get("receipt_amount") or ZERO)
             _cur["weighted_average_price"] = (_a / _q) if _q else ZERO
