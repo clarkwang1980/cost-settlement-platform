@@ -4,6 +4,7 @@ from settlement import views, views_profit, views_total_cost
 
 
 urlpatterns = [
+    path("periods/<int:period_id>/fix-opening-carry/", views.fix_opening_carry, name="fix_opening_carry"),
     path("", views.dashboard, name="dashboard"),
     path(
         "templates/<str:kind>/",

@@ -12344,3 +12344,15 @@ def order_execution_export(request, period_id):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     resp["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(name)
     return resp
+
+
+@login_required
+def fix_opening_carry(request, period_id):
+    """运维用：清空该期间的期初存货余额，让库存结转重新承接一次（避免重复计）。"""
+    from django.http import JsonResponse
+
+    from settlement.models import OpeningInventoryBalance
+
+    period = get_object_or_404(AccountingPeriod, id=period_id)
+    deleted, _detail = OpeningInventoryBalance.objects.filter(period=period).delete()
+    return JsonResponse({"period": str(period.month)[:7], "deleted": deleted})
