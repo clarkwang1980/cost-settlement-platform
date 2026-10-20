@@ -155,9 +155,10 @@ def _carry_inventory(period, previous):
                 continue
             if valuation.material_code in manual_codes:
                 continue
-            key = (valuation.material_code, "", "")
-            if key in active_keys:
+            # 该物料已有承接（不论仓库/批号）就不再建，避免翻倍
+            if valuation.material_code in {k[0] for k in active_keys}:
                 continue
+            key = (valuation.material_code, "", "")
             active_keys.add(key)
             OpeningInventoryBalance.objects.update_or_create(
                 period=period,
