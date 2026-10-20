@@ -2408,11 +2408,17 @@ def sales_ledger(request, period_id):
 def voucher_center(request, period_id):
     """凭证中心：本期间全部成本凭证一览（已实现的可打开明细/导出，规划中的列取数口径）。"""
     period = get_object_or_404(AccountingPeriod, id=period_id)
+    from settlement.services.backfill_material_voucher import (
+        backfill_material_voucher_totals,
+    )
+
+    _backfill = backfill_material_voucher_totals(period)
     return render(
         request,
         "settlement/voucher_center.html",
         {
             "period": period,
+            "backfill_voucher": _backfill,
             "voucher_center": build_voucher_center(
                 period,
                 sales_month=request.GET.get("sales_month"),
