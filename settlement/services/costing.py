@@ -179,17 +179,6 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
         automatic_opening = automatic_openings.get(material_code)
         if automatic_opening and not has_manual_opening:
             opening_qty = Decimal(automatic_opening["quantity"] or ZERO)
-            # 用户 2026-10-17：**期初承接上月末**——本物料没有期初来源时，直接取上期库存计价的期末
-            if opening_qty == ZERO:
-                _prev_p = (
-                    AccountingPeriod.objects.filter(month__lt=period.month)
-                    .order_by("-month").first()
-                )
-                if _prev_p is not None:
-                    _pv = _prev_p.inventory_valuations.filter(material_code=material_code).first()
-                    if _pv is not None and Decimal(_pv.ending_quantity or 0) != ZERO:
-                        opening_qty = Decimal(_pv.ending_quantity or 0)
-
             opening_amount = Decimal(automatic_opening["amount"] or ZERO)
 
         prior_price = Decimal(previous_prices.get(material_code, ZERO))
@@ -419,23 +408,6 @@ def _persist_ending_by_batch(period, summaries):
             (row["qty"] for row in opening_rows.get(code, [])),
             ZERO,
         )
-        # 用户 2026-10-17：**期初就该承接上月期末**。没有上传期初的物料（浆粕等），
-        #   直接取上期期末，避免"上月有结存、本月期初为 0"。
-        if opening_qty == ZERO:
-            _prev = (
-                AccountingPeriod.objects.filter(month__lt=period.month)
-                .order_by("-month")
-                .first()
-            )
-            if _prev is not None:
-                _pv = _prev.inventory_valuations.filter(material_code=code).first()
-                if _pv is not None:
-                    _end = Decimal(_pv.ending_quantity or 0)
-                    if _end != ZERO:
-                        opening_qty = _end
-                        opening_rows.setdefault(code, []).append(
-                            {"qty": _end, "amount": Decimal(_pv.ending_amount or 0)}
-                        )
         in_qty = ZERO
         out_qty = ZERO
         for txn in txns:
