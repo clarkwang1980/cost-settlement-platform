@@ -1,4 +1,3 @@
-import re
 from __future__ import annotations
 
 from datetime import timedelta
@@ -32,22 +31,6 @@ OVERHEAD_FIELDS = (
     "depreciation",
     "consumables",
 )
-
-
-
-def normalize_code(code):
-    """数值相同视为同一物料：14.350 / 14.35 → 同一 key。"""
-    from decimal import Decimal, InvalidOperation
-
-    value = (code or "").strip()
-    if not value:
-        return value
-    if re.fullmatch(r"\d+(\.\d+)?", value):
-        try:
-            return str(Decimal(value).normalize())
-        except (InvalidOperation, ValueError):
-            return value
-    return value
 
 
 def money(value) -> Decimal:
@@ -139,7 +122,7 @@ def _carry_inventory(period, previous):
             if ending.material_code in manual_codes:
                 continue
             key = (
-                normalize_code(ending.material_code),
+                ending.material_code,
                 ending.warehouse or "",
                 ending.batch_no or "",
             )
@@ -175,7 +158,7 @@ def _carry_inventory(period, previous):
             # 该物料已有承接（不论仓库/批号）就不再建，避免翻倍
             if valuation.material_code in {k[0] for k in active_keys}:
                 continue
-            key = (normalize_code(valuation.material_code), "", "")
+            key = (valuation.material_code, "", "")
             active_keys.add(key)
             OpeningInventoryBalance.objects.update_or_create(
                 period=period,
@@ -209,7 +192,7 @@ def _carry_inventory(period, previous):
             continue
         if valuation.material_code in manual_codes:
             continue
-        active_keys.add((normalize_code(valuation.material_code), "", ""))
+        active_keys.add((valuation.material_code, "", ""))
         OpeningInventoryBalance.objects.update_or_create(
             period=period,
             material_code=valuation.material_code,
