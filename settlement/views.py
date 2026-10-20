@@ -12348,11 +12348,45 @@ def order_execution_export(request, period_id):
 
 @login_required
 def fix_opening_carry(request, period_id):
-    """运维用：清空该期间的期初存货余额，让库存结转重新承接一次（避免重复计）。"""
+    """运维用：把"上月期末"补成本月期初（只补缺的，不会重复），再重跑即可承接。"""
+    from decimal import Decimal
+
     from django.http import JsonResponse
 
-    from settlement.models import OpeningInventoryBalance
+    from settlement.models import AccountingPeriod, InventoryValuation, OpeningInventoryBalance
 
     period = get_object_or_404(AccountingPeriod, id=period_id)
-    deleted, _detail = OpeningInventoryBalance.objects.filter(period=period).delete()
-    return JsonResponse({"period": str(period.month)[:7], "deleted": deleted})
+    prev = (
+        AccountingPeriod.objects.filter(month__lt=period.month).order_by("-month").first()
+    )
+    if prev is None:
+        return JsonResponse({"error": "no previous period"})
+    created = 0
+    skipped = 0
+    for v in InventoryValuation.objects.filter(period=prev):
+        qty = Decimal(v.ending_quantity or 0)
+        amt = Decimal(v.ending_amount or 0)
+        if qty == 0 and amt == 0:
+            continue
+        exists = OpeningInventoryBalance.objects.filter(
+            period=period, material_code=v.material_code
+        ).exists()
+        if exists:
+            skipped += 1
+            continue
+        OpeningInventoryBalance.objects.create(
+            period=period,
+            material_code=v.material_code,
+            warehouse=None,
+            batch_no=None,
+            source_period=prev,
+            material_name=v.material_name,
+            category_name="",
+            uom="",
+            quantity=qty,
+            amount=amt,
+            unit_price=getattr(v, "weighted_average_price", None),
+            is_system_generated=True,
+        )
+        created += 1
+    return JsonResponse({"period": str(period.month)[:7], "created": created, "skipped": skipped})
