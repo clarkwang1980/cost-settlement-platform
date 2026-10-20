@@ -145,35 +145,6 @@ def _carry_inventory(period, previous):
                     "is_system_generated": True,
                 },
             )
-        # 用户 2026-10-17：期末存货表里没有的物料（浆粕等），期初也要承接上月期末
-        for valuation in valuations:
-            if (
-                Decimal(valuation.ending_quantity or 0) == ZERO
-                and Decimal(valuation.ending_amount or 0) == ZERO
-            ):
-                continue
-            if valuation.material_code in manual_codes:
-                continue
-            key = (valuation.material_code, "", "")
-            if key in active_keys:
-                continue
-            active_keys.add(key)
-            OpeningInventoryBalance.objects.update_or_create(
-                period=period,
-                material_code=valuation.material_code,
-                warehouse=None,
-                batch_no=None,
-                defaults={
-                    "source_period": previous,
-                    "material_name": valuation.material_name,
-                    "category_name": "",
-                    "uom": material_uoms.get(valuation.material_code, ""),
-                    "quantity": valuation.ending_quantity,
-                    "amount": valuation.ending_amount,
-                    "unit_price": getattr(valuation, "weighted_average_price", None),
-                    "is_system_generated": True,
-                },
-            )
         period.opening_inventory_balances.filter(
             is_system_generated=True
         ).exclude(
