@@ -2512,6 +2512,7 @@ def material_issue_voucher(request, period_id):
         request,
         "settlement/material_issue_voucher.html",
         {
+            "backfill_voucher": _bf,
             "period": period,
             "target_period": target_period,
             "voucher": voucher,
