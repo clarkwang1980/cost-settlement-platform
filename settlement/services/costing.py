@@ -70,6 +70,21 @@ MAX_ITERATIONS = 50
 BOM_QTY_NORMALIZE_OVER = Decimal("1")
 
 
+
+def normalize_material_code(code):
+    """数字编码按数值归一：14.350 → 14.35（避免同一物料被拆成两个）。"""
+    value = (code or "").strip()
+    if not value:
+        return value
+    if re.fullmatch(r"\d+(\.\d+)?", value):
+        try:
+            norm = str(Decimal(value).normalize())
+            return norm
+        except Exception:  # noqa: BLE001
+            return value
+    return value
+
+
 def money(value) -> Decimal:
     return Decimal(value or ZERO).quantize(CENT, rounding=ROUND_HALF_UP)
 
@@ -252,6 +267,32 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
             "ending_quantity": ending_qty,
             "ending_amount": ending_amount,
         }
+    # 用户 2026-10-17：**编码归一**——同一物料的两种写法（14.35 / 14.350）合并成一行，
+    #   保留**规范编码**（位数多的那个，如 14.350）。
+    _disp = {}
+    for _code in summaries:
+        _k = normalize_material_code(_code)
+        if _k not in _disp or len(_code) > len(_disp[_k]):
+            _disp[_k] = _code
+    _merged = {}
+    for _code, _data in summaries.items():
+        _key = normalize_material_code(_code)
+        if _key in _merged:
+            _cur = _merged[_key]
+            for _f in (
+                "opening_quantity", "opening_amount", "receipt_quantity",
+                "receipt_amount", "issue_quantity", "issue_amount",
+                "ending_quantity", "ending_amount",
+            ):
+                _cur[_f] = (_cur.get(_f) or ZERO) + (_data.get(_f) or ZERO)
+            _q = (_cur.get("opening_quantity") or ZERO) + (_cur.get("receipt_quantity") or ZERO)
+            _a = (_cur.get("opening_amount") or ZERO) + (_cur.get("receipt_amount") or ZERO)
+            _cur["weighted_average_price"] = (_a / _q) if _q else ZERO
+        else:
+            _merged[_key] = dict(_data)
+    for _k, _row in _merged.items():
+        _row["material_code"] = _disp.get(_k, _k)
+    summaries = _merged
     return prices, summaries
 
 
