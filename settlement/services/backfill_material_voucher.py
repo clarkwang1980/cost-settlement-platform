@@ -16,7 +16,7 @@ from settlement.services.workorder_costing import build_issue_report_rows
 
 ZERO = Decimal("0")
 DEBIT_ACCOUNT = "生产成本—直接材料"
-CREDIT_ACCOUNT = "其他应付款—暂估"
+CREDIT_ACCOUNT = "原材料"
 SUMMARY_PREFIX = "反推材料成本（按BOM反推，非实际领料）"
 BACKFILL_CASES = ("③", "④")
 
