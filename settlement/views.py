@@ -12370,7 +12370,6 @@ def unify_material_code(request, period_id):
     )
 
     period = get_object_or_404(AccountingPeriod, id=period_id)
-    pairs = [(a, b) for a, b in (request.GET.get("pairs") or "").split(",") if a and b] if False else []
     raw_pairs = (request.GET.get("pairs") or "").strip()
     result = {}
     for item in [x for x in raw_pairs.split(",") if ":" in x]:
