@@ -2506,6 +2506,8 @@ def material_issue_voucher(request, period_id):
         detail_workshop=request.GET.get("workshop", ""),
         detail_material=request.GET.get("material", ""),
     )
+    from settlement.services.backfill_material_voucher import backfill_material_voucher_totals
+    _bf = backfill_material_voucher_totals(period)
     return render(
         request,
         "settlement/material_issue_voucher.html",
