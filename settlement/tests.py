@@ -8605,6 +8605,29 @@ class SalesLedgerPageTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(line.cost_amount, Decimal("800.00"))
         self.assertEqual(line.gross_profit, Decimal("200.00"))
 
+    def test_cost_falls_back_to_previous_month_price(self):
+        """本期没有月末加权价（没进没出）→ 沿用上月（及更早）的月末加权价。
+
+        用户 2026-10-21：以后的单价按每月算出来的算，没有新增就沿用上月单价；
+        销售台账必须走同一条取价链，否则「单价表有价、销售出库没价」。
+        """
+        from settlement.services.sales_ledger import fill_sales_ledger_costs
+
+        prev = AccountingPeriod.objects.create(month=self.june)
+        InventoryValuation.objects.create(
+            period=prev,
+            material_code="21.03",
+            material_name="21.03 芳纶浆粕",
+            weighted_average_price=Decimal("70"),
+        )
+        line = self._line(1, quantity="10", revenue="1000")
+        updated = fill_sales_ledger_costs(self.period)
+        self.assertEqual(updated, 1)
+        line.refresh_from_db()
+        self.assertEqual(line.cost_price, Decimal("70.00000000"))
+        self.assertEqual(line.cost_amount, Decimal("700.00"))
+        self.assertEqual(line.gross_profit, Decimal("300.00"))
+
     def test_historical_price_falls_back_to_receipt_price(self):
         # 历史单价只有入库价时，用入库价兜底
         from settlement.services.sales_ledger import fill_sales_ledger_costs

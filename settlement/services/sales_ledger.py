@@ -57,33 +57,20 @@ def fill_sales_ledger_costs(period):
     """结算后把台账行的 销售成本单价/销售成本/销售毛利/销售毛利率 回填。
 
     口径（台账只提供数量与收入，成本由平台算）：
-    - 成本单价 = 该产品【本期月末加权平均价】（取自库存计价 InventoryValuation）；
-    - 跨期行（出库期间早于本期）优先用期初发出商品明细上的历史单位成本，取不到再用本期加权价；
-    - **本期没有月末加权价的物料（本期无出入库流水，取不到价）改用用户上传的「历史单价」
-      兜底：出库单价优先、入库单价其次**（用户 2026-09-28：上传了单价，销售成本却没有变）；
+    - 成本单价 = 该产品【本期月末加权平均价】；
+    - **本期没有月末加权价的（本期没进没出），沿用上月（及更早）的月末加权价** ——
+      与 BOM/工单/投料同一套取价链（用户 2026-10-21：没有新增就沿用上月单价）；
+    - 跨期行（出库期间早于本期）优先用期初发出商品明细上的历史单位成本；
+    - 以上都没有才用用户上传的「历史单价」兜底（出库单价优先、入库单价其次）；
     - 销售成本 = 销售数量 × 成本单价（四舍五入到分）；
     - 销售收入 = 终端销售收入（未填则取 射阳兰邦销售收入）；
     - 毛利 = 收入 − 成本；毛利率 = 毛利 ÷ 收入（收入为空或 0 时不计算）。
     返回回填的行数。
     """
-    prices = {}
-    for valuation in period.inventory_valuations.all():
-        price = Decimal(valuation.weighted_average_price or ZERO)
-        if price > ZERO:  # 0 视为「没有价」，让历史单价兜底
-            prices[valuation.material_code] = price
-    historical = {
-        item.material_code: item for item in period.historical_prices.all()
-    }
+    # 与工单材料成本、BOM 标准价同一套取价：本月月末加权价 → 沿用上月 → 历史单价兜底
+    from settlement.services.costing import bom_material_prices
 
-    def _historical_unit(code):
-        """历史单价兜底：出库单价优先、入库单价其次（都为 0 时视为无价）。"""
-        item = historical.get(code)
-        if item is None:
-            return None
-        for candidate in (item.issue_price, item.receipt_price):
-            if candidate is not None and Decimal(candidate) > ZERO:
-                return Decimal(candidate)
-        return None
+    prices = bom_material_prices(period)
 
     updated = 0
     for line in period.sales_ledger_lines.all():
@@ -101,8 +88,6 @@ def fill_sales_ledger_costs(period):
             if opening and opening.unit_cost is not None:
                 unit = Decimal(opening.unit_cost)
         if unit is None or unit <= ZERO:
-            unit = _historical_unit(line.material_code)
-        if unit is None:
             continue
         qty = Decimal(line.quantity or ZERO)
         cost = (qty * unit).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
