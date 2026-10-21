@@ -5472,13 +5472,14 @@ def build_issue_detail_table(issue_period, issue_filters, issue_rows_all):
         ]
     detail_totals = {"count": len(detail_rows)}
     for field in (
-        "direct_material", "water_power", "steam", "natural_gas", "depreciation",
+        "direct_material", "actual_issue_material", "backfill_material",
+        "water_power", "steam", "natural_gas", "depreciation",
         "consumables", "dye_auxiliary", "processing_fee", "wages", "total_cost",
         "finished_cost", "wip_cost", "plan_quantity", "finished_quantity",
         "wip_quantity", "current_issue", "opening_quantity", "opening_amount",
     ):
         detail_totals[field] = sum(
-            (Decimal(getattr(row, field) or 0) for row in detail_rows), Decimal("0")
+            (Decimal(getattr(row, field, None) or 0) for row in detail_rows), Decimal("0")
         )
     for row in detail_rows:
         info = issue_by_order.get(row.work_order.order_no) or {}
@@ -5517,8 +5518,9 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("报工数量", "finished_quantity", "num"),
     ("在产品", "wip_quantity", "num"),
     ("折合产量", "equivalent_qty", "num"),
-    ("实际材料", "direct_material", "num"),
+    ("实际投料", "actual_issue_material", "num"),
     ("反推材料", "backfill_material", "num"),
+    ("材料成本", "direct_material", "num"),
     ("水电", "water_power", "num"),
     ("水电分配率%", "rate_water_power_pct", "num"),
     ("蒸汽", "steam", "num"),
