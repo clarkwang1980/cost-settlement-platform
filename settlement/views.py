@@ -8255,13 +8255,16 @@ def price_table_view(request, period_id):
         )
         return response
 
+    # 用户 2026-10-21：整页 2200+ 行、HTML 1.7MB，打开很慢 → 分页渲染（每页 200 行）
+    rows_page = _page(request, rows, size=200)
     return render(
         request,
         "settlement/price_table.html",
         {
             "period": period,
             "periods": periods,
-            "rows": rows,
+            "page": rows_page,
+            "rows": rows_page.object_list,
             "price": _price,
             "filters": {
                 "code": code_filter,
