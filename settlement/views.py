@@ -8162,6 +8162,12 @@ def price_table_view(request, period_id):
 
         periods = [p for p in periods if _in_range(p)] or periods
 
+    # 用户 2026-10-21：单价表页与「导出Excel」同一口径 —— 内部调拨/库存调整这类
+    #   「只有数量没有金额」的流水必须从分母里扣掉，否则单价被摊薄（11.01 出现 39.44 这种假价）。
+    from settlement.services.price_table import internal_transfer_qty
+
+    internal_map = internal_transfer_qty(periods)
+
     rows = []
     for code in sorted(codes):
         if code_filter and code_filter.lower() not in code.lower():
@@ -8186,8 +8192,12 @@ def price_table_view(request, period_id):
             ra = Decimal(v.receipt_amount or 0)
             iq = Decimal(v.issue_quantity or 0)
             ia = Decimal(v.issue_amount or 0)
-            rp = (ra / rq).quantize(Decimal("0.0001")) if rq else Decimal("0")
-            ip = (ia / iq).quantize(Decimal("0.0001")) if iq else Decimal("0")
+            # 扣掉内部流转（无条件为 0 金额）的数量，再算单价
+            int_in, int_out = internal_map.get((p.month.month, code), (Decimal("0"), Decimal("0")))
+            rq_net = rq - Decimal(int_in or 0)
+            iq_net = iq - Decimal(int_out or 0)
+            rp = (ra / rq_net).quantize(Decimal("0.0001")) if rq_net > 0 else Decimal("0")
+            ip = (ia / iq_net).quantize(Decimal("0.0001")) if iq_net > 0 else Decimal("0")
             if hp is not None:
                 if hp.receipt_price is not None:
                     rp = Decimal(hp.receipt_price)

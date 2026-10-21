@@ -64,8 +64,19 @@ for model in (
     models.WorkOrderCostResult,
     models.ReconciliationResult,
     models.ExceptionItem,
+    models.EndingInventoryBalance,
 ):
     admin.site.register(model)
+
+
+@admin.register(models.HistoricalPrice)
+class HistoricalPriceAdmin(admin.ModelAdmin):
+    """历史单价（用户 2026-10-21：单价表里的价没有删除入口，误传/自动补全写坏的价只能靠这里清）。"""
+
+    list_display = ("period", "material_code", "material_name", "receipt_price", "issue_price")
+    list_filter = ("period",)
+    search_fields = ("material_code", "material_name")
+    ordering = ("period", "material_code")
 
 
 admin.site.site_header = "月度成本结算平台管理"

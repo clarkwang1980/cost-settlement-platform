@@ -1729,8 +1729,8 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
             self.assertTrue(found, f"{sheet_name} 未找到 11.01")
 
     def test_autofill_historical_prices_for_new_materials(self):
-        """历史单价自动补全：期间内新增物料（无上传价）访问单价表时自动按系统计算价补入；
-        已上传/已补全的物料不被覆盖。"""
+        """历史单价自动补全：**已锁账**期间内新增物料（无上传价）访问单价表时自动按系统计算价补入；
+        已上传/已补全的物料不被覆盖；未锁账期间不补（避免把结算中途的 0.13 这种假价冻住）。"""
         from decimal import Decimal as D
 
         from settlement.models import HistoricalPrice, InventoryValuation
@@ -1759,6 +1759,16 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         )
 
         self.client.force_login(self.user)
+        # 未锁账：访问一次不补价（用户 2026-10-21 口径）
+        resp = self.client.get(reverse("price_table", args=[self.period.id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(
+            HistoricalPrice.objects.filter(period=self.period, material_code="NEW-A").exists()
+        )
+
+        # 锁账后再访问才补
+        self.period.status = "locked"
+        self.period.save(update_fields=["status"])
         resp = self.client.get(reverse("price_table", args=[self.period.id]))
         self.assertEqual(resp.status_code, 200)
 
