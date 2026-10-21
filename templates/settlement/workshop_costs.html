@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}车间费用 · {{ period }}{% endblock %}
+{% block content %}
+<style>
+  /* 车间费用录入表：期间 × 车间；数字列右对齐，输入框无边框直接填 */
+  .cost-entry { width: 100%; table-layout: fixed; font-size: 13px; }
+  .cost-entry th, .cost-entry td { padding: 4px 6px; height: auto; white-space: nowrap; }
+  .cost-entry thead th { background: #eef2f5; text-align: right; }
+  .cost-entry thead th.left { text-align: left; }
+  .cost-entry td.num, .cost-entry th.num { text-align: right; }
+  .cost-entry input.cost-input {
+    width: 100%; height: 30px; min-height: 30px; padding: 0 6px; text-align: right;
+    font-size: 13px; line-height: 28px; border: 0; background: transparent; border-radius: 0;
+  }
+  .cost-entry input.cost-input:hover { background: #f4f8fa; }
+  .cost-entry input.cost-input:focus { outline: none; background: #e9f2f8; box-shadow: inset 0 0 0 1px var(--blue); }
+  .cost-entry input.cost-remark { text-align: left; }
+  .cost-entry input:disabled { color: var(--muted); }
+  .cost-entry td.row-total { font-weight: 700; color: var(--navy); }
+  .cost-entry tr.period-subtotal td { background: #f2f7fd; font-weight: 600; }
+  .cost-entry tr.grand-total td { background: #e6f0fb; font-weight: 700; color: #1f4e78; }
+  .cost-entry .seq { color: var(--muted); }
+  .cost-entry td.period-cell { color: var(--navy); font-weight: 700; }
+  .summary-table { width: 100%; font-size: 13px; }
+  .summary-table th, .summary-table td { padding: 5px 8px; white-space: nowrap; }
+  .summary-table td.num, .summary-table th.num { text-align: right; }
+  .summary-table tfoot td { background: #e6f0fb; font-weight: 700; color: #1f4e78; }
+</style>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORKSHOP COST ENTRY</p>
+    <h1>车间费用</h1>
+    <p><strong>费用按车间顺序参与结转与分配</strong>；保存后相关期间的结算结果会重置。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'workshop_settlements' period.id %}">车间结转</a>
+    <a class="button secondary" href="{% url 'production_cost_summary' period.id %}">生产成本</a>
+  </div>
+</section>
+
+{% if current_locked %}
+<div class="message message-warning">{{ period }} 已锁账，该期间的费用只能查看，不能修改。</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  <section class="section-card">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">ENTRY</p>
+        <h2>各车间费用（{{ entry_group.period_label }}，单位：元）</h2>
+        <p class="muted-text" style="margin:6px 0 0;">
+          行顺序＝车间结转顺序（费用按车间顺序参与分配）；合计列随输入实时更新。
+        </p>
+      </div>
+      {% comment %}导出Excel 与「打印本表」同一排（打印本表由 base.html 注入到 .print-here）{% endcomment %}
+      <div class="heading-actions">
+        <a class="button secondary" href="{% url 'export_listing' period.id 'workshop_cost' %}">导出Excel</a>
+        <div class="print-here"></div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="cost-entry">
+        <colgroup>
+          <col style="width:48px"><col style="width:78px"><col style="width:104px">
+          {% for field, label in columns %}<col style="width:104px">{% endfor %}
+          <col style="width:104px"><col style="width:150px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left">顺序</th>
+            <th class="left">期间</th>
+            <th class="left">车间</th>
+            {% for field, label in columns %}<th class="num">{{ label }}</th>{% endfor %}
+            <th class="num">合计</th>
+            <th class="left">备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% with group=entry_group %}
+          {% for row in group.rows %}
+          <tr data-period="{{ group.period_id }}" data-ws="{{ row.workshop }}">
+            <td class="seq">{{ row.sequence }}</td>
+            <td class="period-cell">{{ group.period_label }}</td>
+            <td><strong>{{ row.label }}</strong></td>
+            {% for cell in row.cells %}
+            <td class="num">
+              <input class="cost-input" type="text" inputmode="decimal"
+                     name="{{ cell.name }}" data-field="{{ cell.field }}"
+                     value="{{ cell.input_value }}"
+                     {% if group.locked %}disabled{% endif %}>
+            </td>
+            {% endfor %}
+            <td class="num row-total" data-row-total="{{ row.row_total_key }}">{{ row.total|floatformat:2|thousands }}</td>
+            <td><input class="cost-input cost-remark" type="text" name="{{ row.remark_name }}"
+                       value="{{ row.remark_value }}" {% if group.locked %}disabled{% endif %}></td>
+          </tr>
+          {% endfor %}
+          <tr class="period-subtotal">
+            <td></td>
+            <td class="period-cell">{{ group.period_label }}</td>
+            <td>小计</td>
+            {% for item in group.column_totals %}
+            <td class="num" data-group-col="{{ group.period_id }}" data-field="{{ item.field }}">{{ item.text }}</td>
+            {% endfor %}
+            <td class="num">{{ group.subtotal|floatformat:2|thousands }}</td>
+            <td>{% if group.locked %}已锁账{% endif %}</td>
+          </tr>
+          {% endwith %}
+        </tbody>
+      </table>
+    </div>
+    {% if can_save %}
+    <div class="form-actions">
+      <button class="button primary" type="submit">保存车间费用</button>
+    </div>
+    {% endif %}
+  </section>
+</form>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">SUMMARY</p>
+      <h2>车间费用汇总表（按车间）</h2>
+<p class="muted-text" style="margin:6px 0 0;color:#b26a00;">
+  数据自检：{{ summary_note|default:"—" }}
+  {% if not summary_rows %}（如果这里写着"库里没有费用记录"，说明是**数据没进库**，不是页面没显示）{% endif %}
+</p>
+      <p class="muted-text" style="margin:6px 0 0;">
+        共 {{ summary_rows|length }} 个车间{% if summary_filter.active %}（已按下方筛选条件过滤）{% endif %}。
+      </p>
+    </div>
+  </div>
+  <div class="filter-card purchase-filter">
+    <form class="filter-grid" method="get">
+      <label>期间
+        <select name="sum_period" onchange="this.form.submit()">
+          <option value="">全部期间（累计）</option>
+          {% for item in summary_period_options %}<option value="{{ item.value }}" {% if summary_filter.period == item.value %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>车间
+        <select name="sum_workshop" onchange="this.form.submit()">
+          <option value="">全部车间</option>
+          {% for item in summary_workshop_options %}<option value="{{ item.value }}" {% if summary_filter.workshop == item.value %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="filter-actions align-start">
+        <a class="button secondary" href="{% url 'workshop_costs' period.id %}">清空</a>
+        <a class="button secondary" href="{% url 'export_listing' period.id 'workshop_cost_summary' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}">导出Excel</a>
+        <div class="print-here"></div>
+      </div>
+    </form>
+  </div>
+  <div class="table-wrap">
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th class="left">顺序</th>
+          <th class="left">期间</th>
+          <th class="left">车间</th>
+          {% for field, label in columns %}<th class="num">{{ label }}</th>{% endfor %}
+          <th class="num">合计</th>
+          <th class="left">备注</th>
+        </tr>
+      </thead>
+      <tbody>
+            <tr class="oe-diag-row" style="background:#fff8e1;">
+              <td colspan="12" style="text-align:left;color:#b26a00;font-size:12.5px;">
+                本页数据自检：{{ summary_note|default:"—" }}｜若看到"库里没有费用记录"，说明该期间费用没进库
+              </td>
+            </tr>
+        {% for row in summary_rows %}
+        <tr>
+          <td class="seq">{{ row.sequence }}</td>
+          <td class="period-cell">{{ row.period_range }}</td>
+          <td><strong>{{ row.label }}</strong></td>
+          {% for item in row.cells %}
+          <td class="num" data-sum-ws="{{ row.workshop }}" data-sum-field="{{ item.field }}">{{ item.text }}</td>
+          {% endfor %}
+          <td class="num" data-sum-total="{{ row.workshop }}"><strong>{{ row.total_text }}</strong></td>
+          <td></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="13" class="empty-cell">还没有车间费用数据。</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if summary_footer %}
+      <tfoot>
+        <tr>
+          <td></td>
+          <td class="period-cell">{{ summary_footer.period_range }}</td>
+          <td>总合计</td>
+          {% for item in summary_footer.cells %}
+          <td class="num" data-sum-grand-field="{{ item.field }}">{{ item.text }}</td>
+          {% endfor %}
+          <td class="num" id="summary-grand-total">{{ summary_footer.total_text }}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">HOW IT IS USED</p>
+      <h2>说明</h2>
+    </div>
+  </div>
+  <ul class="muted-text" style="margin:0;padding-left:20px;">
+    <li><strong>金额列</strong>：人工费→工资；其余（折旧/水电/蒸汽/燃气/染料助剂/机物料/加工费）→制造费用，
+      按「该车间费用总额 ÷ 该车间材料成本总额」分摊到本车间各工单。</li>
+    <li><strong>加工费</strong>：哪个月发生就填哪个月，不填（＝0）不影响成本。</li>
+    <li><strong>保存</strong>：只重置<strong>有改动</strong>的期间（车间结转回到「待结转」），需按顺序重新结转；已锁账的期间只读。</li>
+  </ul>
+</section>
+
+<script>
+  // 合计列实时算：行合计、每期间小计、总合计（保存时后端会再校验一次）
+  (function () {
+    function toNumber(text) {
+      var t = (text || "").replace(/[,，\s]/g, "");
+      if (t === "") { return 0; }
+      var n = parseFloat(t);
+      return isNaN(n) ? 0 : n;
+    }
+    function fmt(n) {
+      return n.toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    var tbody = document.querySelector(".cost-entry tbody");
+    if (!tbody) { return; }
+    var rows = tbody.querySelectorAll("tr[data-period]");
+    var groupCells = document.querySelectorAll("[data-group-col]");
+    var sumWsCells = document.querySelectorAll("[data-sum-ws]");
+    var sumWsTotals = document.querySelectorAll("[data-sum-total]");
+    var sumGrandCells = document.querySelectorAll("[data-sum-grand-field]");
+    function recalc() {
+      var byGroup = {};
+      var byField = {};
+      var byWs = {};
+      var grand = 0;
+      rows.forEach(function (tr) {
+        var pid = tr.getAttribute("data-period");
+        var ws = tr.getAttribute("data-ws");
+        var rowTotal = 0;
+        tr.querySelectorAll("input.cost-input[data-field]").forEach(function (input) {
+          var field = input.getAttribute("data-field");
+          var value = toNumber(input.value);
+          rowTotal += value;
+          byGroup[pid] = byGroup[pid] || {};
+          byGroup[pid][field] = (byGroup[pid][field] || 0) + value;
+          byWs[ws] = byWs[ws] || {};
+          byWs[ws][field] = (byWs[ws][field] || 0) + value;
+          byField[field] = (byField[field] || 0) + value;
+        });
+        var cell = tr.querySelector("[data-row-total]");
+        if (cell) { cell.textContent = fmt(rowTotal); }
+        grand += rowTotal;
+      });
+      groupCells.forEach(function (cell) {
+        var pid = cell.getAttribute("data-group-col");
+        var field = cell.getAttribute("data-field");
+        cell.textContent = fmt(((byGroup[pid] || {})[field]) || 0);
+      });
+      // 汇总表（按车间 · 累计）：每个车间 = 所有期间相加
+      sumWsCells.forEach(function (cell) {
+        var ws = cell.getAttribute("data-sum-ws");
+        var field = cell.getAttribute("data-sum-field");
+        cell.textContent = fmt(((byWs[ws] || {})[field]) || 0);
+      });
+      sumWsTotals.forEach(function (cell) {
+        var ws = cell.getAttribute("data-sum-total");
+        var sum = 0;
+        Object.keys(byWs[ws] || {}).forEach(function (field) { sum += byWs[ws][field]; });
+        cell.textContent = fmt(sum);
+      });
+      sumGrandCells.forEach(function (cell) {
+        cell.textContent = fmt(byField[cell.getAttribute("data-sum-grand-field")] || 0);
+      });
+      var sumGrand = document.getElementById("summary-grand-total");
+      if (sumGrand) { sumGrand.textContent = fmt(grand); }
+    }
+    tbody.addEventListener("input", function (event) {
+      if (event.target.classList && event.target.classList.contains("cost-input")) {
+        recalc();
+      }
+    });
+    recalc();
+  })();
+</script>
+{% endblock %}

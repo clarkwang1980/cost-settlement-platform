@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}库存流水 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">INVENTORY LEDGER</p>
+    <h1>库存流水</h1>
+    <p>本期间上传的库存出入库流水共 {{ page.paginator.count }} 条。点击单据号可进入匹配页面修改匹配关系。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'export_listing' period.id 'inventory_ledger' %}?{{ request.GET.urlencode }}">导出Excel</a>
+    <a class="button secondary" href="{% url 'inventory_matches' period.id %}">库存流水匹配</a>
+    <a class="button secondary" href="{% url 'inventory_results' period.id %}">库存金额结转</a>
+  {% if period.status != "locked" %}
+    <a class="button primary" href="{% url 'upload_file' period.id %}">上传资料</a>
+  {% endif %}
+  </div>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid wide" method="get">
+    <label>业务日期<input name="txn_date" type="date" value="{{ request.GET.txn_date }}"></label>
+    <label>单据号<input name="document_no" value="{{ request.GET.document_no }}"></label>
+    <label>业务类型<input name="business_type" value="{{ request.GET.business_type }}"></label>
+    <label>方向
+      <select name="direction" onchange="this.form.submit()"><option value="">全部</option>{% for value,label in directions %}<option value="{{ value }}" {% if request.GET.direction == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    </label>
+    <label>物料编码<input name="material" value="{{ request.GET.material }}"></label>
+    <label>供应商/客户<input name="party" value="{{ request.GET.party }}"></label>
+    <label>仓库<input name="warehouse" value="{{ request.GET.warehouse }}"></label>
+    <label>订单号<input name="order_no" value="{{ request.GET.order_no }}"></label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'inventory_ledger' period.id %}">清空</a>
+    </div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>单据号</th><th>业务日期</th><th>业务类型</th><th>方向</th><th>仓库</th>
+          <th>物料编码</th><th>物料名称</th><th class="num">数量</th><th>单位</th><th>供应商/客户</th>
+          <th class="num">单价</th><th class="num">金额</th><th>来源批次</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for txn in page %}
+        <tr>
+          <td><a class="document-link" href="{% url 'inventory_match_detail' period.id txn.id %}"><strong>{{ txn.document_no|default:"—" }}</strong><small>流水ID {{ txn.id }}</small></a></td>
+          <td>{{ txn.txn_date }}</td>
+          <td>{{ txn.business_type }}</td>
+          <td>{{ txn.get_direction_display }}</td>
+          <td>{{ txn.warehouse|default:"—" }}</td>
+          <td><strong>{{ txn.material_code }}</strong></td><td>{{ txn.material_name }}</td>
+          <td class="num">{{ txn.quantity|floatformat:3|thousands }}</td>
+          <td>{{ txn.uom|default:"—" }}</td>
+          <td>{{ txn.supplier_name|default:txn.customer_name|default:txn.supplier_code|default:txn.customer_code|default:"—" }}</td>
+          <td class="num">{{ txn.unit_price|default:"—" }}</td>
+          <td class="num">{{ txn.amount|default:"—" }}</td>
+          <td><span class="pill">{{ txn.batch.get_kind_display }}</span><small>{{ txn.batch.original_name }}</small></td>
+          <td><a class="mini-button" href="{% url 'inventory_match_detail' period.id txn.id %}">打开</a></td>
+        </tr>
+      {% empty %}<tr><td colspan="14" class="empty-cell">没有符合筛选条件的库存流水。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

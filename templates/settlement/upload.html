@@ -1,0 +1,330 @@
+ï»¿{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}资料导入 · {{ period }}{% endblock %}
+{% block content %}
+<style>
+  .ul-check{border:1px solid #e6eaf2;border-radius:10px;background:#fff;margin-bottom:16px;overflow:hidden;}
+  .ul-check h2{margin:0;padding:11px 16px;font-size:14px;background:#f7f9fc;border-bottom:1px solid #eef1f6;color:#1f2937;}
+  .ul-check .ul-sum{padding:8px 16px;font-size:12.5px;color:#5b667a;background:#fbfcfe;border-bottom:1px solid #f1f3f8;}
+  .ul-check table{width:100%;border-collapse:collapse;font-size:13px;}
+  .ul-check th,.ul-check td{padding:7px 12px;border-bottom:1px solid #f1f3f8;text-align:left;vertical-align:top;}
+  .ul-check th{background:#fafbfd;color:#5b667a;font-weight:500;font-size:12.5px;white-space:nowrap;}
+  .ul-check tr:last-child td{border-bottom:none;}
+  .ul-tag{display:inline-block;padding:1px 8px;border-radius:9px;font-size:12px;white-space:nowrap;}
+  .ul-tag.ok{background:#e8f5e9;color:#2e7d32;}
+  .ul-tag.warn{background:#fff8e1;color:#b26a00;}
+  .ul-tag.bad{background:#ffebee;color:#c62828;}
+  .ul-tag.muted{background:#f1f3f8;color:#8a93a3;}
+  .ul-note{color:#5b667a;font-size:12.5px;line-height:1.6;}
+</style>
+<section class="ul-check" id="ul-checklist">
+  <h2>本月资料清单（{{ period.month|date:"Y年m月" }}）</h2>
+  <div class="ul-sum">
+    共 {{ checklist|length }} 项需要关注：<b>必传 {{ check_must }} 项</b>，其中
+    <b style="color:#c62828;">未上传 {{ check_missing }} 项</b>；本次已导入成功
+    <b style="color:#2e7d32;">{{ check_ok }} 项</b>。
+    红色=未上传、黄色=部分成功、绿色=导入成功。
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:150px;">资料类型</th>
+        <th style="width:86px;">要求</th>
+        <th style="width:170px;">是否已上传 / 结果</th>
+        <th style="width:110px;">导入行数</th>
+        <th>这张表的作用</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in checklist %}
+      <tr>
+        <td><b>{{ item.name }}</b></td>
+        <td>
+          {% if item.level == "必传" %}<span class="ul-tag bad">必传</span>
+          {% elif item.level == "可选" %}<span class="ul-tag muted">可选</span>
+          {% elif item.level == "新增才传" %}<span class="ul-tag muted">新增才传</span>
+          {% else %}<span class="ul-tag muted">不用传</span>{% endif %}
+        </td>
+        <td><span class="ul-tag {{ item.tone }}">{{ item.state }}</span></td>
+        <td>
+          {% if item.row_count is not None %}{{ item.row_count }}{% if item.error_count %}（未导入 {{ item.error_count }}）{% endif %}{% else %}—{% endif %}
+        </td>
+        <td class="ul-note">{{ item.note }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section class="page-heading">
+  <div><p class="eyebrow">DATA IMPORT</p><h1>上传月结资料</h1><p>支持CSV、XLSX和XLSM；原始文件会完整保留。</p></div>
+</section>
+<div class="two-column upload-layout">
+  <section class="section-card">
+    <form method="post" enctype="multipart/form-data" class="stack-form">
+      {% csrf_token %}
+      <label>资料类型{{ form.kind }}</label>
+      <label class="file-drop">
+        <span>选择原始文件</span>
+        {{ form.file }}
+        <small>{{ form.file.help_text }}</small>
+      </label>
+      <label class="checkbox">{{ form.replace_existing }} {{ form.replace_existing.label }}</label>
+      {% if form.errors %}<div class="message message-error">{{ form.errors }}</div>{% endif %}
+      <button class="button primary" type="submit">上传并导入</button>
+    </form>
+  </section>
+  <aside class="section-card guidance">
+    <p class="eyebrow">UPLOAD CHECKLIST</p>
+    <h2>下载导入模板（共 {{ template_kinds|length }} 类）</h2>
+    <div class="template-links">
+      {% for kind, label in template_kinds %}
+        <a class="button small secondary" href="{% url 'download_template' kind %}">{{ label }}</a>
+      {% endfor %}
+    <div class="template-links" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #dde3ea;">
+      <div class="eyebrow" style="margin-bottom:0.35rem;">浆粕车间模板</div>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_opening' %}">浆粕期初成品</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_ledger' %}">浆粕流水（原料+成品通用）</a>
+      <a class="button small secondary" href="{% url 'download_template' 'pulp_ending' %}">浆粕期末成品</a>
+      <div style="font-size:0.8rem;color:#667;margin-top:0.3rem;">浆粕流水一个模板通用：领料出库行=原料（材料成本来源，按备注分配：备注写具体成品则全部分给该成品，只写类别如「用于芳纶浆粕/微纤」按该类成品产量比例分摊；备注未写用途时按物料名称类别自动分配），生产入库/销售出库行=成品；金额无需填写，系统按历史单价（出库价优先、入库价兜底）自动计算。期初/期末成品分别用期初/期末模板。浆粕流水请统一使用本模板上传，以最近一次上传为准，不要再使用旧的「浆粕成品流水/原料流水」模板。</div>
+    </div>    </div>
+    {% if carry.previous and carry.ready %}
+      <div class="lock-banner">
+        {{ carry.previous }}已锁账：本期无需重复上传期初库存和期初在产品，系统结算时自动承接；期初采购暂估和期初发出商品也不再重复上传，由历史明细继续滚动核销。人工期初仅用于覆盖同物料或同工单的自动数。
+      </div>
+    {% elif carry.previous %}
+      <div class="lock-banner muted">上期{{ carry.previous }}尚未锁账，本期可以上传当月资料，但暂不能结算。</div>
+    {% else %}
+      <div class="lock-banner muted">首个核算期间需要上传“期初存货”作为库存余额；如有未结清项目，再分别上传“期初在产品”“期初采购暂估明细”和“期初发出商品明细”。后两类只在系统首期导入一次，以后月份自动滚动核销。</div>
+    {% endif %}
+    <p>同一文件不会重复导入。勾选“替换”会删除本月同类旧批次及其计算结果。</p>
+  </aside>
+</div>
+
+<section class="section-card upload-notes">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">BEFORE YOU UPLOAD</p>
+      <h2>上传前必须注意</h2>
+    </div>
+    <span class="pill warning">先确认，再上传</span>
+  </div>
+  <div class="upload-alert-grid">
+    <article>
+      <strong>分部门、分车间可以追加上传</strong>
+      <p>不同车间的生产工单和费用可以放在不同文件中，依次上传即可。追加上传时不要勾选“替换”。系统按每行的“车间”字段归集，不按文件名归集。</p>
+    </article>
+    <article class="warning-card">
+      <strong>“替换”会删除本月整类资料</strong>
+      <p>替换不是只替换当前文件或当前车间。例如替换“生产工单”，会删除本月已经上传的全部生产工单文件。只有上传完整汇总替代文件时才使用。</p>
+    </article>
+    <article>
+      <strong>车间费用不在这里上传</strong>
+      <p>车间费用（人工费、折旧费、水电费、蒸汽费、燃气费、染料助剂费、机物料费、加工费）请在左侧「车间费用」页面按车间、按月份直接录入，不再需要上传文件。</p>
+    </article>
+    <article>
+      <strong>上传后要重新匹配和结转</strong>
+      <p>新文件会保留其他已上传原始资料，但会清除旧的计算结果。全部资料上传完成后，请重新自动匹配，再按车间顺序结转。</p>
+    </article>
+  </div>
+  <div class="upload-rule-list">
+    <p><strong>文件格式：</strong>支持 CSV、XLSX、XLSM；表头可出现在前10行，系统支持模板中的常见中文别名。</p>
+    <p><strong>日期格式：</strong>建议使用 <span class="field-chip">2026-07-31</span>；月份建议使用 <span class="field-chip">2026-07</span>。</p>
+    <p><strong>编码原则：</strong>工单号、单据号、物料编码应保持唯一且前后一致；供应商、客户建议同时提供编码和名称。</p>
+    <p><strong>重复规则：</strong>完全相同的文件不能重复上传；相同生产工单号再次上传会以最后一次数据为准。</p>
+  </div>
+</section>
+
+<section class="section-card upload-field-guide">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">FIELD REQUIREMENTS</p>
+      <h2>十八类资料字段说明</h2>
+    </div>
+    <div class="field-legend">
+      <span class="field-chip required">最低必填</span>
+      <span class="field-chip recommended">匹配建议</span>
+    </div>
+  </div>
+  <p class="help-text guide-intro">“最低必填”表示缺少后文件不能导入；“匹配建议”虽然不一定阻止导入，但缺少后可能无法自动匹配，需要人工处理。最稳妥的方式仍是下载并沿用页面模板。</p>
+
+  <div class="upload-guide-grid">
+    <details open>
+      <summary><span>库存出入库流水</span><small>成本计算的主数据</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">创建时间</span><span class="field-chip required">物料编号</span><span class="field-chip required">操作数量</span><span class="field-chip required">业务类型</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批号</span><span class="field-chip recommended">主单位</span><span class="field-chip recommended">辅助数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">业务单据编号</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">单价</span><span class="field-chip recommended">金额</span></p>
+        <p class="guide-note">出入库方向按业务类型自动判断（采购入库、生产入库为入库；生产领料、销售出库、发货为出库）。需要自动匹配合同、发票、生产工单时，可在模板后追加可选列：供应商编码、合同号、工单号、车间、销售订单号、客户编码、客户名称、发票号、方向。创建时间支持日期或“日期 时分秒”。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>采购合同</span><small>采购入库暂估依据</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">合同号</span><span class="field-chip required">物料编码</span><span class="field-chip required">合同数量</span><span class="field-chip required">不含税单价</span></p>
+        <h3>匹配建议</h3>
+        <p><span class="field-chip recommended">合同日期</span><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">物料名称</span></p>
+        <p class="guide-note">启用日前仍在执行的合同，首期按尚未执行的剩余数量导入。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>采购发票</span><small>核销采购入库和暂估</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">发票号</span><span class="field-chip required">发票日期</span><span class="field-chip required">物料编码</span><span class="field-chip required">发票数量</span><span class="field-chip required">不含税单价</span></p>
+        <h3>匹配建议</h3>
+        <p><span class="field-chip recommended">发票期间</span><span class="field-chip recommended">合同号</span><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">不含税金额</span></p>
+        <p class="guide-note">合同号优先匹配；没有合同号时至少保证物料和供应商一致。发票价差只进入本月暂估差异，不修改库存金额。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>销售发票</span><small>核销销售出库和发出商品</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">发票号</span><span class="field-chip required">发票日期</span><span class="field-chip required">产品/物料编码</span><span class="field-chip required">开票数量</span></p>
+        <h3>自动匹配必须建议提供</h3>
+        <p><span class="field-chip recommended">销售订单号</span><span class="field-chip recommended">客户编码</span><span class="field-chip recommended">客户名称</span><span class="field-chip recommended">发票期间</span></p>
+        <p class="guide-note">自动匹配要求销售订单号、客户和产品一致。缺少销售订单或客户时可以导入，但通常需要在发票明细页手工匹配。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>生产工单</span><small>可按车间分文件追加</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">生产工单号</span><span class="field-chip required">车间</span><span class="field-chip required">产品编码</span><span class="field-chip required">完工数量</span></p>
+        <h3>成本计算建议</h3>
+        <p><span class="field-chip recommended">计划数量</span><span class="field-chip recommended">在产品数量</span><span class="field-chip recommended">订单状态</span><span class="field-chip recommended">标准工时</span><span class="field-chip recommended">生产入库单号</span></p>
+        <p class="guide-note">不同车间可以分别上传且不要勾选替换。同一订单号再次上传会覆盖原订单；订单中的车间必须与库存流水使用完全一致的名称。</p>
+      </div>
+    </details>
+
+    
+
+    <details>
+      <summary><span>期初存货</span><small>首个期间录入库存余额</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">物料号</span><span class="field-chip required">结存数量</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">日期</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类名称</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">单位名称</span><span class="field-chip recommended">单价</span><span class="field-chip recommended">金额</span><span class="field-chip recommended">备注</span></p>
+        <p class="guide-note">单价和金额至少填写一项，另一项自动计算。系统首个核算期间必须提供期初存货；后续月份通常由上期锁账结果自动承接，人工上传同物料数据时会覆盖自动承接数，不生成当月库存流水。同一期间同一物料只保留一行，批次、仓库等信息作为描述记录。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期末存货</span><small>可选上传，覆盖自动计算数</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">物料号</span><span class="field-chip required">结存数量</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">日期</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类名称</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">单位名称</span><span class="field-chip recommended">单价</span><span class="field-chip recommended">金额</span><span class="field-chip recommended">备注</span></p>
+        <p class="guide-note">期末存货默认由系统结算时自动计算（期末＝期初＋本月入库－本月出库），无需上传；如需按实际盘点数覆盖个别物料，可上传本模板（与期初存货同格式），同物料的导入数会覆盖自动计算数，不生成当月库存流水。每个核算期间均可上传。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初在产品</span><small>按车间分表填写 · 按生产工单承接</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">生产工单号</span></p>
+        <h3>有余额时填写</h3>
+        <p><span class="field-chip recommended">材料成本</span><span class="field-chip recommended">水电</span><span class="field-chip recommended">蒸汽</span><span class="field-chip recommended">天然气</span><span class="field-chip recommended">折旧</span><span class="field-chip recommended">机物料</span><span class="field-chip recommended">染料助剂</span><span class="field-chip recommended">工资</span></p>
+        <p class="guide-note">模板为多工作表工作簿：染色车间/纺纱车间/包覆车间/针织车间/机织车间/浆粕车间 各一个 sheet，各车间的工单填到对应 sheet。工单号必须能与本期生产工单对应。后续月份通常由上一期锁账结果自动承接，人工上传同工单数据时会覆盖自动承接数。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初采购暂估明细</span><small>仅系统首期导入一次</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">原入库月份</span><span class="field-chip required">原入库日期</span><span class="field-chip required">原入库单号</span><span class="field-chip required">物料编码</span><span class="field-chip required">期初未到票数量</span><span class="field-chip required">暂估单价</span></p>
+        <h3>核销建议</h3>
+        <p><span class="field-chip recommended">供应商编码</span><span class="field-chip recommended">供应商名称</span><span class="field-chip recommended">合同号</span><span class="field-chip recommended">原入库数量</span><span class="field-chip recommended">以前累计到票数量</span></p>
+        <p class="guide-note">原入库月份和日期必须早于系统首月，且两者月份一致。期初未到票数量应等于原入库数量减以前累计到票数量。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>期初发出商品明细</span><small>仅系统首期导入一次</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">原出库月份</span><span class="field-chip required">原出库日期</span><span class="field-chip required">原出库单号</span><span class="field-chip required">产品/物料编码</span><span class="field-chip required">期初未开票数量</span><span class="field-chip required">原出库单位成本</span></p>
+        <h3>自动核销必须建议提供</h3>
+        <p><span class="field-chip recommended">销售订单号</span><span class="field-chip recommended">客户编码</span><span class="field-chip recommended">客户名称</span><span class="field-chip recommended">销售大类</span><span class="field-chip recommended">原出库数量</span><span class="field-chip recommended">以前累计开票数量</span></p>
+        <p class="guide-note">原出库月份和日期必须早于系统首月，且两者月份一致。销售订单、客户和产品缺一时，后续销售发票通常需要手工核销。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>生产工单</span><small>ERP 工单主档台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">工单类型</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">计划开始时间</span><span class="field-chip recommended">计划完工时间</span><span class="field-chip recommended">优先级</span><span class="field-chip recommended">产线设备</span><span class="field-chip recommended">班次</span><span class="field-chip recommended">生产部门编号</span><span class="field-chip recommended">生产主管编号</span><span class="field-chip recommended">计划部门编号</span><span class="field-chip recommended">计划员编号</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">指定用料</span><span class="field-chip recommended">外部单据编号</span><span class="field-chip recommended">状态</span><span class="field-chip recommended">是否使用物料清单</span><span class="field-chip recommended">是否使用工艺路线</span><span class="field-chip recommended">工序计划类型</span><span class="field-chip recommended">启用SOP</span><span class="field-chip recommended">生产模式</span><span class="field-chip recommended">产线编号</span><span class="field-chip recommended">订单号</span><span class="field-chip recommended">物料颜色</span></p>
+        <p class="guide-note">按 ERP 导出的生产工单主档原样导入，作为资料台账保存，不参与现有成本核算。同一工单编号再次上传会以最后一次为准。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>投料记录</span><small>ERP 投料明细台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span><span class="field-chip required">物料编码</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">生产任务编号</span><span class="field-chip recommended">工序编号</span><span class="field-chip recommended">工序名称</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">物料分类</span><span class="field-chip recommended">物料属性</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">投料数量</span><span class="field-chip recommended">已回撤数量</span><span class="field-chip recommended">实际投料数量</span><span class="field-chip recommended">投料单位</span><span class="field-chip recommended">辅助单位数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">质量状态</span><span class="field-chip recommended">投料仓位</span><span class="field-chip recommended">被替代物料编号</span><span class="field-chip recommended">被替代物料名称</span><span class="field-chip recommended">投料时间</span><span class="field-chip recommended">投料人员</span><span class="field-chip recommended">执行人员</span><span class="field-chip recommended">主产出物料编号</span><span class="field-chip recommended">主产出物料名称</span><span class="field-chip recommended">销售订单编号</span><span class="field-chip recommended">投料记录编号</span></p>
+        <p class="guide-note">按 ERP 导出的投料记录原样导入，作为资料台账保存，不参与现有成本核算。实际投料数量未填时按“投料数量－已回撤数量”计算。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>报工记录</span><small>ERP 报工明细台账</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span><span class="field-chip required">报工物料编号</span><span class="field-chip required">报工数量</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">报工时间</span><span class="field-chip recommended">生产任务编号</span><span class="field-chip recommended">工序编号</span><span class="field-chip recommended">工序名称</span><span class="field-chip recommended">报工物料名称</span><span class="field-chip recommended">生产人员</span><span class="field-chip recommended">质量状态</span><span class="field-chip recommended">不良原因</span><span class="field-chip recommended">报工单位</span><span class="field-chip recommended">辅助数量</span><span class="field-chip recommended">辅助单位</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">标识码</span><span class="field-chip recommended">流转卡编号</span><span class="field-chip recommended">工时</span><span class="field-chip recommended">工时单位</span><span class="field-chip recommended">备注</span><span class="field-chip recommended">部门</span><span class="field-chip recommended">设备</span><span class="field-chip recommended">工单物料编号</span><span class="field-chip recommended">工单物料名称</span><span class="field-chip recommended">订单编号</span><span class="field-chip recommended">特纺/包覆-纸管颜色</span><span class="field-chip recommended">纺纱-班别</span><span class="field-chip recommended">染色纤维-含水率</span><span class="field-chip recommended">染色纤维-批号流水</span><span class="field-chip recommended">织布-序号</span><span class="field-chip recommended">织布-机台</span><span class="field-chip recommended">产出仓位</span><span class="field-chip recommended">工单部门</span></p>
+        <p class="guide-note">按 ERP 导出的报工记录原样导入，作为资料台账保存，不参与现有成本核算。报工数量必须大于0。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>历史单价</span><small>单价表使用：物料×期间 的入库/出库单价</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">期间</span><span class="field-chip required">物料编码</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">入库单价</span><span class="field-chip recommended">出库单价</span></p>
+        <p class="guide-note">期间格式如 2026-07（支持 2026年07月/2026-7/202607）。入库单价和出库单价至少填一项，可只填一项。上传后「单价表」页面优先显示上传的历史单价；未上传的物料仍显示系统计算的月末加权价。同一期间同一物料重复上传以后一次为准。可在一个文件里上传多个期间的历史单价。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>工单明细</span><small>工单维度明细：时间/车间/数量/完成状态</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">工单编号</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">创建时间</span><span class="field-chip recommended">生产车间</span><span class="field-chip recommended">计划完工时间</span><span class="field-chip recommended">实际完工时间</span><span class="field-chip recommended">完成状态</span><span class="field-chip recommended">计划数量</span><span class="field-chip recommended">投料数量</span><span class="field-chip recommended">入库数量</span></p>
+        <p class="guide-note">按工单填写明细；时间格式如 2026-07-05 18:00；完成状态可填：未开工/部分完成/已完成（也可留空）。上传后「报表导出」的"工单明细"按上传原样导出。示例行（工单编号"示例-"开头）自动跳过。同一工单重复上传以后一次为准。</p>
+      </div>
+    </details>
+
+    <details>
+      <summary><span>浆粕流水（原料+成品通用）</span><small>浆粕车间流水一个模板</small></summary>
+      <div class="guide-body">
+        <h3>最低必填</h3>
+        <p><span class="field-chip required">物料编号</span><span class="field-chip required">操作数量</span></p>
+        <h3>按模板格式填写</h3>
+        <p><span class="field-chip recommended">创建时间</span><span class="field-chip recommended">物料名称</span><span class="field-chip recommended">分类名称</span><span class="field-chip recommended">物料规格</span><span class="field-chip recommended">仓库名称</span><span class="field-chip recommended">批次号</span><span class="field-chip recommended">单位名称</span><span class="field-chip recommended">业务类型</span><span class="field-chip recommended">车间</span><span class="field-chip recommended">备注</span></p>
+        <p class="guide-note">模板格式与你的浆粕流水一致（创建时间、物料编号、物料名称、分类名称、物料规格、仓库名称、批次号、操作数量、单位名称、单价、金额、业务类型、车间、备注），一个文件通用：领料出库行计入材料成本（金额可不填，系统按历史单价 出库价优先、入库价兜底 自动计算；备注建议注明用途（如 用于21.03芳纶浆粕 全部分给该成品；仅写 用于芳纶浆粕/微纤 按该类成品产量比例分摊）；备注未注明用途时，系统按物料名称自动判断类别分配，只有物料名也无法判断（不含芳纶/腈）才会报错）；生产入库/销售出库行作为成品流水。浆粕车间材料成本只认本流水的领料出库行，未上传时不能结转浆粕车间。示例行（物料编号"示例-"开头）自动跳过。</p>
+      </div>
+    </details>
+  </div>
+</section>
+{% endblock %}

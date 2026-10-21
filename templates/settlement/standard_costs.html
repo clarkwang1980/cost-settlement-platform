@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}标准成本 · {{ period }}{% endblock %}
+{% block content %}
+<style>
+  /* 标准成本构成表：期间×车间网格，上半年可直接录入 */
+  .sc-composition-table td.sc-cell-input{padding:3px 6px;}
+  .sc-composition-table input{width:96px;height:28px;min-height:28px;padding:2px 6px;text-align:right;font-size:12.5px;}
+  .sc-composition-table .sc-ws{font-weight:700;color:#2f3b46;white-space:nowrap;}
+  .sc-composition-table .sc-flag{font-size:11px;color:#8a97a3;}
+  .sc-composition-table td.sc-editable{background:#fffdf5;}
+  .sc-composition-table td.sc-pct-cell{color:#1F4E78;}
+  .sc-save-msg{font-size:12.5px;color:#1f7a3d;font-weight:700;}
+  .sc-save-msg.is-error{color:#b3261e;}
+  .sc-rate-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0 4px;}
+  .sc-rate-actions .sc-ref{font-size:12px;color:#8a97a3;line-height:1.5;}
+  .sc-rate-actions .sc-ref b{color:#5a6a76;font-weight:700;}
+  /* 筛选行：期间/车间下拉 + 筛选/清空筛选/导出Excel/打印本表 全在一排、底对齐 */
+  .sc-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 14px;margin:0 0 12px;}
+  .sc-filter-row label{display:grid;gap:4px;white-space:nowrap;color:#56636e;font-size:12px;font-weight:700;}
+  .sc-filter-row select,.sc-filter-row input{height:34px;min-height:34px;padding:4px 8px;}
+  .sc-filter-row .filter-actions{align-self:flex-end;flex-wrap:wrap;align-items:center;}
+  .sc-filter-row .filter-actions .button,.sc-filter-row .print-here .section-print{
+    min-height:34px;padding:6px 12px;font-size:14px;white-space:nowrap;}
+  .sc-filter-row .print-here{display:flex;align-items:center;}
+  .sc-filter-row .button{display:inline-flex;align-items:center;}
+  /* 表头两行分组：标准成本 */
+  .sc-table thead th{position:sticky;top:0;z-index:3;background:#f2f5f6;}
+  .sc-table thead tr:first-child th{top:0;}
+  .sc-table thead tr:nth-child(2) th{top:30px;}
+  .sc-group-std{background:#e8f1ea;}
+  .sc-group-title{text-align:center;}
+  /* 口径说明：左下角（与工单成本页同款写法） */
+  .sc-basis{margin:16px 0 2px;padding-top:12px;border-top:1px dashed #d8dee5;
+            text-align:left;color:#6b7883;font-size:12.5px;line-height:1.75;
+            max-width:100%;overflow-wrap:anywhere;}
+  .sc-basis strong{color:#3d4a55;}
+  .sc-basis span{display:block;}
+</style>
+
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">STANDARD COSTING</p>
+    <h1>标准成本</h1>
+    <p>标准成本 ＝ BOM 标准材料成本 ×（1 ＋ 人工占比 ＋ 制造费用占比）：标准材料成本＝BOM「标准成品单价」×完工数量。占比按<b>半年滚动</b>：取<b>上一个完整半年</b>各月占比的<b>平均数</b>（口径见表格左下角）。本页只出<b>标准侧</b>；标准单位成本与实际单位成本的对照看「工单成本」页。</p>
+  </div>
+</section>
+
+{# ---------- 标准成本构成表 ---------- #}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">COMPOSITION</p>
+      <h2>标准成本构成表</h2>
+    </div>
+  </div>
+
+  <form class="sc-filter-row" method="get">
+    {# 切这一节的筛选时，把另外两节（计算表 / BOM 明细表）的筛选条件一起带上 #}
+    {% if w_filter.period %}<input type="hidden" name="w_period" value="{{ w_filter.period }}">{% endif %}
+    {% if w_filter.workshop %}<input type="hidden" name="w_workshop" value="{{ w_filter.workshop }}">{% endif %}
+    {% if w_filter.order_no %}<input type="hidden" name="order_no" value="{{ w_filter.order_no }}">{% endif %}
+    {% if w_filter.product %}<input type="hidden" name="product" value="{{ w_filter.product }}">{% endif %}
+    {% if b_filter.period %}<input type="hidden" name="b_period" value="{{ b_filter.period }}">{% endif %}
+    {% if b_filter.workshop %}<input type="hidden" name="b_workshop" value="{{ b_filter.workshop }}">{% endif %}
+    {% if b_filter.order_no %}<input type="hidden" name="b_order_no" value="{{ b_filter.order_no }}">{% endif %}
+      {% if b_filter.missing %}<input type="hidden" name="b_missing" value="1">{% endif %}
+    <label>期间
+      <select name="c_month" onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for item in month_options %}
+        <option value="{{ item.value }}"{% if item.value == c_filter.month %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="c_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == c_filter.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空筛选</a>
+      <a class="button secondary" href="{% url 'export_listing' export_period_id 'standard_cost' %}?{% if c_filter.month %}c_month={{ c_filter.month|urlencode }}{% endif %}{% if c_filter.workshop %}{% if c_filter.month %}&amp;{% endif %}c_workshop={{ c_filter.workshop|urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+
+  <form method="post" action="{% url 'save_standard_cost_rates' period.id %}" id="sc-composition-form">
+    {% csrf_token %}
+    <div class="table-wrap"><table class="sc-table sc-composition-table">
+      <thead>
+        <tr>
+          <th>期间</th>
+          <th>车间</th>
+          <th class="num">产量</th>
+          <th class="num">直接材料</th>
+          <th class="num">人工</th>
+          <th class="num">制造费用</th>
+          <th class="num">材料成本占比%</th>
+          <th class="num">人工成本占比%</th>
+          <th class="num">制造费用占比%</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in composition_rows %}
+      <tr{% if item.editable %} class="sc-comp-editable"{% endif %}>
+        <td>{{ item.period_label }}</td>
+        <td class="sc-ws">{{ item.label }}</td>
+        {% if item.editable %}
+        <td class="num sc-cell-input sc-editable"><input class="sc-num" data-field="qty" type="text" inputmode="decimal" autocomplete="off" name="qty_{{ item.period_key }}_{{ item.workshop }}" value="{{ item.output_qty|group_num:2 }}"></td>
+        <td class="num sc-cell-input sc-editable"><input class="sc-num" data-field="material" type="text" inputmode="decimal" autocomplete="off" name="material_{{ item.period_key }}_{{ item.workshop }}" value="{{ item.direct_material|group_num:2 }}"></td>
+        <td class="num sc-cell-input sc-editable"><input class="sc-num" data-field="wages" type="text" inputmode="decimal" autocomplete="off" name="wages_{{ item.period_key }}_{{ item.workshop }}" value="{{ item.wages|group_num:2 }}"></td>
+        <td class="num sc-cell-input sc-editable"><input class="sc-num" data-field="overhead" type="text" inputmode="decimal" autocomplete="off" name="overhead_{{ item.period_key }}_{{ item.workshop }}" value="{{ item.manufacturing_overhead|group_num:2 }}"></td>
+        <td class="num sc-pct-cell" data-pct="material">{{ item.material_pct|dash_pct:2 }}</td>
+        <td class="num sc-pct-cell" data-pct="labor">{{ item.labor_pct|dash_pct:2 }}</td>
+        <td class="num sc-pct-cell" data-pct="overhead">{{ item.overhead_pct|dash_pct:2 }}</td>
+        {% else %}
+        <td class="num">{{ item.output_qty|dash_num:2 }}</td>
+        <td class="num">{{ item.direct_material|dash_num:2 }}</td>
+        <td class="num">{{ item.wages|dash_num:2 }}</td>
+        <td class="num">{{ item.manufacturing_overhead|dash_num:2 }}</td>
+        <td class="num">{{ item.material_pct|dash_pct:2 }}</td>
+        <td class="num">{{ item.labor_pct|dash_pct:2 }}</td>
+        <td class="num">{{ item.overhead_pct|dash_pct:2 }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="sc-rate-actions">
+      <button class="button primary" type="submit">保存构成表</button>
+      <span class="sc-save-msg" id="sc-save-msg"></span>
+    </div>
+  </form>
+
+  {# 本期适用的标准占比（半年滚动平均） #}
+  <div class="section-heading" style="margin-top:18px;">
+    <div>
+      <p class="eyebrow">ROLLING RATE</p>
+      <h2>{{ rate_month_label }} 适用的标准占比</h2>
+    </div>
+  </div>
+  <div class="table-wrap"><table class="sc-table" id="sc-rate-table">
+    <thead>
+      <tr>
+        <th>车间</th>
+        <th class="num">材料成本占比%</th>
+        <th class="num">人工成本占比%</th>
+        <th class="num">制造费用占比%</th>
+        <th class="num" title="人工占比 ＋ 制造费用占比；标准成本 ＝ BOM 材料成本 ×（1 ＋ 本列 ÷ 100）">人工占比和费用占比的和</th>
+        <th>数据来源</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in standard_rate_rows %}
+    <tr data-workshop="{{ r.workshop }}">
+      <td class="sc-ws">{{ r.label }}</td>
+      <td class="num" data-cell="material">{{ r.material_pct|dash_pct:2 }}</td>
+      <td class="num" data-cell="labor">{{ r.labor_pct|dash_pct:2 }}</td>
+      <td class="num" data-cell="overhead">{{ r.overhead_pct|dash_pct:2 }}</td>
+      <td class="num" data-cell="labor_plus_overhead">{{ r.labor_plus_overhead_pct|dash_pct:2 }}</td>
+      <td data-cell="source">{% if r.source == "rolling" %}基期 {{ view_basis_label }} 各月占比的平均数（{{ r.months }} 个月）{% else %}基期无数据{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+
+  {# 口径说明：表格左下角 #}
+  <p class="sc-basis">
+    <strong>口径说明：</strong>
+    <span>① 三个占比＝直接材料、人工、制造费用三者之间的构成比，<b>合计 100%</b>；白底行（7-12 月）由系统按该月实际发生数自动算出，黄底行（1-6 月）由本页录入金额、占比随即自动算出。</span>
+    <span>② 标准占比按<b>半年滚动</b>：某期间用<b>上一个完整半年</b>各月占比的<b>平均数</b>（7-12 月用当年 1-6 月；次年 1-6 月用上年 7-12 月）；基期里一条数据都没有的车间，占比留空、标准成本只按材料成本计。</span>
+    <span>③ 金额口径：「人工」＝工单成本的工资合计；「制造费用」＝水电＋蒸汽＋天然气＋折旧＋机物料＋染料助剂＋加工费（不含工资）；「产量」＝完工数量合计；「直接材料」＝直接材料合计。金额、数量为 0 或空白显示 —。</span>
+  </p>
+</section>
+
+{# ---------- 工单标准成本计算表 ---------- #}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">CALCULATION</p>
+      <h2>工单标准成本计算表</h2>
+    </div>
+  </div>
+  <form class="sc-filter-row" method="get">
+    {# 切这一节的筛选时，把另外两节（构成表 / BOM 明细表）的筛选条件一起带上 #}
+    <label>期间
+      <select name="w_period" onchange="this.form.submit()">
+        <option value="">本期（{{ url_period_label }}）</option>
+        {% for item in calc_period_options %}
+        <option value="{{ item.value }}"{% if item.value == w_filter.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="w_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == w_filter.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单号
+      <input name="order_no" value="{{ w_filter.order_no }}" placeholder="模糊匹配">
+    </label>
+    <label>产品编码
+      <input name="product" value="{{ w_filter.product }}" placeholder="模糊匹配">
+    </label>
+    <div class="filter-actions">
+      {% if c_filter.month %}<input type="hidden" name="c_month" value="{{ c_filter.month }}">{% endif %}
+      {% if c_filter.workshop %}<input type="hidden" name="c_workshop" value="{{ c_filter.workshop }}">{% endif %}
+      {% if b_filter.period %}<input type="hidden" name="b_period" value="{{ b_filter.period }}">{% endif %}
+      {% if b_filter.workshop %}<input type="hidden" name="b_workshop" value="{{ b_filter.workshop }}">{% endif %}
+      {% if b_filter.order_no %}<input type="hidden" name="b_order_no" value="{{ b_filter.order_no }}">{% endif %}
+      {% if b_filter.missing %}<input type="hidden" name="b_missing" value="1">{% endif %}
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空</a>
+      <a class="button secondary" href="{% url 'export_listing' export_period_id 'standard_cost' %}?{% if w_filter.workshop %}w_workshop={{ w_filter.workshop|urlencode }}{% endif %}{% if w_filter.order_no %}{% if w_filter.workshop %}&amp;{% endif %}order_no={{ w_filter.order_no|urlencode }}{% endif %}{% if w_filter.product %}{% if w_filter.workshop or w_filter.order_no %}&amp;{% endif %}product={{ w_filter.product|urlencode }}{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+
+  {% if rows %}
+  <div class="table-wrap"><table class="sc-table">
+    <thead>
+      <tr>
+        <th rowspan="2">期间</th>
+        <th rowspan="2">车间</th>
+        <th rowspan="2">工单编号</th>
+        <th rowspan="2">产品编码</th>
+        <th rowspan="2">产品名称</th>
+        <th colspan="4" class="sc-group-std sc-group-title">标准成本</th>
+      </tr>
+      <tr>
+        <th class="num sc-group-std">标准材料成本</th>
+        <th class="num sc-group-std">标准人工成本</th>
+        <th class="num sc-group-std">标准制造费用</th>
+        <th class="num sc-group-std">单位成本</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ period_label }}</td>
+      <td>{{ r.workshop_label }}</td>
+      <td><strong>{{ r.order_no }}</strong></td>
+      <td><strong>{{ r.product_code }}</strong></td>
+      <td>{{ r.product_name }}</td>
+      <td class="num">{{ r.standard_material|dash_num:2 }}</td>
+      <td class="num">{{ r.standard_labor|dash_num:2 }}</td>
+      <td class="num">{{ r.standard_overhead|dash_num:2 }}</td>
+      <td class="num">{{ r.standard_unit_cost|dash_num:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr style="background:#D9EAF7;font-weight:700;color:#1F4E78;">
+      <td colspan="5"><strong>合计（{{ totals.count }} 张工单{% if totals.no_standard_price %}，其中 {{ totals.no_standard_price }} 张标准成本为 — 未计入标准侧{% endif %}）</strong></td>
+      <td class="num">{{ totals.standard_material|dash_num:2 }}</td>
+      <td class="num">{{ totals.standard_labor|dash_num:2 }}</td>
+      <td class="num">{{ totals.standard_overhead|dash_num:2 }}</td>
+      <td class="num">{{ totals.standard_unit_cost|dash_num:2 }}</td>
+    </tr>
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="empty-cell">本期没有可对比的工单成本数据（或筛选后为空）：请先上传生产工单/BOM 并执行结算。</p>
+  {% endif %}
+
+  {# 口径说明：表格左下角 #}
+  <p class="sc-basis">
+    <strong>口径说明：</strong>
+    <span>① 标准材料成本＝BOM「标准成品单价」（＝Σ(子项用量 × 子项单价)）× 完工数量；子项单价由系统在结算后按该子项本月月末加权平均价自动回填（明细见本页下方「BOM 明细表」，或「BOM表台账」页）。</span>
+    <span>② 标准人工成本＝标准材料成本 × 人工占比；标准制造费用＝标准材料成本 × 制造费用占比（占比取<b>上一个完整半年各月占比的平均数</b>，见上表「适用的标准占比」）。</span>
+    <span>③ 单位成本＝标准材料单位成本 ×（1 ＋ 人工占比 ＋ 制造费用占比），与实际单位成本同一口径、可直接比较；实际成本与差异见「工单成本」页。工单的标准成品单价算不出（BOM 子项原料当月没有月末加权价）时标准侧显示 —，不计入合计；浆粕车间没有工单与 BOM，不参与。</span>
+  </p>
+</section>
+
+{# ---------- BOM 明细表 ---------- #}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">BOM DETAIL</p>
+      <h2>BOM 明细表</h2>
+    </div>
+  </div>
+  
+  
+  <form class="sc-filter-row" method="get">
+    {# 切这一节的筛选时，把另外两节（构成表 / 计算表）的筛选条件一起带上 #}
+    {% if c_filter.month %}<input type="hidden" name="c_month" value="{{ c_filter.month }}">{% endif %}
+    {% if c_filter.workshop %}<input type="hidden" name="c_workshop" value="{{ c_filter.workshop }}">{% endif %}
+    {% if w_filter.period %}<input type="hidden" name="w_period" value="{{ w_filter.period }}">{% endif %}
+    {% if w_filter.workshop %}<input type="hidden" name="w_workshop" value="{{ w_filter.workshop }}">{% endif %}
+    {% if w_filter.order_no %}<input type="hidden" name="order_no" value="{{ w_filter.order_no }}">{% endif %}
+    {% if w_filter.product %}<input type="hidden" name="product" value="{{ w_filter.product }}">{% endif %}
+    <label>期间
+      <select name="b_period" onchange="this.form.submit()">
+        <option value="">本期（{{ bom_period_label }}）</option>
+        {% for item in bom_period_options %}
+        <option value="{{ item.value }}"{% if item.value == b_filter.period %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>车间
+      <select name="b_workshop" onchange="this.form.submit()">
+        <option value="">全部车间</option>
+        {% for item in workshop_options %}
+        <option value="{{ item.value }}"{% if item.value == b_filter.workshop %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>工单编号
+      <input name="b_order_no" value="{{ b_filter.order_no }}" placeholder="模糊匹配">
+    </label>
+    {# 用户 2026-10-15：一键筛出"当月核算工单里 BOM 子项没有单价"的行，方便补单价 #}
+    <label style="display:flex;flex-direction:row;align-items:center;gap:6px;">
+      <input type="checkbox" name="b_missing" value="1"{% if b_filter.missing %} checked{% endif %}
+             onchange="this.form.submit()">
+      <span>只看缺单价（当月核算工单）</span>
+    </label>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">筛选</button>
+      <a class="button secondary" href="{% url 'standard_costs' url_period_id %}">清空</a>
+      <a class="button secondary" href="{% url 'export_listing' bom_export_period_id 'standard_cost_bom' %}?{% if b_filter.workshop %}b_workshop={{ b_filter.workshop|urlencode }}{% endif %}{% if b_filter.order_no %}{% if b_filter.workshop %}&amp;{% endif %}b_order_no={{ b_filter.order_no|urlencode }}{% endif %}{% if b_filter.missing %}&amp;b_missing=1{% endif %}">导出Excel</a>
+      <div class="print-here"></div>
+    </div>
+  </form>
+  {% if bom_rows %}
+  <div class="table-wrap"><table class="sc-table">
+    <thead>
+      <tr>
+        {% for col in bom_columns %}<th{% if col.num %} class="num"{% endif %}>{{ col.name }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in bom_rows %}
+      <tr>
+        {% for text, is_num in r.cell_texts %}<td{% if is_num %} class="num"{% endif %}>{{ text }}</td>{% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% include "settlement/_pagination.html" with page=bom_page param="b_page" %}
+  {% else %}
+  <p class="empty-cell">本筛选范围内没有可列的 BOM 明细（请调整期间/车间/工单编号，或先上传 BOM 表）。</p>
+  {% endif %}
+
+  {# 口径说明：表格左下角 #}
+  <p class="sc-basis">
+    <strong>口径说明（BOM 明细）：</strong>
+    <span>① 范围：<b>本期全部 BOM 行</b>（＝上传的 BOM 文件全部行，不再只限有结算结果的工单）；按本表自己的<b>期间 / 车间 / 工单编号</b>筛选（默认本期、全部车间）。本表共 {{ bom_row_count }} 行、{{ bom_order_count }} 张工单，页面每页 {{ bom_page_size }} 行（「导出Excel」是全部行）。</span>
+    <span>② 列：<b>你上传的 BOM 文件列原样同序</b>（序列＝行号、序号＝同一工单一个号）；系统列（用量、用量(转100%)、转换后子项用量:分子、单价、金额、标准成品单价）追加在最右边。车间筛选按工单主档的生产部门过滤，列里不重复显示。</span>
+    <span>④ 子项用量 ＝ 子项用量:分子 ÷ 子项用量:分母（数量保留两位小数）；「用量(转100%)」＝<b>该子项用量 ÷ 该工单 Σ用量</b>；「转换后子项用量:分子」＝<b>该子项标准用量 ÷ 该工单 Σ标准用量</b>（用户 2026-09-30：分子用标准用量）——两列都<b>一律折算</b>，各子项合计＝100%（例 39.034H1-HF20250734-3：标准用量 1450.17/25.83/82、合计 1558 → 0.93 / 0.02 / 0.05）。</span>
+  </p>
+</section>
+
+<script>
+  (function () {
+    // ---------- 1) 金额/数量：千分位显示 ----------
+    function toNumber(el) {
+      var raw = String(el.value || "").replace(/[,，\s]/g, "");
+      if (raw === "") { return null; }
+      var num = Number(raw);
+      return isFinite(num) ? num : null;
+    }
+    function group(el) {
+      var num = toNumber(el);
+      if (num === null) { return; }
+      el.value = num.toLocaleString("en-US", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+    }
+    var amountInputs = document.querySelectorAll("input.sc-num");
+    Array.prototype.forEach.call(amountInputs, function (el) {
+      group(el);
+      el.addEventListener("blur", function () { group(el); });
+      el.addEventListener("focus", function () {
+        // 只在真的有千分位逗号时才去掉；否则不要回写（回写会把光标踢到末尾，
+        // 用户 2026-09-23 实测反馈）。
+        var raw = String(el.value);
+        var cleaned = raw.replace(/,/g, "");
+        if (cleaned !== raw) { el.value = cleaned; }
+      });
+      // 只在真的出现非法字符时才回写，否则每敲一下都把光标踢到末尾
+      // （用户 2026-09-23 实测：无条件回写会让"全选后重新输入"变成追加）。
+      el.addEventListener("input", function () {
+        var cleaned = String(el.value).replace(/[^\d.\-]/g, "");
+        if (cleaned !== el.value) { el.value = cleaned; }
+      });
+    });
+
+    // ---------- 2) 上半年录入金额 → 占比自动算（保留两位小数） ----------
+    function recalcRow(row) {
+      var materials = toNumber(row.querySelector('input[data-field="material"]')) || 0;
+      var wages = toNumber(row.querySelector('input[data-field="wages"]')) || 0;
+      var overhead = toNumber(row.querySelector('input[data-field="overhead"]')) || 0;
+      var base = materials + wages + overhead;
+      var cells = {
+        material: row.querySelector('[data-pct="material"]'),
+        labor: row.querySelector('[data-pct="labor"]'),
+        overhead: row.querySelector('[data-pct="overhead"]'),
+      };
+      if (!base) {
+        if (cells.material) { cells.material.textContent = "—"; }
+        if (cells.labor) { cells.labor.textContent = "—"; }
+        if (cells.overhead) { cells.overhead.textContent = "—"; }
+        return;
+      }
+      if (cells.material) { cells.material.textContent = (materials / base * 100).toFixed(2) + "%"; }
+      if (cells.labor) { cells.labor.textContent = (wages / base * 100).toFixed(2) + "%"; }
+      if (cells.overhead) { cells.overhead.textContent = (overhead / base * 100).toFixed(2) + "%"; }
+    }
+    var editableRows = document.querySelectorAll("tr.sc-comp-editable");
+    Array.prototype.forEach.call(editableRows, function (row) {
+      recalcRow(row);
+      ["material", "wages", "overhead"].forEach(function (field) {
+        var el = row.querySelector('input[data-field="' + field + '"]');
+        if (el) { el.addEventListener("input", function () { recalcRow(row); }); }
+      });
+    });
+
+    // ---------- 3) 保存构成表：AJAX 提交，不跳页 ----------
+    var form = document.getElementById("sc-composition-form");
+    var msg = document.getElementById("sc-save-msg");
+    if (form && msg && window.fetch) {
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        msg.classList.remove("is-error");
+        msg.textContent = "保存中…";
+        var data = new FormData(form);
+        form.querySelectorAll("input.sc-num").forEach(function (el) { group(el); });
+        fetch(form.action, {
+          method: "POST",
+          body: data,
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          credentials: "same-origin",
+        }).then(function (resp) { return resp.json(); }).then(function (payload) {
+          msg.textContent = payload.message || (payload.ok ? "已保存。" : "保存失败。");
+          msg.classList.toggle("is-error", !payload.ok);
+          if (payload.ok && payload.rates) { refreshRates(payload.rates, payload.basis_label); }
+          window.setTimeout(function () { msg.textContent = ""; }, 6000);
+        }).catch(function (err) {
+          msg.textContent = "保存失败：" + err;
+          msg.classList.add("is-error");
+        });
+      });
+    }
+
+    // 保存成功后，顺手把「适用的标准占比」表按新的半年平均刷新（不用重载页面）
+    function refreshRates(rates, basisLabel) {
+      var table = document.getElementById("sc-rate-table");
+      if (!table) { return; }
+      rates.forEach(function (rate) {
+        var row = table.querySelector('tr[data-workshop="' + rate.workshop + '"]');
+        if (!row) { return; }
+        function setText(key, text) {
+          var cell = row.querySelector('[data-cell="' + key + '"]');
+          if (cell) { cell.textContent = text; }
+        }
+        function pct(value) {
+          return value === null || value === undefined ? "—" : Number(value).toFixed(2) + "%";
+        }
+        setText("material", pct(rate.material_pct));
+        setText("labor", pct(rate.labor_pct));
+        setText("overhead", pct(rate.overhead_pct));
+        setText("labor_plus_overhead", pct(rate.labor_plus_overhead_pct));
+        setText("source", rate.source === "rolling"
+          ? "基期 " + (basisLabel || "") + " 各月占比的平均数（" + rate.months + " 个月）"
+          : "基期无数据");
+      });
+    }
+  })();
+</script>
+{% endblock %}

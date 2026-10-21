@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}{{ source_title }}匹配 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">DOCUMENT MATCH DETAIL</p>
+    <h1>{{ source_title }}匹配明细</h1>
+    <p>修改当前单据的处理方式，或直接选择要匹配的库存流水。</p>
+  </div>
+  <a class="button secondary" href="{% url list_view period.id %}">返回{{ source_title }}列表</a>
+</section>
+
+<section class="summary-strip detail-summary">
+  {% if source_type == "purchase_invoice" %}
+    <article><span>采购发票</span><strong class="small-value">{{ source.invoice_no }}</strong></article>
+    <article><span>供应商</span><strong class="small-value">{{ source.supplier_name|default:source.supplier_code|default:"—" }}</strong></article>
+    <article><span>物料</span><strong class="small-value">{{ source.material_code }}</strong></article>
+    <article><span>数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
+  {% elif source_type == "purchase_contract" %}
+    <article><span>合同号</span><strong class="small-value">{{ source.contract_no }}</strong></article>
+    <article><span>供应商</span><strong class="small-value">{{ source.supplier_name|default:source.supplier_code|default:"—" }}</strong></article>
+    <article><span>物料</span><strong class="small-value">{{ source.material_code }}</strong></article>
+    <article><span>收货期间</span><strong>{{ source.receipt_period|date:"Y-m"|default:"—" }}</strong></article>
+    <article><span>合同数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>剩余数量</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
+  {% elif source_type == "sales_invoice" %}
+    <article><span>销售发票</span><strong class="small-value">{{ source.invoice_no }}</strong></article>
+    <article><span>客户</span><strong class="small-value">{{ source.customer_name|default:source.customer_code|default:"—" }}</strong></article>
+    <article><span>产品</span><strong class="small-value">{{ source.material_code }}</strong></article>
+    <article><span>数量</span><strong>{{ source.quantity|floatformat:3|thousands }}</strong></article>
+    <article><span>未匹配</span><strong>{{ source.remaining_quantity|floatformat:3|thousands }}</strong></article>
+  {% endif %}
+</section>
+
+<div class="two-column">
+  <section class="section-card">
+    <h2>处理方式</h2>
+    {% if period.status == "locked" %}
+      <p><span class="pill">{{ source.get_match_mode_display }}</span> 本月已锁账，只能查看。</p>
+    {% else %}
+      <form class="stack-form" method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="set_mode">
+        <label>处理方式
+          <select name="match_mode">
+            {% for value,label in match_modes %}<option value="{{ value }}" {% if source.match_mode == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>忽略原因<input name="ignore_reason" value="{{ source.ignore_reason }}" placeholder="选择忽略时建议填写"></label>
+        <button class="button primary" type="submit">保存处理方式</button>
+      </form>
+      <p class="help-text">自动匹配按系统规则处理；手工匹配只保留你指定的关系；忽略后本单据不再参与自动匹配，也不作为未匹配异常。</p>
+    {% endif %}
+  </section>
+
+  <section class="section-card">
+    <h2>新增手工匹配</h2>
+    {% if period.status == "locked" %}
+      <p class="muted-text">本月已锁账，不能修改。</p>
+    {% elif source.match_mode == "ignored" %}
+      <p class="muted-text">当前单据已忽略。请先把处理方式改为“手工匹配”。</p>
+    {% else %}
+      <form class="stack-form" method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="add_match">
+        <label>库存流水
+          <select name="transaction_id" required>
+            <option value="">请选择</option>
+            {% for txn in candidates %}
+              <option value="{{ txn.id }}">{% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}{{ txn.period.month|date:"Y-m" }} · {% endif %}{{ txn.txn_date }} · {{ txn.document_no|default:"无单号" }} · {{ txn.match_category }} · {{ txn.material_code }} · {% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}可核销{{ txn.available_match_quantity|floatformat:3|thousands }}{% else %}数量{{ txn.quantity|floatformat:3|thousands }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>匹配数量<input name="matched_quantity" type="number" min="0.000001" step="0.000001" required></label>
+        <button class="button primary" type="submit">保存手工匹配</button>
+      </form>
+      {% if source_type == "purchase_invoice" or source_type == "sales_invoice" %}
+        <hr>
+        <h3>核销系统启用前的期初台账</h3>
+        {% if opening_candidates %}
+          <form class="stack-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="add_opening_match">
+            <label>期初明细
+              <select name="opening_id" required>
+                <option value="">请选择</option>
+                {% for item in opening_candidates %}
+                  <option value="{{ item.id }}">{{ item.original_period|date:"Y-m" }} · {{ item.document_no|default:"无单号" }} · {{ item.material_code }} · {% if source_type == "purchase_invoice" %}{{ item.supplier_name|default:item.supplier_code|default:"无供应商" }}{% else %}{{ item.sales_order_no|default:"无销售订单" }} · {{ item.customer_name|default:item.customer_code|default:"无客户" }}{% endif %} · 可核销{{ item.available_match_quantity|floatformat:3|thousands }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>匹配数量<input name="matched_quantity" type="number" min="0.000001" step="0.000001" required></label>
+            <button class="button secondary" type="submit">保存期初核销</button>
+          </form>
+        {% else %}
+          <p class="muted-text">没有同物料且尚未核销的期初明细。</p>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+  </section>
+</div>
+
+<section class="section-card">
+  <div class="section-heading"><h2>已经匹配的库存流水或期初台账</h2><span class="pill">{{ allocations|length }}条</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>库存流水</th><th>日期</th><th>业务类型</th><th>物料编码</th><th>物料名称</th><th class="num">匹配数量</th><th class="num">匹配金额</th><th>来源</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for a in allocations %}
+        <tr>
+          {% if a.inventory_transaction %}
+            <td><a class="document-link" href="{% url 'inventory_match_detail' a.inventory_transaction.period.id a.inventory_transaction.id %}"><strong>{{ a.inventory_transaction.document_no|default:"—" }}</strong><small>{{ a.inventory_transaction.period.month|date:"Y-m" }} · 流水ID {{ a.inventory_transaction.id }}</small></a></td>
+            <td>{{ a.inventory_transaction.txn_date }}</td>
+            <td>{{ a.inventory_transaction.business_type }}</td>
+            <td>{{ a.inventory_transaction.material_code }}</td><td>{{ a.inventory_transaction.material_name }}</td>
+          {% elif a.opening_purchase_accrual %}
+            <td><strong>{{ a.opening_purchase_accrual.document_no }}</strong><small>{{ a.opening_purchase_accrual.original_period|date:"Y-m" }} · 期初采购暂估</small></td>
+            <td>{{ a.opening_purchase_accrual.document_date }}</td>
+            <td>期初采购暂估台账</td>
+            <td>{{ a.opening_purchase_accrual.material_code }}</td><td>{{ a.opening_purchase_accrual.material_name }}</td>
+          {% else %}
+            <td><strong>{{ a.opening_goods_issued.document_no }}</strong><small>{{ a.opening_goods_issued.original_period|date:"Y-m" }} · 期初发出商品</small></td>
+            <td>{{ a.opening_goods_issued.document_date }}</td>
+            <td>期初发出商品台账</td>
+            <td>{{ a.opening_goods_issued.material_code }}</td><td>{{ a.opening_goods_issued.material_name }}</td>
+          {% endif %}
+          <td class="num">{{ a.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ a.amount|floatformat:2|thousands|default:"—" }}</td>
+          <td>{% if a.is_manual %}<span class="pill success">手工</span>{% else %}<span class="pill">自动</span>{% endif %}</td>
+          <td>
+            {% if period.status != "locked" %}
+              <form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove_match"><input type="hidden" name="allocation_id" value="{{ a.id }}"><button class="mini-button muted" type="submit">删除</button></form>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+      {% empty %}<tr><td colspan="9" class="empty-cell">当前没有匹配的库存流水或期初台账。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

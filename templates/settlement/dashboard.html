@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}结算月份 · 月度成本结算平台{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <div>
+    <p class="eyebrow">MONTH-END COST CLOSE</p>
+    <h1>从原始流水到月末成本，一条链路结清</h1>
+    <p class="hero-copy">上传库存、合同、发票和订单资料，系统自动匹配、计价、计算完工与在制，并完成勾稽。</p>
+  </div>
+  <form method="post" class="new-period-card">
+    {% csrf_token %}
+    <h2>新建结算月份</h2>
+    {{ form.month }}
+    {% if form.month.errors %}<div class="field-error">{{ form.month.errors }}</div>{% endif %}
+    <button class="button primary" type="submit">开始新月份</button>
+  </form>
+</section>
+
+<section class="summary-strip">
+  <article><span>结算月份</span><strong>{{ total_periods }}</strong></article>
+  <article><span>已锁账月份</span><strong>{{ locked_periods }}</strong></article>
+  <article><span>计价方法</span><strong class="small-value">月末加权平均</strong></article>
+  <article><span>采购暂估</span><strong class="small-value">合同不含税价</strong></article>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div><p class="eyebrow">SETTLEMENT PERIODS</p><h2>结算月份</h2></div>
+  </div>
+  <div class="period-grid">
+    {% for item in periods %}
+      
+      <a class="period-card" href="{% url 'period_detail' item.id %}">
+        <div>
+          <span class="status status-{{ item.status }}">{{ item.get_status_display }}</span>
+          <h3>{{ item }}</h3>
+        </div>
+        <span class="card-link">进入月结 →</span>
+      </a>
+    {% empty %}
+      <div class="empty-state">
+        <strong>还没有结算月份</strong>
+        <p>在右上方选择月份，开始第一次结算。</p>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+

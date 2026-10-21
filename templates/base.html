@@ -1,0 +1,395 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}月度成本结算平台{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'settlement/app.css' %}?v=20260930-nav8">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% url 'dashboard' %}">
+      <span class="brand-mark">结</span>
+      <span>
+        <strong>月度成本结算平台</strong>
+        <small>库存 · 订单 · 发票 · 成本闭环</small>
+      </span>
+    </a>
+    {% if user.is_authenticated %}
+      <nav class="top-actions">
+        <span class="user-name">{{ user.get_full_name|default:user.username }}</span>
+        {% if user.is_staff %}<a href="/admin/">基础数据</a>{% endif %}
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button class="link-button" type="submit">退出</button>
+        </form>
+      </nav>
+    {% endif %}
+  </header>
+
+  {% if period %}
+    <nav class="period-nav">
+      <div class="period-nav-title">
+        <a href="{% url 'period_detail' period.id %}">{{ period }}</a>
+        <span class="status status-{{ period.status }}">{{ period.get_status_display }}</span>
+      </div>
+      <div class="period-links">
+        <div class="nav-group" data-nav="import">
+          <span class="nav-group-label">资料与采购</span>
+          <div class="nav-group-links">
+            <a href="{% url 'upload_file' period.id %}">资料导入</a>
+            <a href="{% url 'purchase_matches' period.id %}">采购发票</a>
+            <a href="{% url 'purchase_contracts' period.id %}">采购合同</a>
+            <a href="{% url 'purchase_receipts' period.id %}">采购入库</a>
+            <a href="{% url 'purchase_accruals' period.id %}">月末暂估</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="production">
+          <span class="nav-group-label">生产与投料</span>
+          <div class="nav-group-links">
+            <a href="{% url 'work_order_report' period.id %}">生产工单</a>
+            <a href="{% url 'order_material_report' period.id %}">工单投料</a>
+            <a href="{% url 'order_completion_report' period.id %}">工单报工</a>
+            <a href="{% url 'inventory_matches' period.id %}">流水匹配</a>
+            <a href="{% url 'workshop_costs' period.id %}">车间费用</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="costing">
+          <span class="nav-group-label">成本结转</span>
+          <div class="nav-group-links">
+            <a href="{% url 'workshop_settlements' period.id %}">车间结转</a>
+            <a href="{% url 'inventory_results' period.id %}">库存结转</a>
+            <a href="{% url 'production_cost_summary' period.id %}">生产成本</a>
+            <a href="{% url 'ending_wip' period.id %}">期末在产品</a>
+            <a href="{% url 'work_order_costs' period.id %}">工单成本</a>
+            <a href="{% url 'standard_costs' period.id %}">标准成本</a>
+          </div>
+        </div>
+        <div class="nav-group" data-nav="sales">
+          <span class="nav-group-label">销售与报表</span>
+          <div class="nav-group-links">
+            <a href="{% url 'sales_ledger' period.id %}">销售台账</a>
+            <a href="{% url 'sales_uninvoiced' period.id %}">月末未开票</a>
+            <a href="{% url 'voucher_center' period.id %}">凭证中心</a>
+            <a href="{% url 'profit_statement' period.id %}">损益表</a>
+            <a href="{% url 'price_table' period.id %}">单价表</a>
+            <a href="{% url 'reconciliation' period.id %}">勾稽异常</a>
+            <a href="{% url 'export_center' period.id %}">报表导出</a>
+          </div>
+        </div>
+      </div>
+    </nav>
+  {% endif %}
+
+  <main class="page-shell">
+    <div class="print-heading">
+      <strong>月度成本结算平台</strong>
+      {% if period %}<span>{{ period }}</span>{% endif %}
+      <span class="print-title"></span>
+      <span class="print-time"></span>
+    </div>
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message message-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">所有结果均保留原始文件、导入批次、匹配关系和计算记录。</footer>
+
+  <script>
+    // 表格单元格一行显示，超出宽度会显示省略号；这里给被截断的单元格补上悬停提示，
+    // 鼠标停在上面就能看到完整内容（不影响表格行高，也不会额外占用宽度）。
+    (function () {
+      function addTitles() {
+        document.querySelectorAll('td, th').forEach(function (cell) {
+          if (cell.scrollWidth > cell.clientWidth + 1) {
+            var text = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+            if (text) { cell.title = text; }
+          } else if (cell.title) {
+            cell.removeAttribute('title');
+          }
+        });
+      }
+      window.addEventListener('load', addTitles);
+      window.addEventListener('resize', addTitles);
+    })();
+
+    // 筛选/切换条件后不要跳回页面顶部：
+    // 带查询串的 URL 会被浏览器当成新页面从而滚到顶部，这里提交前记住滚动位置、加载后恢复。
+    // 用捕获阶段监听，保证早于 onchange="this.form.submit()" 这类内联处理器执行。
+    (function () {
+      var KEY = "keepScrollPos";
+      var MAX_AGE_MS = 15000;
+
+      function savePos() {
+        try {
+          sessionStorage.setItem(KEY, JSON.stringify({ y: window.scrollY, t: Date.now() }));
+        } catch (err) { /* 隐私模式下写不了就算了 */ }
+      }
+
+      function isGetForm(form) {
+        return !!form && (form.getAttribute("method") || "get").toLowerCase() === "get";
+      }
+
+      // 用户 2026-09-30：**POST 按钮（如「批准忽略」「确认差异」「标记处理」）也会跳页顶** ——
+      //   这些是提交后 302 重定向回同一页面，浏览器按新页面处理 → 滚回顶部。
+      //   这里对**所有表单提交**都记一次位置（不只 GET 表单），加载后照样还原。
+      document.addEventListener("submit", function (event) {
+        if (event.target && event.target.tagName === "FORM") { savePos(); }
+      }, true);
+
+      document.addEventListener("change", function (event) {
+        var el = event.target;
+        if (el && el.form && isGetForm(el.form)) { savePos(); }
+      }, true);
+
+      document.addEventListener("click", function (event) {
+        var el = event.target;
+        if (!el) { return; }
+        // 翻页（上一页 / 下一页 / 页码）：链接不是表单提交，单独记一次位置，
+        // 否则点完会跳回页顶（用户 2026-09-21：明细翻页要"页面保持不动"）。
+        var link = el.closest ? el.closest(".pagination a") : null;
+        if (link) { savePos(); return; }
+        var form = el.form || (el.closest ? el.closest("form") : null);
+        if (!form || !isGetForm(form)) { return; }
+        if (el.tagName === "BUTTON" || (el.type && el.type === "submit")) { savePos(); }
+      }, true);
+
+      // 提交后由浏览器跳到新 URL（同一页面），加载完再把位置还原回去
+      try {
+        var raw = sessionStorage.getItem(KEY);
+        if (raw) {
+          sessionStorage.removeItem(KEY);
+          var data = JSON.parse(raw);
+          if (data && typeof data.y === "number" && Date.now() - (data.t || 0) < MAX_AGE_MS) {
+            window.addEventListener("load", function () {
+              window.scrollTo(0, data.y);
+            });
+          }
+        }
+      } catch (err) { /* 数据坏了就忽略 */ }
+    })();
+
+    // 打印：抬头填充 + 「就地打印某一块」+ 自动为每个含表格的板块加按钮。
+    // 用法：点板块标题旁的「打印本表」→ 只打印这一块（不是整页）。
+    (function () {
+      // 给目标板块打标记，打印时只显示它（用 body 上的类配合 @media print）
+      var PRINT_FOCUS_CLASS = 'print-focus';
+      var TARGET_CLASS = 'is-print-target';
+
+      function clearFocus() {
+        document.body.classList.remove(PRINT_FOCUS_CLASS);
+        document.querySelectorAll('.' + TARGET_CLASS).forEach(function (el) {
+          el.classList.remove(TARGET_CLASS);
+        });
+      }
+
+      // 只打印某一板块：整页打印时调 window.print 即可
+      window.printSection = function (btn) {
+        var section = btn.closest('section') || btn.closest('.section-card');
+        if (!section) { window.print(); return; }
+        clearFocus();
+        section.classList.add(TARGET_CLASS);
+        document.body.classList.add(PRINT_FOCUS_CLASS);
+        window.print();
+      };
+      window.printWholePage = function () { clearFocus(); window.print(); };
+      window.addEventListener('afterprint', clearFocus);
+
+      // 每个含表格的板块，在标题右侧放一个「打印本表」按钮
+      function addSectionPrintButtons() {
+        document.querySelectorAll('main section, main .section-card').forEach(function (sec) {
+          if (sec.dataset.printReady) { return; }
+          if (sec.hasAttribute('data-no-print')) { return; }  // 页面明确说不要打印按钮的板块跳过
+          if (!sec.querySelector('table')) { return; }        // 没有表格的板块不加
+          var head = sec.querySelector('.section-heading');
+          if (!head) {
+            // 有些板块没有标题行（进来就是一张表）：补一个标题行，按钮才有地方放
+            head = document.createElement('div');
+            head.className = 'section-heading';
+            var h1 = document.querySelector('.page-heading h1, h1');
+            var h2 = document.createElement('h2');
+            h2.textContent = h1 ? h1.textContent.trim() : '明细';
+            head.appendChild(h2);
+            sec.insertBefore(head, sec.firstChild);
+          }
+          // 放置顺序：页面里的 print-here 容器（想放哪里就放哪里，
+          //   如筛选栏某个下拉旁边） -> 筛选栏的按钮行 -> 标题右侧。
+          var actions = sec.querySelector('.print-here')
+                     || sec.querySelector('.filter-card .filter-actions')
+                     || head.querySelector('.heading-actions');
+          if (!actions) {
+            actions = document.createElement('div');
+            actions.className = 'heading-actions';
+            head.appendChild(actions);
+          }
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'button secondary section-print no-print';  // 与筛选栏的「清空」同高
+          btn.textContent = '打印本表';
+          btn.title = '只打印这一块表格';
+          btn.addEventListener('click', function () { window.printSection(btn); });
+          actions.appendChild(btn);
+          sec.dataset.printReady = '1';
+        });
+      }
+
+      function fillPrintHeading() {
+        var t = document.querySelector('.print-heading .print-title');
+        if (t) {
+          var h1 = document.querySelector('.page-heading h1') || document.querySelector('h1');
+          t.textContent = h1 ? h1.textContent.trim() : document.title;
+        }
+        var p = document.querySelector('.print-heading .print-time');
+        if (p) {
+          var d = new Date();
+          var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+          p.textContent = '打印时间 ' + d.getFullYear() + '-' + pad(d.getMonth() + 1) +
+            '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+      }
+      window.addEventListener('load', function () {
+        fillPrintHeading();
+        addSectionPrintButtons();
+      });
+      window.addEventListener('beforeprint', fillPrintHeading);
+    })();
+
+    // 导航：①标出「当前在哪一页 / 属于哪一步」（子页面按前缀归到主条目）；
+    //       ②给换行后每一行的第一组加 is-row-start，去掉行首分隔线，左边始终齐平。
+    (function () {
+      var groups = document.querySelectorAll('.period-links .nav-group');
+
+      function markRowStarts() {
+        var prevTop = null;
+        Array.prototype.forEach.call(groups, function (g) {
+          var top = g.offsetTop;
+          g.classList.toggle('is-row-start', prevTop === null || Math.abs(top - prevTop) > 1);
+          prevTop = top;
+        });
+      }
+
+      var timer = null;
+      function scheduleMarkRowStarts() {
+        if (timer) { clearTimeout(timer); }
+        timer = setTimeout(markRowStarts, 120);
+      }
+      markRowStarts();
+      window.addEventListener('load', markRowStarts);
+      window.addEventListener('resize', scheduleMarkRowStarts);
+      // 字体加载完尺寸可能变化，重算一次
+      if (document.fonts && document.fonts.ready) { document.fonts.ready.then(markRowStarts); }
+
+      var links = document.querySelectorAll('.period-links .nav-group a');
+      if (!links.length) { return; }
+      var path = window.location.pathname;
+      var best = null, bestLen = -1, exact = false;
+      Array.prototype.forEach.call(links, function (a) {
+        var href = a.getAttribute('href');
+        if (!href) { return; }
+        if (path === href) { best = a; exact = true; return; }
+        if (exact) { return; }
+        if (path.indexOf(href) === 0 && href.length > bestLen) { best = a; bestLen = href.length; }
+      });
+      if (!best) { return; }
+      best.classList.add('is-active');
+      var group = best.closest('.nav-group');
+      if (group) { group.classList.add('is-active'); }
+    })();
+  </script>
+{% block extra_js %}{% endblock %}
+
+<script id="thousand-sep-global">
+// 全局：数字输入框边输边加千分号（用户 2026-10-15："以后只要输入都要加分节号"）
+// 说明：只处理数字/小数点/负号；保存时后端会自动去掉逗号，所以可以放心带逗号提交。
+(function () {
+  var SELECTOR = 'input.expense-input, input.cost-input, input[inputmode="decimal"],' +
+                 'input.js-thousands';
+  function isNumeric(text) {
+    return /^-?\d{0,3}(,?\d{3})*(\.\d*)?$/.test(text) || /^-?\d*(\.\d*)?$/.test(text);
+  }
+  function format(text) {
+    var raw = (text || '').replace(/[，,]/g, '').trim();
+    if (raw === '' || raw === '-' || raw === '.' || raw === '-.') { return text; }
+    if (!/^-?\d*(\.\d*)?$/.test(raw)) { return text; }
+    var negative = raw.charAt(0) === '-';
+    if (negative) { raw = raw.slice(1); }
+    var parts = raw.split('.');
+    var intPart = parts[0];
+    var grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    var out = grouped + (parts.length > 1 ? '.' + parts[1] : '');
+    return (negative ? '-' : '') + out;
+  }
+  function caretPosition(value, caret) {
+    // 光标前有多少个数字 → 格式化后放到同样多数字之后
+    var digits = (value.slice(0, caret).match(/\d/g) || []).length;
+    var seen = 0;
+    for (var i = 0; i < value.length; i++) {
+      if (/\d/.test(value.charAt(i))) { seen++; }
+      if (seen === digits) { return i + 1; }
+    }
+    return value.length;
+  }
+  function attach(el) {
+    if (el.dataset.thousandBound === '1') { return; }
+    el.dataset.thousandBound = '1';
+    el.addEventListener('input', function () {
+      if (!isNumeric(el.value)) { return; }
+      var before = el.value;
+      var caret = el.selectionStart;
+      var after = format(before);
+      if (after === before) { return; }
+      el.value = after;
+      try { el.setSelectionRange(caretPosition(after, caret), caretPosition(after, caret)); }
+      catch (e) { /* 某些输入类型不支持，忽略 */ }
+    });
+    // 失焦再补一次，避免中间态（如 "12." ）
+    el.addEventListener('blur', function () {
+      var after = format(el.value);
+      if (after !== el.value) { el.value = after; }
+    });
+  }
+  function scan(root) {
+    (root || document).querySelectorAll(SELECTOR).forEach(attach);
+  }
+  document.addEventListener('DOMContentLoaded', function () { scan(document); });
+  if (document.readyState !== 'loading') { scan(document); }
+  // 动态出现的输入框（页签切换、异步刷新）也能挂上
+  var mo = new MutationObserver(function (muts) {
+    muts.forEach(function (m) {
+      m.addedNodes && m.addedNodes.forEach(function (n) {
+        if (n.nodeType === 1) { scan(n); }
+      });
+    });
+  });
+  document.addEventListener('DOMContentLoaded', function () {
+    mo.observe(document.body, { childList: true, subtree: true });
+  });
+})();
+</script>
+
+<script id="keep-scroll-global">
+// 用户 2026-10-16：筛选/切换后保持原滚动位置，不再跳到页面顶端。
+(function () {
+  var KEY = 'dsh_scroll:' + location.pathname + location.search.replace(/[?&](page|b_page|i_page)=\d+/g, '');
+  function save() { try { sessionStorage.setItem(KEY, String(window.scrollY || 0)); } catch (e) {} }
+  document.addEventListener('submit', save, true);
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a');
+    if (a && !a.target && a.getAttribute('href') && a.getAttribute('href').indexOf('#') !== 0) { save(); }
+  }, true);
+  window.addEventListener('beforeunload', save);
+  window.addEventListener('load', function () {
+    var y = 0;
+    try { y = parseInt(sessionStorage.getItem(KEY) || '0', 10) || 0; } catch (e) {}
+    if (y > 0) { window.scrollTo(0, y); }
+  });
+})();
+</script>
+</body>
+</html>

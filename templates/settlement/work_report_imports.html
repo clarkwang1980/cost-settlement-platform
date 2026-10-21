@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}报工记录台账 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">WORK REPORT LEDGER</p>
+    <h1>报工记录台账</h1>
+    <p>按 ERP 导出格式导入的报工记录，仅作资料留存，不参与成本计算。</p>
+  </div>
+  <a class="button secondary" href="{% url 'upload_file' period.id %}">去导入</a>
+</section>
+
+<section class="section-card filter-card">
+  <form class="filter-grid" method="get">
+    <label>工单编号<input name="work_order_no" value="{{ request.GET.work_order_no }}"></label>
+    <label>物料编码<input name="material_code" value="{{ request.GET.material_code }}"></label>
+    <label>质量状态<input name="quality_status" value="{{ request.GET.quality_status }}"></label>
+    <div class="filter-actions"><button class="button secondary" type="submit">筛选</button><a class="button secondary" href="{% url 'work_report_imports' period.id %}">清空</a></div>
+  </form>
+</section>
+
+<section class="section-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工单编号</th><th>报工时间</th><th>生产任务编号</th><th>工序</th><th>报工物料编码</th><th>报工物料名称</th>
+          <th class="num">报工数量</th><th>单位</th><th class="num">工时</th><th>工时单位</th>
+          <th>生产人员</th><th>质量状态</th><th>不良原因</th><th>设备</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in page %}
+        <tr>
+          <td><strong>{{ r.work_order_no }}</strong></td>
+          <td>{{ r.report_time|date:"Y-m-d H:i"|default:"—" }}</td>
+          <td>{{ r.task_no|default:"—" }}</td>
+          <td>{{ r.operation_no|default:"" }} {{ r.operation_name|default:"" }}</td>
+          <td><strong>{{ r.material_code }}</strong></td><td>{{ r.material_name }}</td>
+          <td class="num">{{ r.quantity|floatformat:3|thousands }}</td>
+          <td>{{ r.uom|default:"—" }}</td>
+          <td class="num">{{ r.work_hours|floatformat:3|thousands|default:"—" }}</td>
+          <td>{{ r.work_hours_uom|default:"—" }}</td>
+          <td>{{ r.operator|default:"—" }}</td>
+          <td>{{ r.quality_status|default:"—" }}</td>
+          <td>{{ r.defect_reason|default:"—" }}</td>
+          <td>{{ r.equipment|default:"—" }}</td>
+        </tr>
+      {% empty %}<tr><td colspan="14" class="empty-cell">本月还没有导入报工记录。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" %}
+</section>
+{% endblock %}

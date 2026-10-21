@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}销售结转成本凭证 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">SALES COST CARRY-FORWARD VOUCHER</p>
+    <h1>销售结转成本凭证</h1>
+    <p>按结转类型与销售大类汇总的结转成本凭证；借方主营业务成本按销售渠道分国内/国外，贷方按销售大类。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
+    <a class="button secondary" href="{% url 'export_listing' period.id 'sales_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
+    <a class="button secondary" href="{% url 'sales_uninvoiced' period.id %}">月末已出库未开票</a>
+    <a class="button secondary" href="{% url 'reconciliation' period.id %}">查看勾稽结果</a>
+  </div>
+</section>
+
+<section class="voucher-toolbar">
+  <form method="get">
+    <label>凭证期间
+      <select name="voucher_month" onchange="this.form.submit()">
+        {% for item in voucher.months %}
+        <option value="{{ item.value }}"{% if item.value == voucher.month %} selected{% endif %}>{{ item.label }}（{{ item.row_count }} 行）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>科目粒度
+      <select name="group" onchange="this.form.submit()">
+        <option value="category"{% if voucher.group == 'category' %} selected{% endif %}>借方按销售渠道展开（国内/国外）</option>
+        <option value="single"{% if voucher.group == 'single' %} selected{% endif %}>科目汇总（每块借贷各一行）</option>
+      </select>
+    </label>
+    <noscript><button class="button secondary" type="submit">切换</button></noscript>
+  </form>
+  <span class="voucher-toolbar-note">切换后立即按该月重算上方凭证分录与下方附件。</span>
+</section>
+
+{% if voucher.checks %}
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">PRE-CHECKS</p>
+      <h2>生成前检查</h2>
+    </div>
+  </div>
+  {% for check in voucher.checks %}
+  <div class="message message-{% if check.level == 'blocking' %}error{% elif check.level == 'warning' %}warning{% else %}info{% endif %}">
+    {{ check.text }}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">VOUCHER ENTRIES</p>
+      <h2>凭证分录（不含税）</h2>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for header in voucher.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for block in voucher.blocks %}
+        <tr style="background:#F7FAFD;">
+          <td colspan="{{ voucher.headers|length }}" class="muted-text">
+            <strong>{{ block.carry_type }}</strong>
+            ｜取数条件：{{ block.condition }}
+            ｜借方科目 {{ block.debit_account }} ／ 贷方科目 {{ block.credit_account }}
+          </td>
+        </tr>
+        {% for row in block.entries %}
+        <tr{% if row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
+          <td>{{ row.summary }}</td>
+          <td>{% if row.account %}{{ row.account }}{% endif %}</td>
+          <td class="num">{% if row.quantity %}{{ row.quantity|floatformat:3|thousands }}{% endif %}</td>
+          <td class="num">{% if row.debit %}{{ row.debit|floatformat:2|thousands }}{% endif %}</td>
+          <td class="num">{% if row.credit %}{{ row.credit|floatformat:2|thousands }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+        <tr style="font-weight:700;background:#E6F0FB;">
+          <td>合计</td><td></td>
+          <td class="num">{{ voucher.totals.quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ voucher.totals.debit|floatformat:2|thousands }}</td>
+          <td class="num">{{ voucher.totals.credit|floatformat:2|thousands }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">{{ voucher.voucher_note }}</p>
+  <p class="muted-text">
+    借方「主营业务成本」只按销售渠道分国内/国外（如「主营业务成本—国内销售」，不再细分销售大类）；
+    借方「发出商品」与贷方「库存商品」「发出商品」按销售大类（如「库存商品—纱线」）。
+    每块的出库期间、开票状态、开票期间取下方「结转类型 × 销售大类」附件里的设置；
+    凭证期间在上方下拉里选择。
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">ATTACHMENT</p>
+      <h2>附件：结转类型 × 销售大类（含表内筛选）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        每个结转类型块的出库期间、开票状态、开票期间各自独立设置，改任一下拉即按该条件重算上面凭证。
+      </p>
+    </div>
+    <a class="button secondary" href="?group={{ voucher.group }}{% if voucher_clear_query %}&{{ voucher_clear_query }}{% endif %}">恢复默认筛选</a>
+  </div>
+
+  <form method="get" id="voucher-filter-form">
+    <input type="hidden" name="voucher_month" value="{{ voucher.month }}">
+    <input type="hidden" name="group" value="{{ voucher.group }}">
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {% for header in voucher.summary_headers %}<th>{{ header }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in voucher.summary_rows %}
+          <tr{% if row.level == 'total' %} style="font-weight:700;background:#E6F0FB;"{% elif row.level == 'subtotal' %} style="font-weight:600;background:#F2F7FD;"{% endif %}>
+            <td>{{ row.account }}</td>
+            <td>{{ row.credit_account }}</td>
+            <td>{{ row.carry_type }}</td>
+            <td>{{ row.category }}</td>
+            {% if row.block_index >= 0 %}
+            <td class="vf-cell">
+              <select class="vf" name="{{ row.block_params.out }}" data-block="{{ row.block_index }}" data-field="out" aria-label="出库期间">
+                {% for item in voucher.out_options %}
+                <option value="{{ item.value }}"{% if item.value == row.block_out %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="vf-cell">
+              <select class="vf" name="{{ row.block_params.status }}" data-block="{{ row.block_index }}" data-field="status" aria-label="开票状态">
+                {% for item in voucher.status_options %}
+                <option value="{{ item.value }}"{% if item.value == row.block_status %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="vf-cell">
+              <select class="vf" name="{{ row.block_params.invoice }}" data-block="{{ row.block_index }}" data-field="invoice" aria-label="开票期间">
+                {% for item in voucher.invoice_options %}
+                <option value="{{ item.value }}"{% if item.value == row.block_invoice %} selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            {% else %}
+            <td></td><td></td><td></td>
+            {% endif %}
+            <td>{{ row.quantity|floatformat:3|thousands }}</td>
+            <td>{{ row.amount|floatformat:2|thousands }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
+  <p class="muted-text">
+    「小计」= 该结转类型合计，「合计」= 三个结转类型总计。
+    默认筛选：前两块 = 出库期间空白 + 已开发票 + 当月开票期间；第三块 = 出库期间当月 + 开票状态/开票期间空白。
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">HOW IT IS CALCULATED</p>
+      <h2>取数口径与说明</h2>
+    </div>
+  </div>
+  <ul class="muted-text" style="margin:0;padding-left:20px;">
+    <li><strong>数据来源</strong>：销售台账（出库 + 开票）xlsx，每月在「资料导入」上传。</li>
+    <li><strong>结转类型</strong>：<strong>不是平台算的</strong>，直接取台账「结转类型」列；三类参与凭证：
+      当月发货当月开票结转成本、前期发货本期开票结转成本、当月发货未开票挂发出商品
+      （台账若填了别的写法，不会进入本凭证）。</li>
+    <li><strong>销售大类</strong>：同样取台账原值，逐个大类单独列示（不合并成固定几类）；
+      台账里为空的行归「未分类」。</li>
+    <li><strong>凭证期间（记账月份）</strong>：按结转类型归属——「前期发货本期开票结转成本」记在<strong>开票期间</strong>，
+      其余两类记在<strong>出库期间</strong>。所以选不同凭证期间看到的是该月应记账的凭证。</li>
+    <li><strong>金额（销售成本）</strong>：取台账「销售成本」列，由平台在结算后按
+      <strong>销售数量 × 该产品月末加权平均价</strong>回填；月末加权价来自「库存计价」（月末加权平均法）。
+      出库期间早于本期的跨期行，优先用「期初发出商品」台账上该物料该出库期间的<strong>历史单位成本</strong>，
+      取不到才退回本期加权价。</li>
+    <li><strong>数量</strong>：取台账「销售数量」列；台账里销售数量为空或 0 的行在导入时就被跳过，不参与结转。</li>
+    <li><strong>会计科目</strong>：借方 主营业务成本（同月开票、前期发货本期开票）／发出商品（未开票）；
+      贷方 库存商品（同月开票、未开票）／发出商品（前期发货本期开票）。
+      借方「主营业务成本」只按销售渠道分国内/国外（如「主营业务成本—国内销售」，不再细分销售大类）；
+      贷方「库存商品」「发出商品」与借方「发出商品」按销售大类（如「库存商品—纱线」「发出商品—面料」），
+      附件表并列显示借贷科目。</li>
+    <li><strong>销售大类</strong>：<strong>保留台账原值，不合并、不改写</strong>
+      （例如「其他成品（手套、服装、床垫等）」原样显示），科目名按「科目—销售大类」展开，辅助核算也用它。</li>
+    <li><strong>没有成本的行</strong>（该产品当月没有库存计价）：数量照算、金额按 0 计，
+      所以会出现「有数量、金额为 0」，页面上会提示行数与格子数。</li>
+    <li><strong>不在本凭证范围</strong>：台账里「免费样品赠送计入销售费用」的结转类型，由总账按销售费用处理。</li>
+  </ul>
+</section>
+{% endblock %}
+{% block extra_js %}
+<script>
+  // 表内筛选：三个结转类型块各自独立——改某一块的某个下拉，只同步「同一块」的同类下拉，然后提交。
+  (function () {
+    var form = document.getElementById("voucher-filter-form");
+    if (!form) { return; }
+    form.querySelectorAll("select.vf").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        var block = sel.dataset.block;
+        var field = sel.dataset.field;
+        form.querySelectorAll('select.vf[data-block="' + block + '"][data-field="' + field + '"]')
+          .forEach(function (other) { other.value = sel.value; });
+        form.submit();
+      });
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% load workshop_tags %}
+{% block title %}损益表 · {{ period }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PROFIT &amp; LOSS</p>
+    <h1>损益表</h1>
+  </div>
+</section>
+
+{% if not data.has_valuation %}
+<div class="message message-error">
+  本期还没有库存计价结果，销售成本会为空。请先完成「车间结转」并按顺序结算，毛利/营业利润/净利润才算得出来。
+</div>
+{% endif %}
+{% if data.missing_cost_rows %}
+<div class="message message-error">
+  有 {{ data.missing_cost_rows }} 行有收入但没有成本单价（该产品本月没有库存计价），这些行的毛利会偏高，请核对。
+</div>
+{% endif %}
+{% if data.lb_only_rows %}
+<div class="message message-info">
+  有 {{ data.lb_only_rows }} 行只填了「射阳兰邦销售收入」。按你定的口径（收入只算终端销售收入），
+  这些行收入为 0、毛利为负、也不参与费用分摊。
+</div>
+{% endif %}
+{% if data.no_revenue_months %}
+<div class="message message-error">
+  这些月份录了费用但该月终端销售收入为 0，费用无法分摊：{{ data.no_revenue_months|join:"、" }}。
+</div>
+{% endif %}
+{% if not data.revenue_total %}
+<div class="message message-error">本月终端销售收入合计为 0，费用无法分摊。</div>
+{% endif %}
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">MONTHLY COSTS</p>
+      <h2>按月费用录入</h2>
+    </div>
+    {# 「导出Excel」（整份损益表）放这里：与「打印本表」并排（用户 2026-09-28 从页头挪下来） #}
+    <div class="heading-actions">
+      <a class="button secondary" href="{% url 'profit_statement_export' period.id %}"
+         title="整份损益表：损益表 + 汇总-按出库期间 + 汇总-按开票期间 三张表">导出Excel</a>
+    </div>
+  </div>
+  {% if months %}
+  <form method="post" class="stack-form">
+    {% csrf_token %}
+    <input type="hidden" name="basis" value="{{ basis }}">
+    <div class="table-scroll">
+      <table class="data-table expense-entry-table">
+        <thead>
+          <tr>
+            <th>期间</th>
+            {% for field in months.0.fields %}<th>{{ field.label }}</th>{% endfor %}
+            <th class="num">合计</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in months %}
+          <tr>
+            <td class="expense-month-cell">
+              <div class="expense-month-title">
+                <strong>{{ item.key }}</strong>
+                {% if item.has_values %}
+                <span class="pill pill-ok">已录入{% if item.updated_at %} · {{ item.updated_at|date:"m-d H:i" }}{% endif %}</span>
+                {% else %}
+                <span class="pill">未录入（按 0 处理）</span>
+                {% endif %}
+              </div>
+              <div class="muted-text expense-month-meta">终端销售收入 {{ item.revenue|thousands }} · 台账 {{ item.row_count }} 行</div>
+            </td>
+            {% for field in item.fields %}
+            <td><input class="expense-input" name="{{ field.name }}" type="text" inputmode="decimal" autocomplete="off" value="{{ field.value|thousands }}"></td>
+            {% endfor %}
+            {# 该月 7 项费用合计（用户 2026-09-28） #}
+            <td class="expense-total-cell"><strong>{{ item.total|thousands }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {# 合计行：7 项费用按所有期间纵向合计（用户 2026-09-28） #}
+        <tfoot>
+          <tr class="expense-total-row">
+            <td class="expense-month-cell">
+              <div class="expense-month-title"><strong>合计</strong></div>
+            </td>
+            {% for field in months_total.fields %}
+            <td class="expense-total-cell"><strong>{{ field.value|thousands }}</strong></td>
+            {% endfor %}
+            <td class="expense-total-cell"><strong>{{ months_total.grand|thousands }}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="filter-actions">
+      <button class="button primary" type="submit">保存并重新计算</button>
+      <span class="muted-text">
+        台账里出现过的月份都会列出来（一行一个月），填好一次保存；未填的按 0 处理。
+        分摊规则：本行分摊额 = 本行终端销售收入 ÷ 该行所属出库月份的终端销售收入合计 × 该月金额；
+        四舍五入到分，尾差计入该月收入最大的那一行（保证每月每列合计 = 你录入的金额）。期间按台账行的「出库月份」归属。
+      </span>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted-text">本期还没有销售台账，请先在「资料导入」上传销售台账（出库+开票）。</p>
+  {% endif %}
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">P&amp;L SUMMARY</p>
+      <h2>损益汇总表</h2>
+    </div>
+  </div>
+
+  <form method="get" class="filter-grid compact-filters">
+    <input type="hidden" name="basis" value="{{ basis }}">
+    <input type="hidden" name="f" value="1">
+    {% for key, value in summary_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+    <div class="filter-field">
+      <span>期间</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if selected_periods %}{% if selected_periods|length > 2 %}已选 {{ selected_periods|length }} 项{% else %}{{ selected_periods|join:"、" }}{% endif %}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in period_options %}
+          <label><input type="checkbox" name="m" value="{{ item.value }}"{% if item.value in selected_periods %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-field">
+      <span>销售渠道</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if selected_channels %}{{ selected_channels|join:"、" }}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in channel_options %}
+          <label><input type="checkbox" name="ch" value="{{ item.value }}"{% if item.value in selected_channels %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-field">
+      <span>销售大类</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if selected_categories %}{% if selected_categories|length > 2 %}已选 {{ selected_categories|length }} 项{% else %}{{ selected_categories|join:"、" }}{% endif %}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in category_options %}
+          <label><input type="checkbox" name="cat" value="{{ item.value }}"{% if item.value in selected_categories %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">确定</button>
+      {% if summary.has_filter %}
+      <a class="button secondary" href="?basis={{ basis }}&amp;f=1">显示全部</a>
+      {% endif %}
+      <a class="button secondary" href="{% url 'profit_summary_export' period.id %}?{{ summary_export_query }}">导出Excel</a>
+      {# 「打印本表」由 base.html 脚本注入到这里：与「导出Excel」紧挨着（用户 2026-09-28） #}
+      <div class="print-here"></div>
+    </div>
+  </form>
+  <p class="muted-text" style="margin-top:8px;">
+    三个筛选都是勾选式：一个都不勾 = 全部；「期间」= <strong>开票期间</strong>，未开票的行归入「(未开票)」。
+    点「显示全部」= 三个筛选都清空（看全部期间）；打开页面时「期间」默认勾当月。
+    下方的小计与合计按当前筛选条件重算。
+    「导出Excel」导出的就是这三个筛选当前条件下的这张损益汇总表（按开票期间归月）。
+  </p>
+
+  <div class="table-scroll summary-table-wrap">
+    <table class="data-table summary-table">
+      <thead>
+        <tr>
+          {% for header in summary.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summary.rows %}
+        <tr{% if row.level == 'month' %} class="total-row" style="font-weight:600;background:#eef5ff;"{% elif row.level == 'channel' %} style="background:#f7fafd;font-weight:600;"{% elif row.level == 'grand' %} class="total-row" style="font-weight:700;background:#e6f0fb;"{% endif %}>
+          <td>{{ row.month }}</td>
+          <td>{{ row.channel }}</td>
+          <td>{{ row.category }}</td>
+          <td style="text-align:right;">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{{ row.lb_amount|thousands }}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ row.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="20">当前筛选条件下没有数据，请调整「期间 / 销售渠道 / 销售大类」。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">
+    「小计」= 该渠道小计；期间行的渠道列显示「小计」= 该期间合计；最后一行是{% if summary.has_filter %}当前筛选条件{% else %}全部期间{% endif %}合计。
+    销售渠道取自台账「销售渠道」列（国内销售 / 国外销售），该列留空的行归入「未分类」；销售大类取台账「销售大类」，带明细括注的（手套、袜子、服装、床垫等）表内只显示主体名称，例如「其他成品」。
+  </p>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">BY ORDER LINE</p>
+      <h2>损益明细表</h2>
+    </div>
+  </div>
+
+  {# 筛选行：六个字段 + 确定 / 导出Excel / 打印本表，同排一行、底部对齐（用户 2026-09-28） #}
+  <form method="get" class="filter-grid compact-filters detail-filters">
+    {% for key, value in detail_hidden_inputs %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+    <div class="filter-field">
+      <span>出库期间</span>
+      <select name="dm" onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for item in detail.month_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.month %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <span>开票期间（从）</span>
+      <select name="ifrom" onchange="this.form.submit()">
+        <option value="">不限</option>
+        {% for item in detail.invoice_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.invoice_from %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <span>开票期间（到）</span>
+      <select name="ito" onchange="this.form.submit()">
+        <option value="">不限</option>
+        {% for item in detail.invoice_options %}
+        <option value="{{ item.value }}"{% if item.value == detail.invoice_to %} selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field text-field">
+      <span>客户名称</span>
+      <input name="cust" value="{{ detail.customer }}" placeholder="包含关键字即可">
+    </div>
+    <div class="filter-field">
+      <span>销售大类</span>
+      <details class="multi-select">
+        <summary><span class="multi-select-text">{% if detail.categories %}{% if detail.categories|length > 2 %}已选 {{ detail.categories|length }} 项{% else %}{{ detail.categories|join:"、" }}{% endif %}{% else %}全部{% endif %}</span></summary>
+        <div class="multi-select-panel">
+          {% for item in detail.category_options %}
+          <label><input type="checkbox" name="dcat" value="{{ item.value }}"{% if item.value in detail.categories %} checked{% endif %}> {{ item.label }}</label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="filter-field text-field">
+      <span>产品编码</span>
+      <input name="dcode" value="{{ detail.code }}" placeholder="包含关键字即可">
+    </div>
+    <div class="filter-actions">
+      <button class="button secondary" type="submit">确定</button>
+      {% if detail.has_filter %}
+      <a class="button secondary" href="?{{ detail_clear_query }}">清空筛选</a>
+      {% endif %}
+      <a class="button secondary" href="{% url 'profit_detail_export' period.id %}?{{ detail_export_query }}">导出Excel</a>
+      {# 「打印本表」由 base.html 脚本注入到这里（与筛选字段同一行、底部对齐） #}
+      <div class="print-here"></div>
+    </div>
+  </form>
+  <p class="muted-text" style="margin-top:8px;">
+    不填 = 不限制；「开票期间」填了真实月份时不含未开票行，要看未开票请把「(未开票)」选进区间；起止填反了会自动对调；客户名称 / 产品编码按「包含」匹配（忽略大小写）。
+    点「清空筛选」= 出库期间也放开，看全部月份；「导出Excel」导出的就是当前筛选条件下的明细（含合计行）。
+  </p>
+
+  <div class="table-scroll profit-table-wrap">
+    <table class="data-table profit-table">
+      <thead>
+        <tr>
+          {% for header in data.headers %}<th>{{ header }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page.object_list %}
+        <tr>
+          <td>{{ row.seq }}</td>
+          <td>{{ row.out_month }}</td>
+          <td>{{ row.invoice_month }}</td>
+          <td>{{ row.channel }}</td>
+          <td>{{ row.company }}</td>
+          <td>{{ row.order_no }}</td>
+          <td>{{ row.customer }}</td>
+          <td>{{ row.category }}</td>
+          <td>{{ row.code }}</td>
+          <td>{{ row.name }}</td>
+          <td>{{ row.spec }}</td>
+          <td>{{ row.uom }}</td>
+          <td style="text-align:right;">{{ row.revenue|thousands }}</td>
+          <td style="text-align:right;">{% if row.revenue_price is not None %}{{ row.revenue_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.lb_amount|thousands }}</td>
+          <td style="text-align:right;">{% if row.lb_price is not None %}{{ row.lb_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">{% if row.cost_price is not None %}{{ row.cost_price|floatformat:4|thousands }}{% endif %}</td>
+          <td style="text-align:right;">{{ row.cost|thousands }}</td>
+          <td style="text-align:right;">{{ row.gross|thousands }}</td>
+          <td style="text-align:right;">{% if row.gross_margin is None %}—{% else %}{{ row.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ row.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ row.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ row.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ row.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ row.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ row.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if row.net_margin is None %}—{% else %}{{ row.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="32">当前筛选条件下没有数据：本期还没有销售台账，或请调整「出库期间 / 开票期间 / 客户名称 / 销售大类 / 产品编码」。</td></tr>
+        {% endfor %}
+        {% if page.object_list %}
+        <tr class="total-row" style="font-weight:600;background:#f2f7fd;">
+          <td colspan="12">合计（{% if detail.has_filter %}当前筛选{% else %}全部台账{% endif %}）</td>
+          <td style="text-align:right;">{{ detail.totals.revenue|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ detail.totals.lb_amount|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ detail.totals.quantity|floatformat:3|thousands }}</td>
+          <td style="text-align:right;">—</td>
+          <td style="text-align:right;">{{ detail.totals.cost|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.gross|thousands }}</td>
+          <td style="text-align:right;">{% if detail.totals.gross_margin is None %}—{% else %}{{ detail.totals.gross_margin|floatformat:2 }}%{% endif %}</td>
+          <td style="text-align:right;">{{ detail.totals.tax_surcharge|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.admin_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.selling_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.finance_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.operating_profit|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.non_operating_income|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.non_operating_expense|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.total_profit|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.income_tax|thousands }}</td>
+          <td style="text-align:right;">{{ detail.totals.net_profit|thousands }}</td>
+          <td style="text-align:right;">{% if detail.totals.net_margin is None %}—{% else %}{{ detail.totals.net_margin|floatformat:2 }}%{% endif %}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% include "settlement/_pagination.html" with page=page %}
+</section>
+
+<section class="section-card">
+  {# 口径说明（用户 2026-09-28：改成简短要点，不再用四列表） #}
+  <div class="basis-block">
+    <p class="basis-title">口径说明</p>
+    <ul class="basis-notes">
+      <li><strong>收入</strong>：只取台账「终端销售收入」；射阳兰邦销售收入只作列展示，不参与毛利与费用分摊。</li>
+      <li><strong>成本 / 毛利</strong>：销售成本 ＝ 销售数量 × 成本单价（本期月末加权价；本期没有该物料加权价时用上传的「历史单价」兜底，出库价优先）；毛利 ＝ 终端销售收入 − 销售成本，毛利率 ＝ 毛利 ÷ 终端销售收入。</li>
+      <li><strong>费用 / 利润</strong>：7 项费用按【出库月份】录入、按各行收入占比摊到行；营业利润 ＝ 毛利 − 税金及附加 − 三项费用；净利润 ＝ 利润总额 − 所得税费用。</li>
+    </ul>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // 多选下拉：点击空白处收起
+  document.addEventListener("click", function (event) {
+    document.querySelectorAll("details.multi-select[open]").forEach(function (box) {
+      if (!box.contains(event.target)) {
+        box.removeAttribute("open");
+      }
+    });
+  });
+</script>
+{% endblock %}
