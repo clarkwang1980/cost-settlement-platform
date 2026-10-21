@@ -243,10 +243,13 @@ def _merged_expenses(period) -> dict:
 
 
 def ledger_months(period) -> list:
-    """台账里出现过的【出库月份】（月首日期，升序）——费用按月录入的依据。"""
+    """台账里出现过的【开票月份】（月首日期，升序）——费用按月录入的依据。
+
+    用户 2026-10-21：费用按「当月销售开票收入」分摊，所以录入的月份也按开票期间。
+    """
     months = set()
     for item in _scope_periods(period):
-        for value in item.sales_ledger_lines.values_list("out_month", flat=True):
+        for value in item.sales_ledger_lines.values_list("invoice_month", flat=True):
             if value:
                 months.add(value.replace(day=1))
     # 本期月份一定要有，哪怕本期还没有销售台账（否则新月份无法录入按月费用）
@@ -317,12 +320,19 @@ def build_profit_statement(period, expenses=None) -> dict:
     )
 
     revenues = [_dec(line.terminal_amount) for line in lines]
-    month_of_row = [
+    # 出库月份：只用于「明细行显示」与按出库期间的汇总视图
+    out_month_of_row = [
         line.out_month.replace(day=1) if line.out_month else None for line in lines
+    ]
+    # 用户 2026-10-21：当月费用按【当月销售开票收入】分摊（不是出库月份）——
+    #   页面汇总/筛选本身就是按开票期间，口径必须一致，否则 4 月出库、8 月开票的行
+    #   会落进 4 月去摊费用，而 4 月没录费用 → 该行费用 0、毛利虚高。
+    alloc_month_of_row = [
+        line.invoice_month.replace(day=1) if line.invoice_month else None for line in lines
     ]
     revenue_total = sum(revenues, ZERO)
 
-    allocated = _allocate(month_of_row, revenues, expenses)
+    allocated = _allocate(alloc_month_of_row, revenues, expenses)
 
     rows = []
     sums = {key: ZERO for key in TOTAL_KEYS}
@@ -353,10 +363,12 @@ def build_profit_statement(period, expenses=None) -> dict:
         if revenue > ZERO and line.cost_amount is None:
             missing_cost_rows += 1
 
-        out_month = month_of_row[index]
-        if out_month:
-            month_stats[out_month]["row_count"] += 1
-            month_stats[out_month]["revenue"] += revenue
+        out_month = out_month_of_row[index]
+        alloc_month = alloc_month_of_row[index]
+        if alloc_month:
+            # 费用分摊/「录了费用但没收入」的提示都按开票月份统计
+            month_stats[alloc_month]["row_count"] += 1
+            month_stats[alloc_month]["revenue"] += revenue
 
         row = {
             "seq": line.row_no,

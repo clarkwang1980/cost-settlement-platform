@@ -3753,7 +3753,10 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             out_month=out_month or self.period.month,
             invoice_status=SalesLedgerLine.InvoiceStatus.INVOICED,
             invoice_month=(
-                self.period.month if invoice_month is self._UNSET else invoice_month
+                # 默认开票月＝出库月（保持 fixture 自洽）；要测跨月就显式传 invoice_month。
+                (out_month or self.period.month)
+                if invoice_month is self._UNSET
+                else invoice_month
             ),
             channel=channel,
             company="江苏盐城兰邦特种纺织集团有限责任公司",
@@ -3977,6 +3980,28 @@ class ProfitStatementTests(SettlementFixtureMixin, TestCase):
             by_key[("2026-07", "国内销售", "小计")]["admin_expense"], Decimal("70.00")
         )
         self.assertEqual(summary["grand_total"]["admin_expense"], Decimal("100.00"))
+
+    def test_expenses_allocated_by_invoice_month_not_out_month(self):
+        """用户 2026-10-21：当月费用按【当月销售开票收入】分摊，不看什么出库期间。
+
+        6 月出库、7 月开票的行，摊的是 7 月的费用；6 月录的费用不参与。
+        """
+        self._line(
+            1, revenue=Decimal("400"), cost=Decimal("0"),
+            out_month=self.june, invoice_month=self.period.month,
+        )
+        self._line(2, revenue=Decimal("600"), cost=Decimal("0"))
+        self._expense(self.june, admin_expense=Decimal("999"))
+        self._expense(self.period.month, admin_expense=Decimal("100"))
+
+        rows = build_profit_statement(self.period)["rows"]
+        self.assertEqual(
+            [row["admin_expense"] for row in rows],
+            [Decimal("40.00"), Decimal("60.00")],
+        )
+        # 该行明细仍显示真实出库期间（6 月），只是分摊按开票月份
+        self.assertEqual(rows[0]["out_month"], "2026-06")
+        self.assertEqual(rows[0]["invoice_month"], "2026-07")
 
     # —————————————— 页面与导出 ——————————————
 
