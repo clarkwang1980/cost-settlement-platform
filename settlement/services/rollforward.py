@@ -105,16 +105,10 @@ def _carry_inventory(period, previous):
             code__in=[item.material_code for item in valuations]
         ).values_list("code", "uom")
     }
-    # 由上期期末承接：优先用人工上传的期末存货，否则用系统生成的期末
+    # 用户 2026-10-17：**期末只认平台自己算的**；上传的期末仅用于核对，不参与结转
     previous_endings = list(
-        previous.ending_inventory_balances.filter(is_system_generated=False)
+        previous.ending_inventory_balances.filter(is_system_generated=True)
     )
-    if not previous_endings:
-        previous_endings = list(
-            previous.ending_inventory_balances.filter(
-                is_system_generated=True
-            )
-        )
     if previous_endings:
         for ending in previous_endings:
             if ending.quantity == ZERO and ending.amount == ZERO:
