@@ -119,62 +119,6 @@
       window.addEventListener('resize', addTitles);
     })();
 
-    // 筛选/切换条件后不要跳回页面顶部：
-    // 带查询串的 URL 会被浏览器当成新页面从而滚到顶部，这里提交前记住滚动位置、加载后恢复。
-    // 用捕获阶段监听，保证早于 onchange="this.form.submit()" 这类内联处理器执行。
-    (function () {
-      var KEY = "keepScrollPos";
-      var MAX_AGE_MS = 15000;
-
-      function savePos() {
-        try {
-          sessionStorage.setItem(KEY, JSON.stringify({ y: window.scrollY, t: Date.now() }));
-        } catch (err) { /* 隐私模式下写不了就算了 */ }
-      }
-
-      function isGetForm(form) {
-        return !!form && (form.getAttribute("method") || "get").toLowerCase() === "get";
-      }
-
-      // 用户 2026-09-30：**POST 按钮（如「批准忽略」「确认差异」「标记处理」）也会跳页顶** ——
-      //   这些是提交后 302 重定向回同一页面，浏览器按新页面处理 → 滚回顶部。
-      //   这里对**所有表单提交**都记一次位置（不只 GET 表单），加载后照样还原。
-      document.addEventListener("submit", function (event) {
-        if (event.target && event.target.tagName === "FORM") { savePos(); }
-      }, true);
-
-      document.addEventListener("change", function (event) {
-        var el = event.target;
-        if (el && el.form && isGetForm(el.form)) { savePos(); }
-      }, true);
-
-      document.addEventListener("click", function (event) {
-        var el = event.target;
-        if (!el) { return; }
-        // 翻页（上一页 / 下一页 / 页码）：链接不是表单提交，单独记一次位置，
-        // 否则点完会跳回页顶（用户 2026-09-21：明细翻页要"页面保持不动"）。
-        var link = el.closest ? el.closest(".pagination a") : null;
-        if (link) { savePos(); return; }
-        var form = el.form || (el.closest ? el.closest("form") : null);
-        if (!form || !isGetForm(form)) { return; }
-        if (el.tagName === "BUTTON" || (el.type && el.type === "submit")) { savePos(); }
-      }, true);
-
-      // 提交后由浏览器跳到新 URL（同一页面），加载完再把位置还原回去
-      try {
-        var raw = sessionStorage.getItem(KEY);
-        if (raw) {
-          sessionStorage.removeItem(KEY);
-          var data = JSON.parse(raw);
-          if (data && typeof data.y === "number" && Date.now() - (data.t || 0) < MAX_AGE_MS) {
-            window.addEventListener("load", function () {
-              window.scrollTo(0, data.y);
-            });
-          }
-        }
-      } catch (err) { /* 数据坏了就忽略 */ }
-    })();
-
     // 打印：抬头填充 + 「就地打印某一块」+ 自动为每个含表格的板块加按钮。
     // 用法：点板块标题旁的「打印本表」→ 只打印这一块（不是整页）。
     (function () {
@@ -374,21 +318,78 @@
 </script>
 
 <script id="keep-scroll-global">
-// 用户 2026-10-16：筛选/切换后保持原滚动位置，不再跳到页面顶端。
+// 用户 2026-10-21：筛选/切换后**整页和表格内部**都要停在原处（反馈过多次，这次一次做对）。
+// 之前的坑：
+//   ① key 里带 location.search → 筛选后 URL 变了，读的是新 key，永远取不到（白记）；
+//   ② 只记 window.scrollY —— 但本平台的表格都在 .table-wrap / .table-scroll 里滚动
+//      （max-height 680px），页面没动、表格却回到了第一行，看着就是「跳到顶端」；
+//   ③ 只在 load 里还原一次 —— 表格布局/字体晚到会把位置拉回去。
+// 现在的做法：window + 每个滚动容器都记；DOMContentLoaded / load / 200ms 后各还原一次；
+//   有 #锚点（如情形筛选跳 #issue-detail）时不抢，交给浏览器跳锚点。
 (function () {
-  var KEY = 'dsh_scroll:' + location.pathname + location.search.replace(/[?&](page|b_page|i_page)=\d+/g, '');
-  function save() { try { sessionStorage.setItem(KEY, String(window.scrollY || 0)); } catch (e) {} }
+  var KEY = 'dsh_scroll_v2:' + location.pathname;
+  var MAX_AGE_MS = 10 * 60 * 1000;
+  var CONTAINERS = '.table-wrap, .table-scroll';
+
+  function boxes() {
+    return Array.prototype.slice.call(document.querySelectorAll(CONTAINERS));
+  }
+
+  function save() {
+    try {
+      sessionStorage.setItem(
+        KEY,
+        JSON.stringify({
+          y: window.scrollY || window.pageYOffset || 0,
+          boxes: boxes().map(function (el) { return el.scrollTop || 0; }),
+          t: Date.now()
+        })
+      );
+    } catch (e) { /* 隐私模式写不了就算了 */ }
+  }
+
+  function restore() {
+    var data;
+    try { data = JSON.parse(sessionStorage.getItem(KEY) || 'null'); } catch (e) { data = null; }
+    if (!data || typeof data.y !== 'number') { return; }
+    if (Date.now() - (data.t || 0) > MAX_AGE_MS) { return; }
+    if (location.hash) { return; }   // 锚点跳转优先
+    if (data.y > 0) { window.scrollTo(0, data.y); }
+    var els = boxes();
+    (data.boxes || []).forEach(function (top, i) {
+      if (els[i] && top > 0) { els[i].scrollTop = top; }
+    });
+  }
+
+  if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
+
+  // 保存时机：普通提交、onchange="this.form.submit()"、点链接/按钮、离开页面
   document.addEventListener('submit', save, true);
+  document.addEventListener('change', save, true);
   document.addEventListener('click', function (e) {
-    var a = e.target && e.target.closest && e.target.closest('a');
-    if (a && !a.target && a.getAttribute('href') && a.getAttribute('href').indexOf('#') !== 0) { save(); }
+    var el = e.target;
+    if (!el) { return; }
+    var a = el.closest ? el.closest('a') : null;
+    if (a && !a.target && a.getAttribute('href') && a.getAttribute('href').indexOf('#') !== 0) {
+      save();
+      return;
+    }
+    if (el.form || (el.closest && el.closest('form'))) { save(); }
   }, true);
+  window.addEventListener('pagehide', save);
   window.addEventListener('beforeunload', save);
-  window.addEventListener('load', function () {
-    var y = 0;
-    try { y = parseInt(sessionStorage.getItem(KEY) || '0', 10) || 0; } catch (e) {}
-    if (y > 0) { window.scrollTo(0, y); }
+
+  // 还原时机：DOM 就绪 / load / 200ms 后各来一次（表格布局晚到也不会被拉回顶部）
+  document.addEventListener('DOMContentLoaded', function () {
+    restore();
+    requestAnimationFrame(restore);
   });
+  window.addEventListener('load', function () {
+    restore();
+    requestAnimationFrame(restore);
+    setTimeout(restore, 200);
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { restore(); } });
 })();
 </script>
 </body>
