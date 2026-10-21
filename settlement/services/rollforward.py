@@ -105,10 +105,16 @@ def _carry_inventory(period, previous):
             code__in=[item.material_code for item in valuations]
         ).values_list("code", "uom")
     }
-    # 用户 2026-10-17：**期末只认平台自己算的**；上传的期末仅用于核对，不参与结转
+    # 由上期期末承接：优先用人工上传的期末存货，否则用系统生成的期末
     previous_endings = list(
-        previous.ending_inventory_balances.filter(is_system_generated=True)
+        previous.ending_inventory_balances.filter(is_system_generated=False)
     )
+    if not previous_endings:
+        previous_endings = list(
+            previous.ending_inventory_balances.filter(
+                is_system_generated=True
+            )
+        )
     if previous_endings:
         for ending in previous_endings:
             if ending.quantity == ZERO and ending.amount == ZERO:
@@ -136,37 +142,6 @@ def _carry_inventory(period, previous):
                     "quantity": ending.quantity,
                     "amount": ending.amount,
                     "unit_price": ending.unit_price,
-                    "is_system_generated": True,
-                },
-            )
-        # 用户 2026-10-17：**浆粕等"期末存货表里没有"的物料，期初也要承接上月期末**
-        # （与普通物料同规则：期初 = 上月期末，不用上传）
-        for valuation in valuations:
-            if (
-                Decimal(valuation.ending_quantity or 0) == ZERO
-                and Decimal(valuation.ending_amount or 0) == ZERO
-            ):
-                continue
-            if valuation.material_code in manual_codes:
-                continue
-            # 该物料已有承接（不论仓库/批号）就不再建，避免翻倍
-            if normalize_code(valuation.material_code) in {normalize_code(k[0]) for k in active_keys}:
-                continue
-            key = (normalize_code(valuation.material_code), "", "")
-            active_keys.add(key)
-            OpeningInventoryBalance.objects.update_or_create(
-                period=period,
-                material_code=valuation.material_code,
-                warehouse=None,
-                batch_no=None,
-                defaults={
-                    "source_period": previous,
-                    "material_name": valuation.material_name,
-                    "category_name": "",
-                    "uom": material_uoms.get(valuation.material_code, ""),
-                    "quantity": valuation.ending_quantity,
-                    "amount": valuation.ending_amount,
-                    "unit_price": getattr(valuation, "weighted_average_price", None),
                     "is_system_generated": True,
                 },
             )
