@@ -12003,20 +12003,25 @@ def export_center(request, period_id):
                     filename = f"成本结算结果-{period.month:%Y%m}.xlsx"
                     zf.writestr(filename, wb_stream.getvalue())
                 elif kind == "uploaded_files":
-                    for batch in period.import_batches.filter(
-                        file__gt=""
-                    ).order_by("id"):
+                    # 用户 2026-10-22：正式环境导出 ZIP 是空的 —— Railway 容器磁盘是临时的，
+                    #   重新部署后 media 里的上传文件就没了。单个下载（download_import_file）
+                    #   早就有「数据库副本」兜底，这里当时漏了同样的兜底 → 全部被跳过。
+                    for batch in period.import_batches.order_by("id"):
+                        data = b""
                         try:
-                            if not Path(batch.file.path).is_file():
-                                continue
-                            data = batch.file.read()
-                            safe_name = (
-                                f"上传原始文件-{batch.get_kind_display()}-"
-                                f"批次{batch.id}-{batch.original_name}"
-                            )
-                            zf.writestr(safe_name, data)
-                        except OSError:
+                            if batch.file and Path(batch.file.path).is_file():
+                                data = batch.file.read()
+                        except (OSError, ValueError):
+                            data = b""
+                        if not data and batch.file_content:
+                            data = bytes(batch.file_content)
+                        if not data:
                             continue
+                        safe_name = (
+                            f"上传原始文件-{batch.get_kind_display()}-"
+                            f"批次{batch.id}-{batch.original_name}"
+                        )
+                        zf.writestr(safe_name, data)
 
         filename = f"报表导出-{period.month:%Y%m}.zip"
         response = HttpResponse(

@@ -1416,12 +1416,17 @@ class ImportAndWebTests(SettlementFixtureMixin, TestCase):
         self.assertEqual(pulp_rows[0][1], "浆粕车间（按上传流水）")
 
     def test_pagination_keeps_scroll_position(self):
-        """翻页（上一页/下一页）不再跳回页顶：base.html 的脚本要接管 .pagination 链接。"""
+        """翻页/筛选不再跳回页顶（用户 2026-10-21 重做）：base.html 统一记 window + 表格容器滚动。
+
+        旧实现只记 window.scrollY，但平台表格都在 .table-wrap 里滚动 → 看起来还是"跳顶"。
+        """
         base = (Path(settings.BASE_DIR) / "templates" / "base.html").read_text(
             encoding="utf-8"
         )
-        self.assertIn("closest(\".pagination a\")", base)
-        self.assertIn("savePos(); return;", base)
+        self.assertIn("dsh_scroll_v2:", base)          # key 不带 query，筛完才读得到
+        self.assertIn("'.table-wrap, .table-scroll'", base)   # 连容器滚动一起记
+        self.assertIn("scrollRestoration", base)       # 关掉浏览器自动恢复
+        self.assertIn("document.addEventListener('change', save, true);", base)  # onchange 自动提交也覆盖
 
     def test_work_order_costs_page_split_by_workshop(self):
         """工单成本页（用户 2026-09-21 二次调整）：只保留一张表，车间/期间用筛选切换。"""
