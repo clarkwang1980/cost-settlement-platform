@@ -71,7 +71,6 @@
                 <span class="pill">未录入（按 0 处理）</span>
                 {% endif %}
               </div>
-              <div class="muted-text expense-month-meta">终端销售收入 {{ item.revenue|thousands }} · 台账 {{ item.row_count }} 行</div>
             </td>
             {% for field in item.fields %}
             <td><input class="expense-input" name="{{ field.name }}" type="text" inputmode="decimal" autocomplete="off" value="{{ field.value|thousands }}"></td>
