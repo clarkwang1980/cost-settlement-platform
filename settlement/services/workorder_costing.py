@@ -66,6 +66,8 @@ WIP_CONVERSION_RATE = Decimal("0.5")
 # 或完成状态为已完工（超时完成/按时完成/已完成）
 # （染色/纺纱/包覆/针织/机织适用；浆粕不适用）
 MIN_FINISH_RATE_PCT = Decimal("70")     # 完工率阈值（%）：完工÷计划×100
+#: 在产品清零阈值（用户 2026-10-24 定稿）：**本月完工 ≥90% 或 累计完工 ≥90% → 没有在产品**
+WIP_ZERO_FINISH_RATE_PCT = Decimal("90")
 FINISHED_WORKORDER_STATUSES = ("超时完成", "按时完成", "已完成")  # 工单明细中视为已完工的完成状态
 SMALL_ORDER_WORKSHOPS = ("RanZheng", "tefang", "BaoFu", "ZhenZhi", "JiZhi")
 # 视同完工**只在"没有明显超投料"时清零**（用户 2026-09-30）：
@@ -284,6 +286,7 @@ def _material_by_order(
     roving_plan=None,
     adjustments=None,
     backfilled_out=None,
+    backfill_amounts=None,
 ):
     """按 工单 × 物料 汇总实际投料数量，乘以物料月末加权价；
     叠加计算层粗纱补投（roving_plan.auto_issues，粗纱无月末加权价时用粗纱计算单价）；
@@ -352,7 +355,8 @@ def _material_by_order(
                 material_price = Decimal(prices.get(material_code, ZERO) or ZERO)
                 amounts[order_no] += Decimal(qty) * material_price
     _backfill_material_by_bom(
-        period, prices, amounts, adjustments, backfilled_out=backfilled_out
+        period, prices, amounts, adjustments, backfilled_out=backfilled_out,
+        backfill_amounts=backfill_amounts,
     )
     return {order_no: money(value) for order_no, value in amounts.items()}
 
@@ -429,7 +433,7 @@ def equivalent_quantity(workshop, order_no, finished_qty, wip_qty, kg_per_m=None
 
 
 def _backfill_material_by_bom(
-    period, prices, amounts, adjustments=None, backfilled_out=None
+    period, prices, amounts, adjustments=None, backfilled_out=None, backfill_amounts=None
 ):
     adjustments = load_manual_adjustments(period) if adjustments is None else adjustments
     reported = set(
@@ -554,8 +558,15 @@ def _backfill_material_by_bom(
                 amounts[order_no] += sub_qty * mat_price
         # 记下"这笔材料是反推补的"：结算层会把反推进来的料**全部**算给本期完工
         # （这些工单没有投料台账、也没有期初材料，料本来就是为了这些报工量才补的）
-        if backfilled_out is not None and amounts.get(order_no, ZERO) > before_amount:
-            backfilled_out.add(order_no)
+        if amounts.get(order_no, ZERO) > before_amount:
+            if backfilled_out is not None:
+                backfilled_out.add(order_no)
+            if backfill_amounts is not None:
+                backfill_amounts[order_no] = (
+                    backfill_amounts.get(order_no, ZERO)
+                    + amounts[order_no]
+                    - before_amount
+                )
 
     # ---- 情形③：有投料、报工超投料量 → **差额反推**补足材料成本（用户 2026-09-30）----
     #   只对「无期初结转材料 + 无计算层补投 + 同量纲车间（报工数与投料数可比）」的单做，
@@ -602,6 +613,34 @@ def _backfill_material_by_bom(
         amounts[order_no] = have + gap
         if backfilled_out is not None:
             backfilled_out.add(order_no)
+        if backfill_amounts is not None:
+            backfill_amounts[order_no] = (
+                backfill_amounts.get(order_no, ZERO) + gap
+            )
+
+
+def backfill_material_amounts(period, prices=None, adjustments=None) -> dict:
+    """本期各工单**实际反推补投**的材料金额（与核算层同口径，仅计算层，不落台账）。
+
+    用户 2026-10-24：页面上的「反推材料」不能拿"材料成本 − 实投 − 期初"倒推出来
+    （材料成本是结果，反推是条件触发时的输入）。这里直接把核算层补进去的金额取出来：
+      ④ 无投料-有报工 → BOM单耗×报工数量×价
+      ③ 有投料-报工超投料量 → max(BOM应有 − 实投, 0)（且无期初、缺口率≤阈值）
+    没触发反推的工单不会出现在结果里（页面显示 0）。
+    """
+    if prices is None:
+        from settlement.services.costing import bom_material_prices
+
+        prices = bom_material_prices(period)
+    out = {}
+    _material_by_order(
+        period,
+        prices,
+        roving_plan=None,
+        adjustments=adjustments,
+        backfill_amounts=out,
+    )
+    return out
 
 
 def _jizhi_line_need(line, plan_qty):
@@ -2067,23 +2106,35 @@ def calculate_work_order_costs(period: AccountingPeriod, workshops=None, prices=
                 or (detail.completion_status in FINISHED_WORKORDER_STATUSES)
             )
         )
+        # 在产品清零（用户 2026-10-24 定稿，两条条件）：
+        #   条件① 完工率（本月完工率 或 累计完工率，取大的）≥ 90% → 清零，**不看完成状态**；
+        #   条件② 工单有完成状态（工单明细实际完工时间 / 已完成 / 超时完成）→ 还要看完工率是否 ≥90%，达到才清零。
+        #   条件①不要求完成状态，已经能把条件②的情形覆盖掉，所以这里按「完工率 ≥90%」判定。
+        # 仍然保留：**明显超投料的不清零**——超出的料是留给在产的（用户 2026-09-30）。
+        _rate_now = (
+            finished_qty_val / plan_qty_val * Decimal("100")
+            if plan_qty_val > ZERO
+            else ZERO
+        )
+        _rate_accum = (
+            jz_accum_finished.get(order_no, ZERO) / plan_qty_val * Decimal("100")
+            if plan_qty_val > ZERO
+            else ZERO
+        )
+        _rate_ok = max(_rate_now, _rate_accum) >= WIP_ZERO_FINISH_RATE_PCT
         if (
             wo_obj.production_dept_code in SMALL_ORDER_WORKSHOPS
-            and detail_finished
             and plan_qty_val > ZERO
-            and finished_qty_val > ZERO
             and wip > ZERO
-            and (finished_qty_val / plan_qty_val * Decimal("100"))
-            >= MIN_FINISH_RATE_PCT
+            and _rate_ok
         ):
-            # 用户 2026-09-30 补充：**明显超投料的单不清零**——超出的料是留给在产的，
-            # 不是尾料损耗（金额口径判断，机织米/kg 量纲不同也不受影响）。
+            _rate_qty = max(finished_qty_val, jz_accum_finished.get(order_no, ZERO))
             need_for_finished = ZERO
             for _line in _bom_lines_by_order.get(order_no, []):
                 _price = _need_prices.get(_line.sub_item_code)
                 if _price:
                     need_for_finished += (
-                        Decimal(_line.qty) * finished_qty_val * Decimal(_price)
+                        Decimal(_line.qty) * _rate_qty * Decimal(_price)
                     )
             _opening_row = opening_map.get(order_no)
             on_books = material_by_order.get(order_no, ZERO) + Decimal(

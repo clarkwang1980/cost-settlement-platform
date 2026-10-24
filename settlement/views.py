@@ -5472,7 +5472,7 @@ def build_issue_detail_table(issue_period, issue_filters, issue_rows_all):
         ]
     detail_totals = {"count": len(detail_rows)}
     for field in (
-        "direct_material", "actual_issue_material", "backfill_material",
+        "direct_material", "actual_issue_material", "opening_material", "backfill_material",
         "water_power", "steam", "natural_gas", "depreciation",
         "consumables", "dye_auxiliary", "processing_fee", "wages", "total_cost",
         "finished_cost", "wip_cost", "plan_quantity", "finished_quantity",
@@ -5519,6 +5519,7 @@ ISSUE_DETAIL_EXPORT_COLUMNS = (
     ("在产品", "wip_quantity", "num"),
     ("折合产量", "equivalent_qty", "num"),
     ("实际投料", "actual_issue_material", "num"),
+    ("期初结转材料", "opening_material", "num"),
     ("反推材料", "backfill_material", "num"),
     ("材料成本", "direct_material", "num"),
     ("水电", "water_power", "num"),
@@ -6570,6 +6571,21 @@ def attach_standard_unit_costs(period, items):
     工单没有可用的标准成品单价（BOM 子项原料当月没有月末加权价）时三者皆为 None。
     """
     standard_unit_by_order = standard_unit_cost_by_order(period)
+    # 期初结转材料（用户 2026-10-24）：FWR005-24-HF20260722 期初已含材料 245,654.77，
+    #   本期投料=0，原来「反推材料＝材料成本−本期实投」会把期初整块算成"反推"，
+    #   看着像系统按 BOM 反推补料。期初是上期结出来的实际成本，必须单独扣出来。
+    opening_material_by_order = {
+        o.order_no: Decimal(o.material or 0)
+        for o in period.opening_wip.all()
+        if o.order_no
+    }
+    # 核算层实际反推补投的金额（同口径，只在触发条件时才有值）
+    try:
+        from settlement.services.workorder_costing import backfill_material_amounts
+
+        _backfill_map = backfill_material_amounts(period)
+    except Exception:  # noqa: BLE001
+        _backfill_map = {}
     # 单位成本差异原因（用户 2026-09-30）：要看出"为什么差"，例如 BOM 两种料只投了一种。
     #   只取"一点都没投"的 BOM 子项（粗纱 BC- 除外：它走粗纱链，不算漏投）。
     bom_codes_by_order = defaultdict(list)
@@ -6625,13 +6641,18 @@ def attach_standard_unit_costs(period, items):
         finish_qty = Decimal(item.finished_quantity or 0)
         short_items = []
         over_items = []
+        need_by_code = {}   # 子项 → 本期应耗（BOM 单耗 × 本期完工）
+        uom_by_code = {}
         if finish_qty > 0:
             for line in period.bom_lines.filter(work_order_no=order_no):
                 code = line.sub_item_code
                 if str(code).upper().startswith("BC-"):
                     continue  # 粗纱走粗纱链，不算漏投
+                uom_by_code[code] = line.uom or ""
                 need_qty = Decimal(line.qty or 0) * finish_qty
-                if need_qty <= 0:
+                if need_qty > 0:
+                    need_by_code[code] = need_qty
+                else:
                     continue
                 issued_qty = issued_by_pair.get((order_no, code), Decimal("0"))
                 diff_qty = need_qty - issued_qty
@@ -6655,61 +6676,53 @@ def attach_standard_unit_costs(period, items):
             _actual_issue_amt += Decimal(_q2 or 0) * Decimal(_pr2)
         _mat2 = Decimal(getattr(item, "direct_material", 0) or 0)
         item.actual_issue_material = _actual_issue_amt
-        item.backfill_material = (_mat2 - _actual_issue_amt) if _mat2 > _actual_issue_amt else Decimal(0)
+        item.opening_material = opening_material_by_order.get(order_no, Decimal(0))
+        # 反推材料＝核算层**实际补进去**的金额（触发条件才反推，见 backfill_material_amounts），
+        #   不再用"材料成本−实投−期初"倒推：材料成本是结果，反推是输入（用户 2026-10-24）。
+        item.backfill_material = _backfill_map.get(order_no, Decimal(0))
         # 用户 2026-10-16：**投料差异**单独一列、永远显示（不依赖差异率是否 ≥30%），
         #   否则"报工超投料→按 BOM 反推"会把少投的料补平，页面上看不出来。
         # 用户 2026-10-16：**互斥**——一点没投的只写「漏投」，投了不够的只写「少投」，
         #   同一个物料不再同时出现在两类里；数字统一用（）包起来。
+        # ---- 投料差异（用户 2026-10-24 定稿）----
+        #   只写"料的多少"：多投了什么料、少投了什么料、未投什么料（→ 材料按 BOM 反推）。
+        #   没有差异就写 —；期初结转把料覆盖掉的不算差异，也写 —。
         _miss_codes = {c for c, _n in missing_codes}
-        _parts = []
-        if short_items:
+        _opening_amt_row = opening_material_by_order.get(order_no, Decimal(0))
+        _issued_this_period = any(
+            q > 0 for (o, _c), q in issued_by_pair.items() if o == order_no
+        )
+        if finish_qty <= 0 or (not _issued_this_period and _opening_amt_row > 0):
+            item.issue_diff_text = "—"
+        else:
+            _parts = []
+            # 未投：BOM 子项本期一次都没投（应耗未知时只写编码，不编数量）
             _miss_txt = []
-            _short_txt = []
-            for c, _n, q, u in short_items[:4]:
-                if c in _miss_codes:
-                    _miss_txt.append("漏投 %s（%s%s）" % (c, ("%g" % float(q)), u or ""))
+            for _c in sorted(_miss_codes)[:4]:
+                _q = need_by_code.get(_c)
+                _u = uom_by_code.get(_c, "") or ""
+                if _q:
+                    _miss_txt.append("未投 %s（%g%s）" % (_c, float(_q), _u))
                 else:
-                    _short_txt.append("少投 %s（%s%s）" % (c, ("%g" % float(q)), u or ""))
+                    _miss_txt.append("未投 %s" % _c)
+            _short_txt = [
+                "少投 %s（%g%s）" % (c, float(q), u or "")
+                for c, _n, q, u in short_items[:4] if c not in _miss_codes
+            ]
             if _miss_txt:
                 _parts.append("、".join(_miss_txt))
             if _short_txt:
                 _parts.append("、".join(_short_txt))
-        if over_items:
-            _parts.append("多投 %s" % "、".join(
-                "%s（%s%s）" % (c, ("%g" % float(q)), u or "") for c, _n, q, u in over_items[:3]
-            ))
-        if _parts:
-            item.issue_diff_text = "；".join(_parts)
-        else:
-            # 没有任何可比对的差异时，别一律写"一致"（会把"没投料"说成一致 ✗）
-            _has_issue = any(
-                issued_by_pair.get((order_no, _c), Decimal("0")) > 0
-                for _c in {ln.sub_item_code for ln in period.bom_lines.filter(
-                    work_order_no=order_no)}
-            )
-            _cmp = 0
-            for _ln in period.bom_lines.filter(work_order_no=order_no):
-                if not str(_ln.sub_item_code or "").upper().startswith("BC-"):
-                    _cmp += 1
-            if not _has_issue and finish_qty > 0:
-                item.issue_diff_text = "未投料（有报工，材料按 BOM 反推）"
-            elif _cmp == 0:
-                item.issue_diff_text = "不适用（BOM 只有粗纱/无可比子项）"
-            elif finish_qty <= 0:
-                item.issue_diff_text = "无完工（未报工，无法比对）"
-            else:
-                item.issue_diff_text = "一致"
-        # 用户 2026-10-16：情形③（有投料-报工超投料量）也会**按报工量 × BOM 反推补足**材料，
-        #   在"投料差异"里说明，避免"实际投料不够却看不到"。
-        try:
-            _case = getattr(item, "case", "") or ""
-            if ("报工超投料量" in _case) and getattr(item, "issue_diff_text", ""):
-                item.issue_diff_text = "%s（材料按报工量×BOM 反推补足）" % item.issue_diff_text
-        except Exception:  # noqa: BLE001
-            pass
+            if over_items:
+                _parts.append("多投 %s" % "、".join(
+                    "%s（%g%s）" % (c, float(q), u or "") for c, _n, q, u in over_items[:3]
+                ))
+            item.issue_diff_text = "；".join(_parts) if _parts else "—"
         item.unit_cost_diff_reason = unit_cost_diff_reason(
-            item, unit_material, missing_codes,
-            short_items=short_items, over_items=over_items,
+            item, unit_material,
+            # 本期没投料、期初已把料结转过来的单：不能说"少投料"（料是上期投的）
+            [] if (not _issued_this_period and _opening_amt_row > 0) else missing_codes,
+            short_items=[] if _opening_amt_row > 0 else short_items, over_items=over_items,
             has_issue_ledger=any(
                 key[0] == order_no for key in issued_by_pair
             ),

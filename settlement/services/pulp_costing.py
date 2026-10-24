@@ -53,16 +53,19 @@ def _is_jinglun(name) -> bool:
     return "腈" in str(name or "")
 
 
-def _material_price(period, code) -> Decimal | None:
-    """浆粕原料出库单价：历史单价出库价优先、入库价兜底（与投料定价口径一致）。"""
-    hp = period.historical_prices.filter(material_code=code).order_by("-id").first()
-    if not hp:
-        return None
-    if hp.issue_price:
-        return Decimal(hp.issue_price)
-    if hp.receipt_price:
-        return Decimal(hp.receipt_price)
-    return None
+def _material_price(period, code, prices=None) -> Decimal | None:
+    """浆粕原料单价：与投料/BOM 同一套取价链。
+
+    用户 2026-10-24：单价表里明明有价（3.89），结转却报"查不到历史单价" ——
+    因为这里原来**只看本期上传的历史单价**，没有「本月月末加权价 / 沿用上月 / 往期历史单价」，
+    而单价表显示的是沿用上月后的价，两边口径不一致。现在统一走 bom_material_prices。
+    """
+    if prices is None:
+        from settlement.services.costing import bom_material_prices
+
+        prices = bom_material_prices(period)
+    value = prices.get(code)
+    return Decimal(value) if value else None
 
 
 
@@ -138,6 +141,10 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
     prod_material = defaultdict(Decimal)  # 成品编码 -> 材料金额（按备注分配）
     mat_fanglun = ZERO   # 芳纶类原料金额合计（返回汇总用）
     mat_jinglun = ZERO   # 腈纶类原料金额合计（返回汇总用）
+    # 取价表只算一次（本月加权价 → 本月历史单价 → 沿用上月/往期），避免每行都重查
+    from settlement.services.costing import bom_material_prices as _price_map
+
+    _prices = _price_map(period)
     for m in uploaded:
         if "领料出库" not in (m.business_type or ""):
             continue  # 非领料出库（如生产入库/销售出库）不计入材料成本
@@ -149,13 +156,14 @@ def collect_pulp_costs(period: AccountingPeriod) -> dict:
             )
         amt = Decimal(m.amount or ZERO)
         if amt <= 0:
-            price = _material_price(period, m.material_code)
+            price = _material_price(period, m.material_code, prices=_prices)
             if price:
                 amt = (Decimal(m.quantity or ZERO) * price).quantize(CENT)
             else:
                 raise ValueError(
-                    f"浆粕原料流水{m.material_code} {name}没有金额，且查不到历史单价"
-                    "（出库/入库单价），请上传历史单价或在该行填写金额。"
+                    f"浆粕原料流水{m.material_code} {name}没有金额，也取不到单价"
+                    "（本月月末加权价 / 本月历史单价 / 沿用上月 / 往期历史单价 都没有），"
+                    "请补单价或在该行填写金额。"
                 )
         targets = _remark_targets(m.remark, products)
         if not targets:

@@ -35,3 +35,10 @@ _shots/
 _ui_shots/
 devpy.txt
 git_push_steps.txt
+
+# 重传包/临时导出（含业务数据，不进仓库）
+7月数据重传包/
+7月数据重传包.zip
+*重传包*.zip
+*基准_对比用.xlsx
+*重传操作清单.xlsx

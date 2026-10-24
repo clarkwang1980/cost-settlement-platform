@@ -235,7 +235,11 @@ def _valuation_pass(period: AccountingPeriod, previous_prices=None):
             ZERO,
         )
         ending_qty = opening_qty + receipt_qty - issue_qty
-        ending_amount = money(ending_qty * weighted_price)
+        # 用户 2026-10-24：期末金额一律按流水结转（期初金额 ＋ 入库金额 − 出库金额）。
+        #   **内部调拨（调拨接收/调拨发出）不计价**：它们只有数量没有金额，原来用
+        #   `数量 × 加权价` 给调拨进来的货凭空补了金额，导致「期初＋入−出」与期末对不上
+        #   （9 月差 693,027.29，涉及 56 个物料）。
+        ending_amount = money(opening_amount + total_receipt_amount - total_issue_amount)
         material_name = next(
             (txn.material_name for txn in txns if txn.material_name),
             automatic_opening["material_name"] if automatic_opening else "",
