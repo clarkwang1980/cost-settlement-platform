@@ -1783,21 +1783,27 @@ def purchase_accruals(request, period_id):
 
 
 def _render_page_error(request, period, title, error, traceback_text=""):
+    """出错时给一页纯文本（不依赖任何模板），保证不会再退化成白屏 500。"""
     logger.exception("%s 计算失败（期间 %s）", title, period.month)
-    return render(
-        request,
-        "settlement/page_error.html",
-        {
-            "period": period,
-            "title": title,
-            "error_type": type(error).__name__,
-            "error_message": str(error) or "（无消息）",
-            "traceback_text": traceback_text,
-            "request_path": request.get_full_path(),
-            "now": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
-        },
-        status=500,
+    from django.http import HttpResponse  # 局部导入，避免顶层再改一次导入区
+    import html as _html
+
+    body = (
+        "<!doctype html><meta charset='utf-8'>"
+        "<title>%s · 计算失败</title>"
+        "<h1>%s 计算失败</h1>"
+        "<p>期间：%s（id %s）　接口：%s　时间：%s</p>"
+        "<h2>%s</h2><p>%s</p>"
+        "<h3>异常堆栈</h3><pre style='white-space:pre-wrap'>%s</pre>"
+        % (
+            _html.escape(title), _html.escape(title), _html.escape(str(period)),
+            period.id, _html.escape(request.get_full_path()),
+            timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+            _html.escape(type(error).__name__), _html.escape(str(error) or "（无消息）"),
+            _html.escape(traceback_text or ""),
+        )
     )
+    return HttpResponse(body, status=500, content_type="text/html; charset=utf-8")
 
 
 def _purchase_accruals_view(request, period):
