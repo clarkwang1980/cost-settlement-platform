@@ -1,5 +1,5 @@
 import io
-import traceback as _traceback
+import traceback
 from pathlib import Path
 from calendar import monthrange
 from collections import defaultdict
@@ -143,6 +143,10 @@ from settlement.services.rollforward import (
     carry_forward_context,
     invalidate_downstream_periods,
 )
+from settlement.services.purchase_contract_voucher import (
+    build_invoice_matched_voucher,
+)
+from settlement.services.purchase_contract_page import build_accrual_page
 from settlement.services.purchase_voucher import (
     build_cost_difference_rows,
     build_purchase_voucher,
@@ -1775,66 +1779,53 @@ def purchase_receipts(request, period_id):
 
 @login_required
 def purchase_accruals(request, period_id):
+    """月末采购暂估（用户 2026-10-28 口径：期初台账 ＋ 合同签收数量 ＋ 发票，不看库存流水）。
+
+    与「采购暂估 / 回冲凭证」同一个计算器（purchase_contract_voucher），两页数字一致。
+    """
     period = get_object_or_404(AccountingPeriod, id=period_id)
     try:
         return _purchase_accruals_view(request, period)
-    except Exception as error:  # noqa: BLE001 —— 兜底：不再白屏 500，把堆栈显示出来
-        return _render_page_error(request, period, "月末采购暂估", error, _traceback.format_exc())
+    except Exception as error:  # noqa: BLE001 —— 页面兜底，堆栈写日志并显示在页面上
+        return _render_page_error(request, period, "月末采购暂估", error, traceback.format_exc())
 
 
 def _render_page_error(request, period, title, error, traceback_text=""):
-    """出错时给一页纯文本（不依赖任何模板），保证不会再退化成白屏 500。"""
+    """页面计算异常时给出可读的错误页（不直接 500），并把完整堆栈写进日志。
+
+    生产（Railway）默认 DEBUG=False，500 页只有一行 Server Error，拿不到堆栈；
+    这里把类型/消息/堆栈直接渲染出来，方便截图定位。
+    """
     logger.exception("%s 计算失败（期间 %s）", title, period.month)
-    from django.http import HttpResponse  # 局部导入，避免顶层再改一次导入区
-    import html as _html
-
-    body = (
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>%s · 计算失败</title>"
-        "<h1>%s 计算失败</h1>"
-        "<p>期间：%s（id %s）　接口：%s　时间：%s</p>"
-        "<h2>%s</h2><p>%s</p>"
-        "<h3>异常堆栈</h3><pre style='white-space:pre-wrap'>%s</pre>"
-        % (
-            _html.escape(title), _html.escape(title), _html.escape(str(period)),
-            period.id, _html.escape(request.get_full_path()),
-            timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
-            _html.escape(type(error).__name__), _html.escape(str(error) or "（无消息）"),
-            _html.escape(traceback_text or ""),
-        )
+    return render(
+        request,
+        "settlement/page_error.html",
+        {
+            "period": period,
+            "title": title,
+            "error_type": type(error).__name__,
+            "error_message": str(error) or "（无消息）",
+            "traceback_text": traceback_text,
+            "request_path": request.get_full_path(),
+            "now": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        status=500,
     )
-    return HttpResponse(body, status=500, content_type="text/html; charset=utf-8")
 
 
+@login_required
 def _purchase_accruals_view(request, period):
-    all_rows = build_purchase_accrual_rows(period)
+    bundle = build_accrual_page(period)
+    all_rows = bundle["all_rows"]
     # 页面筛选：归属月份 / 供应商 / 物料编码（三个可见字段，见 _accrual_page_filters）
     rows = _accrual_page_filters(request, all_rows)
-    flow_rows, flow_total = purchase_accrual_flow_tables(period, all_rows)
-    # 「暂估价差」列（用户 2026-09-21）：该期间发票核销产生的价差合计 ＝ 发票金额 − 暂估金额。
-    # 每条核销只归属一个期间，所以各期可相加。
-    diff_by_month = {
-        item.month: summarize_purchase_differences(build_purchase_difference_rows(item))[0][
-            "difference_amount"
-        ]
-        for item in AccountingPeriod.objects.order_by("month")
-    }
-    for row in flow_rows:
-        row["difference_amount"] = diff_by_month.get(
-            row["period"].month, Decimal("0.00")
-        )
-    flow_total["difference_amount"] = sum(
-        (row["difference_amount"] for row in flow_rows), Decimal("0.00")
-    )
-    # 明细块都是「本期」口径，徽标必须用本期那一行；
-    # flow_total 是跨期间合计（期初/期末取首末期），只适合上表的合计行。
+    flow_rows, flow_total = bundle["flow_rows"], bundle["flow_total"]
     flow_current = next((row for row in flow_rows if row["current"]), None) or {}
-    details = purchase_accrual_detail_tables(period, all_rows)
-    # 4 张明细小表各自的筛选（用户 2026-09-19）：只影响这几张表；上表数字仍是本期全口径，
-    # 页面主筛选（归属月份/供应商/物料编码）也照旧只管下面那张主明细表。
+    details = bundle["details"]
+    # 5 张明细小表各自的筛选（用户 2026-09-19）：只影响这几张表；上表数字仍是本期全口径
     detail_filters = _accrual_detail_filters(request, details)
     details = {**details, **{key: item["rows"] for key, item in detail_filters.items()}}
-    # 页面主筛选栏提交时，把这 4 张明细表已生效的条件也带上（否则一筛主表就把明细条件冲掉）
+    # 页面主筛选栏提交时，把这 5 张明细表已生效的条件也带上
     detail_filter_hidden = [
         (name, value)
         for item in detail_filters.values()
@@ -1845,12 +1836,42 @@ def _purchase_accruals_view(request, period):
         )
         if name and value
     ]
-    # 「入库单号」若全是虚拟编号（空 / 纯数字系统编号）就整列不显示（按全部明细判断列是否保留）
-    show_doc_no = any(not _is_virtual_document_no(row.document_no) for row in all_rows)
-    # 方案A 的保底提示（用户 2026-09-19 选A：合同表管到货/暂估，发票表管到票/实际价）：
-    # 本期没上传采购发票时，「本月到票 / 当月到货到票 / 本月回冲」会全是 0，
-    # 容易被误读成"本期没有到票"（其实是没数据，未到票的采购入库会一直挂着暂估）。
+    show_doc_no = any((getattr(row, "document_no", "") or "") for row in all_rows)
     no_invoice_data = period.purchase_invoices.count() == 0
+    # 暂估差异明细：只列有价差的核销行，单独分页（参数 diff_page）
+    diff_rows = [row for row in bundle["diff_rows"] if (row.difference_amount or Decimal("0")) != Decimal("0")]
+    diff_page = Paginator(diff_rows, 100).get_page(request.GET.get("diff_page"))
+    diff_query = request.GET.copy()
+    diff_query.pop("diff_page", None)
+    diff_page.querystring = diff_query.urlencode()
+    reversal_rows = bundle["reversal_rows"]
+    # 老链接/书签里的筛选参数仍然生效（只影响下方逐笔表，逐期间汇总表始终全量）
+    want_cross = str(request.GET.get("cross_period", "")).strip().lower()
+    want_supplier = str(request.GET.get("supplier", "")).strip().lower()
+    want_material = str(request.GET.get("material", "")).strip().lower()
+    want_invoice = str(request.GET.get("invoice_no", "")).strip().lower()
+    detail_filter_active = bool(want_cross or want_supplier or want_material or want_invoice)
+    if want_cross in {"yes", "true", "1"}:
+        reversal_rows = [row for row in reversal_rows if row.cross_period]
+    elif want_cross in {"no", "false", "0"}:
+        reversal_rows = [row for row in reversal_rows if not row.cross_period]
+    if want_supplier:
+        reversal_rows = [row for row in reversal_rows
+                         if want_supplier in (row.supplier_name or "").lower()]
+    if want_material:
+        reversal_rows = [row for row in reversal_rows
+                         if want_material in ("%s %s" % (row.material_code or "", row.material_name or "")).lower()]
+    if want_invoice:
+        reversal_rows = [row for row in reversal_rows
+                         if want_invoice in (row.invoice_no or "").lower()]
+    detail_totals = {
+        "count": len(reversal_rows),
+        "matched_quantity": sum((row.matched_quantity for row in reversal_rows), Decimal("0")),
+        "provisional_amount": sum((row.provisional_amount or Decimal("0") for row in reversal_rows), Decimal("0")),
+        "invoice_amount": sum((row.invoice_amount for row in reversal_rows), Decimal("0")),
+        "difference_amount": sum((row.difference_amount or Decimal("0") for row in reversal_rows), Decimal("0")),
+        "cross_period_count": sum(1 for row in reversal_rows if row.cross_period),
+    }
     return render(
         request,
         "settlement/purchase_accruals.html",
@@ -1870,15 +1891,24 @@ def _purchase_accruals_view(request, period):
             "filter_labels": _accrual_filter_labels(request),
             "filtered_count": len(rows),
             "total_count": len(all_rows),
-            # 「月末采购暂估」筛选行的金额徽标（用户 2026-09-21）：筛选后＝表格里看到的行合计
+            # 「月末采购暂估」筛选行的金额徽标：筛选后＝表格里看到的行合计
             "filtered_amount": sum(
                 (r.provisional_amount or Decimal("0") for r in rows), Decimal("0")
             ),
             "export_query": _accrual_export_query(request),
-            # 「本月采购暂估差异」三块（2026-09-21 并入本页，只列有价差的行）
-            **_purchase_difference_blocks(request, period),
-            # 「回冲明细（逐笔）」板块（2026-09-21 由「暂估回冲」页并入本页）
-            **_purchase_reversal_blocks(request, period),
+            # 「暂估差异」三块
+            "diff_summary_rows": bundle["diff_summary_rows"],
+            "diff_summary_total": bundle["diff_summary_total"],
+            "diff_grouped_rows": bundle["diff_grouped_rows"],
+            "diff_page": diff_page,
+            "diff_totals": bundle["diff_totals"],
+            "diff_pending_count": bundle["diff_pending_count"],
+            # 「回冲明细（逐笔）」板块
+            "reversal_period_rows": bundle["reversal_period_rows"],
+            "reversal_period_total": bundle["reversal_period_total"],
+            "detail_rows": reversal_rows,
+            "detail_totals": detail_totals,
+            "detail_filter_active": detail_filter_active,
         },
     )
 
@@ -2467,12 +2497,19 @@ def voucher_center(request, period_id):
 def purchase_accrual_voucher(request, period_id):
     """采购暂估 / 暂估回冲凭证（独立页面）。
 
-    业务原理：本月到货本月到票 → 直接入账；本月到货月末未到票 → 暂估；
-    前期暂估本月到票 → 冲回原暂估 + 按票入账（价差进材料成本差异）。
-    凭证金额不随明细筛选变化（借贷必须相等）；筛选只过滤下面三张附件。
+    口径（用户 2026-10-28 定）：**不看库存流水** ——
+    到货＝期初暂估台账 ＋ 采购合同「已签收数量」；到票＝采购发票对照合同/台账核销；
+    发票冲本期到货 → 到货到票；冲以前期间到货 → 回冲；本期到货未到票 → 暂估。
+    凭证金额不随明细筛选变化（借贷必须相等）；筛选只过滤下面几张附件。
     """
     period = get_object_or_404(AccountingPeriod, id=period_id)
-    group = str(request.GET.get("group", "")).strip() or "category"
+    try:
+        return _purchase_accrual_voucher_view(request, period)
+    except Exception as error:  # noqa: BLE001 —— 页面兜底，堆栈写日志并显示在页面上
+        return _render_page_error(request, period, "采购暂估 / 回冲凭证", error, traceback.format_exc())
+
+
+def _purchase_accrual_voucher_view(request, period):
     # 凭证期间筛选：voucher_month=YYYY-MM，默认当前核算期间
     raw_month = str(request.GET.get("voucher_month", "")).strip()
     target_period = period
@@ -2487,9 +2524,8 @@ def purchase_accrual_voucher(request, period_id):
             )
         except (TypeError, ValueError):
             target_period = period
-    voucher = build_purchase_voucher(
+    voucher = build_invoice_matched_voucher(
         target_period,
-        group=group,
         detail_supplier=request.GET.get("supplier", ""),
         detail_material=request.GET.get("material", ""),
     )
@@ -2510,6 +2546,8 @@ def purchase_accrual_voucher(request, period_id):
 
 
 @login_required
+
+
 def material_issue_voucher(request, period_id):
     """生产领料（投料）凭证（独立页面），格式与「采购暂估 / 回冲凭证」一致。
 
@@ -9256,8 +9294,9 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "purchase_accrual":
+        # 与页面同源：期初台账 ＋ 合同签收数量 ＋ 发票（用户 2026-10-28 口径）
         rows = _filter_accrual_rows(
-            request, build_purchase_accrual_rows(period)
+            request, build_accrual_page(period)["all_rows"]
         )
         sheets.append(
             (
@@ -9289,8 +9328,8 @@ def _listing_rows(request, period, kind):
 
     elif kind in ACCRUAL_DETAIL_EXPORT_KINDS:
         # 「到票与暂估」下面 5 张明细小表：各自单独导出（用户 2026-09-19）
-        all_rows = build_purchase_accrual_rows(period)
-        details = purchase_accrual_detail_tables(period, all_rows)
+        # 2026-10-28 起与页面同源（期初台账 ＋ 合同签收 ＋ 发票）
+        details = build_accrual_page(period)["details"]
         # 每张表自己的筛选条件也套到导出上（用户 2026-09-19）：筛选后导出＝所见
         detail_filters = _accrual_detail_filters(request, details)
         detail_key = {
@@ -9384,7 +9423,8 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "purchase_difference":
-        rows = build_purchase_difference_rows(period)
+        # 与页面同源（用户 2026-10-28）：价差 ＝ 发票金额 − 合同/台账暂估金额
+        rows = build_accrual_page(period)["diff_rows"]
         invoice_no = str(request.GET.get("invoice_no", "")).strip().lower()
         receipt_month = str(request.GET.get("receipt_month", "")).strip()
         document_no = str(request.GET.get("document_no", "")).strip().lower()
@@ -9437,13 +9477,23 @@ def _listing_rows(request, period, kind):
         )
 
     elif kind == "purchase_reversal":
-        rows = build_purchase_reversal_rows(
-            period,
-            invoice_no=request.GET.get("invoice_no", "").strip(),
-            supplier=request.GET.get("supplier", "").strip(),
-            material=request.GET.get("material", "").strip(),
-            cross_period=request.GET.get("cross_period", "").strip(),
-        )
+        # 与页面同源（用户 2026-10-28）：只列「本期发票冲以前期间到货」的回冲
+        rows = build_accrual_page(period)["reversal_rows"]
+        invoice_no = str(request.GET.get("invoice_no", "")).strip().lower()
+        supplier = str(request.GET.get("supplier", "")).strip().lower()
+        material = str(request.GET.get("material", "")).strip().lower()
+        cross_period = str(request.GET.get("cross_period", "")).strip()
+        if invoice_no:
+            rows = [r for r in rows if invoice_no in (r["invoice_no"] or "").lower()]
+        if supplier:
+            rows = [r for r in rows if supplier in (r["supplier_name"] or "").lower()]
+        if material:
+            rows = [r for r in rows
+                    if material in ("%s %s" % (r["material_code"] or "", r["material_name"] or "")).lower()]
+        if cross_period in {"yes", "true", "1"}:
+            rows = [r for r in rows if r["cross_period"]]
+        elif cross_period in {"no", "false", "0"}:
+            rows = [r for r in rows if not r["cross_period"]]
         sheets.append(
             (
                 "发票暂估回冲明细",

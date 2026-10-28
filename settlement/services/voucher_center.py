@@ -13,7 +13,7 @@ from decimal import Decimal
 from settlement.models import AccountingPeriod
 from settlement.services.material_issue_voucher import build_material_issue_voucher
 from settlement.services.receipt_voucher import build_finished_receipt_voucher
-from settlement.services.purchase_voucher import build_purchase_voucher
+from settlement.services.purchase_contract_voucher import build_invoice_matched_voucher
 from settlement.services.sales_voucher import (
     CARRY_COST_TYPES,
     build_sales_voucher_entries,
@@ -125,7 +125,7 @@ def _period_by_month(period, month):
 def _purchase_card(period, month=None):
     # 与销售凭证卡片同格式：原材料与应付账款都汇总一行，5 列（摘要｜科目｜数量｜借方｜贷方）
     target = _period_by_month(period, month)
-    voucher = build_purchase_voucher(target, group="category")
+    voucher = build_invoice_matched_voucher(target)
     entries = []
     for block in voucher["blocks"]:
         for row in block["rows"]:
@@ -150,9 +150,9 @@ def _purchase_card(period, month=None):
         "eyebrow": "PURCHASE ACCRUAL VOUCHER",
         "status": "ready",
         "status_label": "已实现",
-        "note": "本月到货到票直接入账；本月货到票未到-暂估入账；前期暂估本月到票-冲回暂估后按票入账"
-                "（借 暂估应付／贷 原材料，借 原材料／贷 应付账款）；"
-                "价差进材料成本差异。期初暂估台账余额只提示、不入账。",
+        "note": "到货＝期初暂估台账 ＋ 合同「已签收数量」；到票＝采购发票对照合同/台账核销。"
+                "本期发票冲本期到货→到货到票；冲以前期间到货→回冲（借 暂估应付／贷 应付账款）；"
+                "本期到货未到票→暂估（借 原材料／贷 暂估应付）；价差进材料成本差异。",
         "url_name": "purchase_accrual_voucher",
         "export_kind": "purchase_voucher",
         # 汇总字段与借贷 pill 与销售卡片一致，不再展示；凭证期间做成筛选字段

@@ -6,13 +6,15 @@
   <div>
     <p class="eyebrow">PURCHASE ACCRUAL VOUCHER</p>
     <h1>采购暂估 / 回冲凭证</h1>
-    <p>本月到货本月到票直接入账；本月到货月末未到票暂估；前期暂估本月到票回冲原暂估并按票入账。金额口径不含税。</p>
+    <p>
+      到货＝<strong>期初暂估台账 ＋ 采购合同「已签收数量」</strong>；到票＝<strong>采购发票对照合同/台账核销</strong>。
+      发票冲本期到货→到货到票；冲以前期间到货→回冲；本期到货未到票→暂估。金额口径不含税，不看库存流水。
+    </p>
   </div>
   <div class="heading-actions">
     <a class="button secondary" href="{% url 'export_listing' period.id 'material_cost_difference' %}">导出材料成本差异明细</a>
     <a class="button secondary" href="{% url 'voucher_center' period.id %}">← 凭证中心</a>
     <a class="button secondary" href="{% url 'export_listing' period.id 'purchase_voucher' %}?{{ request.GET.urlencode }}">导出Excel</a>
-    <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'purchase_accruals' period.id %}">月末采购暂估</a>
     <a class="button secondary" href="{% url 'sales_cost_voucher' period.id %}">销售结转成本凭证</a>
   </div>
@@ -31,7 +33,7 @@
     </label>
     <noscript><button class="button secondary" type="submit">切换</button></noscript>
   </form>
-  <span class="voucher-toolbar-note">切换凭证期间后，下方三张附件与凭证分录按该月重新计算。</span>
+  <span class="voucher-toolbar-note">切换凭证期间后，下方附件与凭证分录按该月重新计算。</span>
 </section>
 
 {% if voucher.checks %}
@@ -88,11 +90,12 @@
     </table>
   </div>
   <p class="muted-text">
-    <strong>本月到货到票</strong> 判定＝本月到货且发票在本月已核销到该笔入库（部分到票按数量拆开）；
-    <strong>本月货到票未到-暂估入账</strong> ＝本月到货减本月已核销数量；
-    <strong>前期暂估本月到票</strong> ＝本月核销到「以前月份入库」或「期初暂估台账」的部分。
-    价差＝发票金额−暂估金额，进「{{ voucher.accounts.difference }}」。凭证金额不随下方附件筛选变化。
-    「本月货到票未到-暂估入账」与附件3余额表可能相差 1 分：暂估按入库金额比例拆分，余额表按「未到票数量×暂估单价」计算。
+    <strong>本月到货到票</strong>＝本期发票冲的是「归属本期」的合同签收量；
+    <strong>本月货到票未到-暂估入账</strong>＝归属本期的合同签收量里，截至本期末还没被发票冲到的部分；
+    <strong>前期暂估本月到票（回冲）</strong>＝本期发票冲的是期初暂估台账或以前期间合同，合并成一笔
+    「借 {{ voucher.accounts.accrued }} / 贷 {{ voucher.accounts.supplier }}」，价差进 {{ voucher.accounts.difference }}；
+    <strong>首期建账-期初暂估台账</strong>只在最早一期出现（借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.accrued }}）。
+    凭证金额不随下方附件筛选变化。
   </p>
 </section>
 
@@ -100,14 +103,14 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">ATTACHMENT 1</p>
-      <h2>附件1：本月到货明细（{{ voucher.receipt_rows|length }} 行）</h2>
+      <h2>附件1：暂估明细（期初台账 ＋ 合同签收，{{ voucher.detail_rows|length }} 行）</h2>
     </div>
     <form method="get" class="filter-actions" style="margin:0;">
-      <input type="hidden" name="group" value="{{ voucher.group }}">
+      <input type="hidden" name="voucher_month" value="{{ voucher.month }}">
       <label class="muted-text">供应商<input type="text" name="supplier" value="{{ voucher.filter.supplier }}" placeholder="名称包含"></label>
       <label class="muted-text">物料<input type="text" name="material" value="{{ voucher.filter.material }}" placeholder="编码/名称包含"></label>
       <button class="button secondary" type="submit">筛选附件</button>
-      <a class="button secondary" href="?group={{ voucher.group }}">清除</a>
+      <a class="button secondary" href="?voucher_month={{ voucher.month }}">清除</a>
     </form>
   </div>
   {% if voucher.filter.active %}
@@ -117,55 +120,58 @@
     <table>
       <thead>
         <tr>
-          <th>入库单号</th><th>入库日期</th><th>到货月份</th><th>供应商</th>
-          <th>物料编码</th><th>物料名称</th><th>物料大类</th>
-          <th class="num">入库数量</th><th class="num">入库金额</th><th class="num">暂估单价</th>
-          <th>单价来源</th><th class="num">本次到票数量</th><th class="num">已到票金额</th>
-          <th class="num">未到票数量</th><th class="num">暂估金额</th><th>状态</th>
+          <th>来源</th><th>单据/合同号</th><th>入库单号</th><th>归属期间</th><th>供应商</th>
+          <th>物料编码</th><th>物料名称</th>
+          <th class="num">到货数量</th><th class="num">单价</th><th class="num">到货金额</th>
+          <th class="num">累计到票</th><th class="num">未到票数量</th><th class="num">暂估金额</th>
+          <th>状态</th><th>发票匹配</th>
         </tr>
       </thead>
       <tbody>
-        {% for row in voucher.receipt_rows %}
+        {% for row in voucher.detail_rows %}
         <tr>
-          <td><strong>{{ row.document_no|default:"—" }}</strong></td>
-          <td>{{ row.document_date }}</td>
-          <td>{{ row.receipt_month|date:"Y-m" }}</td>
+          <td>{{ row.kind }}</td>
+          <td>{{ row.label|default:"—" }}</td>
+          <td>{{ row.document_no|default:"—" }}</td>
+          <td>{{ row.month|date:"Y-m" }}</td>
           <td>{{ row.supplier }}</td>
           <td>{{ row.material_code }}</td>
           <td>{{ row.material_name }}</td>
-          <td>{{ row.category }}</td>
           <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.unit_price|floatformat:6|thousands }}</td>
           <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
-          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands|default:"—" }}</td>
-          <td>{{ row.price_source }}</td>
-          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
-          <td class="num">{{ row.matched_amount|floatformat:2|thousands }}</td>
-          <td class="num"><strong>{{ row.unmatched_quantity|floatformat:3|thousands }}</strong></td>
-          <td class="num"><strong>{{ row.unmatched_amount|floatformat:2|thousands }}</strong></td>
-          <td><span class="pill {% if row.status == '缺少暂估价格' %}danger{% elif row.status == '全部暂估' %}warning{% else %}success{% endif %}">{{ row.status }}</span></td>
+          <td class="num">{{ row.invoiced_quantity|floatformat:3|thousands }}</td>
+          <td class="num"><strong>{{ row.outstanding_quantity|floatformat:3|thousands }}</strong></td>
+          <td class="num"><strong>{{ row.outstanding_amount|floatformat:2|thousands }}</strong></td>
+          <td><span class="pill {% if row.status == '全部暂估' %}warning{% else %}success{% endif %}">{{ row.status }}</span></td>
+          <td>{{ row.match_ways }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="16" class="empty-cell">本期没有采购入库流水。</td></tr>
+        <tr><td colspan="15" class="empty-cell">本期及以前没有期初台账/采购合同。</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="muted-text" style="margin-top:12px;">
+    到货金额＝表上金额（期初台账取台账金额、合同取签收数量×不含税单价）；暂估金额＝未到票数量按比例摊的金额，
+    逐行四舍五入到分。「累计到票」是截至本期末该笔到货被发票冲掉的数量。
+  </p>
 </section>
 
 <section class="section-card">
   <div class="section-heading">
     <div>
       <p class="eyebrow">ATTACHMENT 2</p>
-      <h2>附件2：暂估回冲明细（{{ voucher.reversal_rows|length }} 行）</h2>
-      <p class="muted-text" style="margin:6px 0 0;">本月收到的发票核销了哪笔暂估：暂估额、发票额、价差一目了然。</p>
+      <h2>附件2：回冲明细（本期发票冲以前期间到货，{{ voucher.reversal_rows|length }} 行）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">冲的是哪笔货（期初台账 / 哪个合同）、原归属期间、暂估额、发票额、价差都在这里。</p>
     </div>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>发票号</th><th>开票日期</th><th>开票期间</th><th>供应商</th><th>核销对象</th>
-          <th>入库单号</th><th>到货月份</th><th>物料编码</th><th>物料名称</th>
+          <th>发票号</th><th>开票日期</th><th>开票期间</th><th>冲的对象</th><th>单据/合同号</th><th>原归属期间</th>
+          <th>供应商</th><th>物料编码</th><th>物料名称</th>
           <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
           <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">价差</th>
         </tr>
@@ -176,10 +182,10 @@
           <td><strong>{{ row.invoice_no|default:"—" }}</strong></td>
           <td>{{ row.invoice_date|default:"—" }}</td>
           <td>{{ row.invoice_period|date:"Y-m"|default:"—" }}</td>
+          <td>{{ row.target_kind }}</td>
+          <td>{{ row.target_label|default:"—" }}</td>
+          <td>{{ row.target_month|date:"Y-m"|default:"—" }}</td>
           <td>{{ row.supplier }}</td>
-          <td>{{ row.target_type }}</td>
-          <td>{{ row.document_no }}</td>
-          <td>{{ row.receipt_month|date:"Y-m"|default:"—" }}</td>
           <td>{{ row.material_code }}</td>
           <td>{{ row.material_name }}</td>
           <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
@@ -190,7 +196,7 @@
           <td class="num">{% if row.difference_amount %}<strong>{{ row.difference_amount|floatformat:2|thousands }}</strong>{% else %}0.00{% endif %}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="15" class="empty-cell">本月没有核销以前月份的暂估。</td></tr>
+        <tr><td colspan="15" class="empty-cell">本期没有冲以前期间到货的发票。</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -201,11 +207,104 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">ATTACHMENT 3</p>
-      <h2>附件3：应付账款—暂估应付余额表（{{ voucher.balance_rows|length }} 家）</h2>
+      <h2>附件3：本月到票到货（本期发票冲本期合同，{{ voucher.same_month_rows|length }} 行）</h2>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>发票号</th><th>开票日期</th><th>开票期间</th><th>合同号</th><th>收货期间</th>
+          <th>供应商</th><th>物料编码</th><th>物料名称</th>
+          <th class="num">核销数量</th><th class="num">暂估单价</th><th class="num">暂估金额</th>
+          <th class="num">发票单价</th><th class="num">发票金额</th><th class="num">价差</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in voucher.same_month_rows %}
+        <tr>
+          <td><strong>{{ row.invoice_no|default:"—" }}</strong></td>
+          <td>{{ row.invoice_date|default:"—" }}</td>
+          <td>{{ row.invoice_period|date:"Y-m"|default:"—" }}</td>
+          <td>{{ row.target_label|default:"—" }}</td>
+          <td>{{ row.target_month|date:"Y-m"|default:"—" }}</td>
+          <td>{{ row.supplier }}</td>
+          <td>{{ row.material_code }}</td>
+          <td>{{ row.material_name }}</td>
+          <td class="num">{{ row.matched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.provisional_unit_price|floatformat:6|thousands }}</td>
+          <td class="num">{{ row.provisional_amount|floatformat:2|thousands }}</td>
+          <td class="num">{{ row.invoice_unit_price|floatformat:6|thousands }}</td>
+          <td class="num">{{ row.invoice_amount|floatformat:2|thousands }}</td>
+          <td class="num">{% if row.difference_amount %}<strong>{{ row.difference_amount|floatformat:2|thousands }}</strong>{% else %}0.00{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="14" class="empty-cell">本期没有「当期到货当期到票」的发票。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">ATTACHMENT 4</p>
+      <h2>附件4：冲不上台账/合同的发票（{{ voucher.unmatched_rows|length }} 行）</h2>
+      <p class="muted-text" style="margin:6px 0 0;">
+        这些票既没进暂估、也没进回冲；原因写在最后一列，多半是这批货没有上传合同、或发票没填合同号。
+      </p>
+    </div>
+  </div>
+  {% if voucher.unmatched_rows %}
+  <div class="message message-warning">
+    有 {{ voucher.unmatched_rows|length }} 行发票冲不上期初台账/合同，请补合同或补合同号后再出凭证。
+  </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>发票号</th><th>开票日期</th><th>开票期间</th><th>合同号(发票)</th><th>供应商</th>
+          <th>物料编码</th><th>物料名称</th>
+          <th class="num">数量</th><th class="num">未冲数量</th><th class="num">单价</th>
+          <th class="num">金额</th><th class="num">未冲金额</th><th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in voucher.unmatched_rows %}
+        <tr>
+          <td><strong>{{ row.invoice_no|default:"—" }}</strong></td>
+          <td>{{ row.invoice_date|default:"—" }}</td>
+          <td>{{ row.invoice_period|date:"Y-m"|default:"—" }}</td>
+          <td>{{ row.contract_no|default:"—" }}</td>
+          <td>{{ row.supplier }}</td>
+          <td>{{ row.material_code }}</td>
+          <td>{{ row.material_name }}</td>
+          <td class="num">{{ row.quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.unmatched_quantity|floatformat:3|thousands }}</td>
+          <td class="num">{{ row.unit_price|floatformat:6|thousands }}</td>
+          <td class="num">{{ row.amount|floatformat:2|thousands }}</td>
+          <td class="num"><strong>{{ row.unmatched_amount|floatformat:2|thousands }}</strong></td>
+          <td>{{ row.hint }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="13" class="empty-cell">本期发票全部冲到了台账/合同。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">ATTACHMENT 5</p>
+      <h2>附件5：应付账款—暂估应付余额表（{{ voucher.balance_rows|length }} 家）</h2>
       <p class="muted-text" style="margin:6px 0 0;">
         月末暂估余额 {{ voucher.summary.ending_balance|floatformat:2|thousands }}，
-        其中本月到货未到票 {{ voucher.summary.current_balance|floatformat:2|thousands }}，
-        期初暂估台账历史 {{ voucher.summary.opening_balance|floatformat:2|thousands }}（本次未入账）。
+        其中本期归属 {{ voucher.summary.current_balance|floatformat:2|thousands }}，
+        以前期间（期初台账 ＋ 以前合同）{{ voucher.summary.history_balance|floatformat:2|thousands }}。
       </p>
     </div>
   </div>
@@ -223,7 +322,7 @@
           <td class="num">{{ row.rows }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="4" class="empty-cell">月末没有未到票的采购入库。</td></tr>
+        <tr><td colspan="4" class="empty-cell">月末没有未到票的到货。</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -232,13 +331,13 @@
   <div class="section-heading" style="margin-top:18px;">
     <div>
       <p class="eyebrow">AGING</p>
-      <h2>暂估账龄（按到货月份）</h2>
+      <h2>暂估账龄（按归属月份）</h2>
     </div>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>到货月份</th><th class="num">暂估金额</th><th class="num">行数</th><th class="num">占比%</th></tr>
+        <tr><th>归属月份</th><th class="num">暂估金额</th><th class="num">行数</th><th class="num">占比%</th></tr>
       </thead>
       <tbody>
         {% for row in voucher.aging_rows %}
@@ -262,20 +361,20 @@
     </div>
   </div>
   <ul class="muted-text" style="margin:0;padding-left:20px;">
-    <li><strong>数据来源</strong>：库存出入库流水（采购入库）＋ 采购合同暂估价 ＋ 采购发票核销 ＋ 期初暂估台账。</li>
-    <li><strong>本月到货到票</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.supplier }}—XX供应商；
-      同一入库单只到票一部分的，按数量拆开，已到票部分走「本月到货到票」、未到票部分走「暂估入账」。</li>
+    <li><strong>数据来源</strong>：期初采购暂估台账 ＋ 采购合同（签收数量）＋ 采购发票。<strong>不使用库存流水</strong>。</li>
+    <li><strong>到货</strong>：上传的合同＝货已收到；到货数量取「已签收数量」，没填才用合同数量；归属期间取合同「收货期间」，
+      没填用合同所属期间。归属晚于本期的合同本期不挂。</li>
+    <li><strong>到票（发票对照）</strong>：先按「合同号+物料」冲合同行；冲不上再按「供应商+物料」按期间先后冲
+      （先冲期初台账、再冲上月合同、最后本月合同）；发票期间早于到货归属期间的不冲。</li>
+    <li><strong>本月到货到票</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.supplier }}；价差进 {{ voucher.accounts.difference }}。</li>
     <li><strong>本月货到票未到-暂估入账</strong>：借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.accrued }}。</li>
-    <li><strong>前期暂估本月到票-冲回暂估 / -按票入账</strong>：冲回暂估 借 {{ voucher.accounts.accrued }}（冲回原暂估）/
-      贷 {{ voucher.accounts.raw }}；按票入账 借 {{ voucher.accounts.raw }} /
-      贷 {{ voucher.accounts.supplier }}—XX供应商；发票与暂估价不同时，差额进 {{ voucher.accounts.difference }}。</li>
-    <li><strong>暂估单价来源</strong>：合同未税价优先，其次期初暂估台账单价 / 手工暂估价；都没有则记为「缺少暂估价格」，
-      该行金额按 0 计（会漏记，见生成前检查）。</li>
-    <li><strong>金额口径</strong>：入库金额 ＝ 入库数量 × 合同暂估不含税价；发票核销不改写库存入库金额，
-      所以价差只能在凭证层体现（本平台口径：差异进 {{ voucher.accounts.difference }}）。</li>
-    <li><strong>已批准忽略</strong>的流水与发票行一律不计入，与「月末采购暂估」「暂估回冲明细」页面口径一致。</li>
-    <li><strong>期初暂估台账</strong>（系统首期导入的历史未到票）不自动进本次凭证，避免与旧系统重复入账；
-      是否首期建账需要先确认。账龄见附件3 下方。</li>
+    <li><strong>前期暂估本月到票（回冲）</strong>：借 {{ voucher.accounts.accrued }}（合同价/台账价）/ 贷 {{ voucher.accounts.supplier }}（发票价），
+      价差进 {{ voucher.accounts.difference }}；不再出现「借原材料＝贷原材料」同额对开。</li>
+    <li><strong>首期建账</strong>：最早一期把期初暂估台账全额做一张「借 {{ voucher.accounts.raw }} / 贷 {{ voucher.accounts.accrued }}」，
+      否则回冲历史台账会把暂估应付冲成借方。若旧系统已入过账，可去掉这块。</li>
+    <li><strong>金额口径</strong>：发票金额取上传文件的「不含税金额」（为空才用 数量×单价）；发票金额与 数量×单价 不一致的行，
+      会在「生成前检查」里提示，并进导出的「附件7-发票金额异常」。</li>
+    <li><strong>已批准忽略</strong>的合同行、发票行、期初台账行一律不计入。</li>
   </ul>
 </section>
 {% endblock %}
