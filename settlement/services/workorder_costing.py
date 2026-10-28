@@ -280,6 +280,44 @@ def _code_variant_price(prices, code, name="", name_by_code=None):
     return None
 
 
+def _prior_backfill_by_order(period) -> dict:
+    """上一期「计算层补投（BOM 反推）」的金额，按工单返回。
+
+    用户 2026-10-24：跨月工单常见"上月只报工没投料、本月才把料补录进来"，
+    上月已按 BOM 反推测过一份料，本月若再把实际投料全额计入，同一批料就算两次。
+    这里把上期反推额算出来，供本月先冲销（只冲本期实际有投料的单）。
+    """
+    prev = (
+        AccountingPeriod.objects.filter(month__lt=period.month)
+        .order_by("-month")
+        .first()
+    )
+    if prev is None:
+        return {}
+    prev_prices = {
+        v.material_code: Decimal(v.weighted_average_price or 0)
+        for v in prev.inventory_valuations.all()
+    }
+    issue_amt = defaultdict(lambda: ZERO)
+    for row in prev.material_issues.exclude(work_order_no=""):
+        price = prev_prices.get(row.material_code, ZERO)
+        issue_amt[row.work_order_no] += Decimal(row.actual_issue_quantity or ZERO) * price
+    opening_material = {
+        o.order_no: Decimal(o.material or ZERO) for o in prev.opening_wip.all()
+    }
+    out = {}
+    for result in WorkOrderCostResult.objects.filter(period=prev).select_related("work_order"):
+        order_no = result.work_order.order_no
+        backfill = (
+            Decimal(result.direct_material or ZERO)
+            - opening_material.get(order_no, ZERO)
+            - issue_amt.get(order_no, ZERO)
+        )
+        if backfill > ZERO:
+            out[order_no] = backfill
+    return out
+
+
 def _material_by_order(
     period: AccountingPeriod,
     prices: dict,
@@ -330,6 +368,15 @@ def _material_by_order(
         quantity = Decimal(item["actual_issue_quantity"] or ZERO)
         amounts[item["work_order_no"]] += quantity * material_price
         raw_qty[item["work_order_no"]] += quantity
+    # 用户 2026-10-24（跨月补料冲销）：上期「无投料-有报工」按 BOM 反推过的材料，
+    #   本期实际投料到达时先冲掉，避免同一批料算两次。
+    #   实测 13.442-BF20260726：8月反推 78,245.38，9月实投 3,337.53kg 又全额计 126,368.97
+    #   → 合计 204,614 比实投多 78,245；冲销后 9月材料 = 48,123.59，全单正好 = 实投 126,368.97。
+    _offset_orders = set()
+    for _ono, _prior_amt in _prior_backfill_by_order(period).items():
+        if raw_qty.get(_ono, ZERO) > ZERO and amounts.get(_ono, ZERO) > ZERO:
+            amounts[_ono] = max(amounts[_ono] - _prior_amt, ZERO)
+            _offset_orders.add(_ono)
     # 人工调整（投料）：填了就覆盖"实领"这一块（粗纱补投/BOM 反推照旧在后面叠加）
     adjustments = load_manual_adjustments(period) if adjustments is None else adjustments
     for order_no, adjustment in adjustments.items():
@@ -357,6 +404,7 @@ def _material_by_order(
     _backfill_material_by_bom(
         period, prices, amounts, adjustments, backfilled_out=backfilled_out,
         backfill_amounts=backfill_amounts,
+        offset_orders=_offset_orders,
     )
     return {order_no: money(value) for order_no, value in amounts.items()}
 
@@ -433,7 +481,8 @@ def equivalent_quantity(workshop, order_no, finished_qty, wip_qty, kg_per_m=None
 
 
 def _backfill_material_by_bom(
-    period, prices, amounts, adjustments=None, backfilled_out=None, backfill_amounts=None
+    period, prices, amounts, adjustments=None, backfilled_out=None, backfill_amounts=None,
+    offset_orders=None,
 ):
     adjustments = load_manual_adjustments(period) if adjustments is None else adjustments
     reported = set(
@@ -589,7 +638,11 @@ def _backfill_material_by_bom(
             continue  # 机织的量纲不同（报工米 vs 投料kg），不在这一类
         qty = finish_qty.get(order_no, ZERO)
         issued_qty = issue_qty_by_order.get(order_no, ZERO)
-        if qty <= ZERO or issued_qty <= ZERO or qty <= issued_qty:
+        if qty <= ZERO or issued_qty <= ZERO:
+            continue
+        # 用户 2026-10-24：跨月补料单（本月冲销了上期反推）按**净投料**判断，
+        #   即使数量上报工<投料，净额仍可能不够 → 也要按 BOM 差额反推补足。
+        if qty <= issued_qty and order_no not in (offset_orders or ()):
             continue  # 不是"报工超投料量"
         need = ZERO
         for line in bom_by_order.get(order_no, []):
