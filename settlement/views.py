@@ -1,4 +1,5 @@
 import io
+import traceback as _traceback
 from pathlib import Path
 from calendar import monthrange
 from collections import defaultdict
@@ -1324,7 +1325,8 @@ def _detail_period_value(key, row):
     """这一行属于哪个期间：本月暂估看「归属月份」，其余三张表看发票的「开票期间」。"""
     if key == "month_accrual":
         return row.get("receipt_month")
-    return row.invoice.invoice_period
+    invoice = getattr(row, "invoice", None)
+    return invoice.invoice_period if invoice is not None else None
 
 
 def _detail_supplier_text(key, row):
@@ -1774,6 +1776,31 @@ def purchase_receipts(request, period_id):
 @login_required
 def purchase_accruals(request, period_id):
     period = get_object_or_404(AccountingPeriod, id=period_id)
+    try:
+        return _purchase_accruals_view(request, period)
+    except Exception as error:  # noqa: BLE001 —— 兜底：不再白屏 500，把堆栈显示出来
+        return _render_page_error(request, period, "月末采购暂估", error, _traceback.format_exc())
+
+
+def _render_page_error(request, period, title, error, traceback_text=""):
+    logger.exception("%s 计算失败（期间 %s）", title, period.month)
+    return render(
+        request,
+        "settlement/page_error.html",
+        {
+            "period": period,
+            "title": title,
+            "error_type": type(error).__name__,
+            "error_message": str(error) or "（无消息）",
+            "traceback_text": traceback_text,
+            "request_path": request.get_full_path(),
+            "now": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        status=500,
+    )
+
+
+def _purchase_accruals_view(request, period):
     all_rows = build_purchase_accrual_rows(period)
     # 页面筛选：归属月份 / 供应商 / 物料编码（三个可见字段，见 _accrual_page_filters）
     rows = _accrual_page_filters(request, all_rows)

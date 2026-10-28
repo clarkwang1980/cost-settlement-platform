@@ -586,6 +586,10 @@ def build_purchase_difference_rows(period):
         txn = allocation.inventory_transaction
         opening = allocation.opening_purchase_accrual
         invoice = allocation.purchase_invoice_line
+        if txn is None and opening is None and invoice is not None:
+            # 孤儿核销行（既没入库流水、也没期初暂估台账）：跳过。
+            # 不跳过的话下面 `opening.provisional_unit_price` 会 NoneType 崩掉整页（2026-10-28）。
+            continue
         override = invoice_attribution_month(invoice, txn)
         if txn is not None:
             basis = provisional_basis(txn)

@@ -1,0 +1,33 @@
+﻿{% extends "base.html" %}
+{% block title %}{{ title }} · 计算失败{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">PAGE ERROR</p>
+    <h1>{{ title }}</h1>
+    <p>{{ period }} 这一页在算数时报错了，页面没有算出来（不是没数据）。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="{% url 'period_detail' period.id %}">← 返回期间</a>
+  </div>
+</section>
+
+<section class="section-card">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">DETAIL</p>
+      <h2>错误信息（把这一段发给开发即可定位）</h2>
+    </div>
+  </div>
+  <div class="message message-error">
+    <strong>{{ error_type }}</strong>：{{ error_message }}
+  </div>
+  <p class="muted-text" style="margin-top:10px;">
+    期间：{{ period }}（id {{ period.id }}）　接口：{{ request_path }}　时间：{{ now }}
+  </p>
+  <details style="margin-top:12px;">
+    <summary class="muted-text">展开异常堆栈</summary>
+    <pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;">{{ traceback_text }}</pre>
+  </details>
+</section>
+{% endblock %}
