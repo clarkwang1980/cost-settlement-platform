@@ -1,0 +1,34 @@
+{% load workshop_tags %}
+{# 明细小表筛选栏：本月到票 / 当月到货到票 / 本月暂估 / 本月回冲 #}
+{# include 时传 f（该表筛选上下文，见 views._accrual_detail_filters）与 id_prefix #}
+{# 注意：本框架的井号注释不能跨行、也不能在注释里出现块标签字样，注释一律写成单行 #}
+{# 一排按钮的顺序（用户 2026-09-19）：筛选 / 清空 / 金额徽标 / 导出Excel / 打印本表 #}
+<form class="detail-filter no-print" method="get">
+  {% for name, value in f.hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+  <label>{{ f.period_label }}
+    <select name="{{ f.period_param }}" onchange="this.form.submit()">
+      <option value="">{{ f.period_all_label }}</option>
+      {% for item in f.period_options %}<option value="{{ item }}"{% if f.period == item %} selected{% endif %}>{{ item }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>供应商
+    <input name="{{ f.supplier_param }}" value="{{ f.supplier }}" list="{{ id_prefix }}-supplier" placeholder="编码或名称">
+  </label>
+  {% if f.has_material %}
+  <label>物料编码
+    <input name="{{ f.material_param }}" value="{{ f.material }}" list="{{ id_prefix }}-material" placeholder="编码或名称">
+  </label>
+  {% endif %}
+  <datalist id="{{ id_prefix }}-supplier">{% for item in f.supplier_options %}<option value="{{ item }}"></option>{% endfor %}</datalist>
+  {% if f.has_material %}<datalist id="{{ id_prefix }}-material">{% for item in f.material_options %}<option value="{{ item }}"></option>{% endfor %}</datalist>{% endif %}
+  <div class="filter-actions">
+    <button class="button secondary" type="submit">筛选</button>
+    <a class="button secondary" href="{% url 'purchase_accruals' period.id %}{% if f.clear_query %}?{{ f.clear_query }}{% endif %}">清空</a>
+    <span class="pill detail-filter-pill">{{ f.amount_label }} {{ f.amount|floatformat:2|thousands }}{% if f.filtered %}（筛选后）{% endif %}</span>
+    <a class="button secondary" href="{% url 'export_listing' period.id f.export_kind %}{% if f.export_query %}?{{ f.export_query }}{% endif %}">导出Excel</a>
+    <div class="print-here"></div>
+  </div>
+</form>
+{% if f.labels %}
+<p class="muted-text detail-filter-note">当前筛选：{{ f.labels|join:"；" }} —— 命中 {{ f.shown }} / {{ f.total }} 行（上表数字仍是本期全口径）。</p>
+{% endif %}

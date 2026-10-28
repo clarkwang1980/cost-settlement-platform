@@ -1,4 +1,4 @@
-.env
+﻿.env
 .venv/
 __pycache__/
 *.py[cod]
@@ -27,6 +27,8 @@ server_watchdog*.py
 *.bak_*
 _*.txt
 _*.html
+# 模板片段（下划线开头）是运行时要用的，不能被上面那条通配忽略掉（2026-10-28）
+!templates/settlement/_*.html
 *.tmp
 
 # 本地临时产物（2026-09-30）
